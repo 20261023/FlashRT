@@ -2170,8 +2170,14 @@ class Pi05Pipeline:
         )
 
     def transformer_decoder(self, stream: int = 0,
-                            rtc_prefix_len: int = 0) -> None:
-        """Run 10-step diffusion denoise on ``bufs['diffusion_noise']``."""
+                            rtc_prefix_len: int = 0, *,
+                            _step_indices=None, _integrate: bool = True) -> None:
+        """Run fixed-step denoising, or evaluate explicit style-table indices.
+
+        The internal no-integration hook leaves the projection in
+        ``decoder_action_buf`` and does not update ``diffusion_noise``.
+        Its units depend on the frontend's output-projection scaling.
+        """
         fvk = self.fvk
         gemm = self.gemm
         W = self.weights
@@ -2179,10 +2185,17 @@ class Pi05Pipeline:
         enc_seq = self.encoder_seq_len
         ds = self.chunk_size
         fused = self.use_fp8_decoder and self.fp8_calibrated
+        if not _integrate and (rtc_prefix_len or (fused and self._skinny)):
+            raise NotImplementedError('velocity-only evaluation does not support RTC/skinny')
+        steps = range(self.num_steps) if _step_indices is None else tuple(_step_indices)
+        if _step_indices is not None and any(
+                not isinstance(s, int) or isinstance(s, bool) or not 0 <= s < self.num_steps
+                for s in steps):
+            raise ValueError('decoder style-table index out of range')
 
         prev_decoder_step = getattr(self, "_fp8_current_decoder_step", -1)
         try:
-            for step in range(self.num_steps):
+            for step in steps:
                 self._fp8_current_decoder_step = step
                 self._copy_rtc_prefix(rtc_prefix_len, stream)
                 skinny_step = fused and self._skinny
@@ -2272,6 +2285,8 @@ class Pi05Pipeline:
                             step, B["diffusion_noise"], B["decoder_action_buf"],
                             ds, stream)
                     # noise += action_buf (weights pre-scaled by -1/num_steps by frontend)
+                    if not _integrate:
+                        continue
                     if self.sde:
                         eps_ptr, sigma_ptr = self._sde_step_ptrs(step, ds)
                         rc = fvk.pi05_sde_residual_add(
