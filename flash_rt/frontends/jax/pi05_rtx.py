@@ -50,6 +50,7 @@ from flash_rt.frontends.torch.pi05_rtx import (
     Pi05TorchFrontendRtx,
     _interleave_qk,
     _resolve_effective_hardware,
+    _resolve_pi05_sampler,
 )
 from flash_rt.frontends._fp8_layout import select_fp8_layout
 from flash_rt.core.utils.hardware import supports_fp8
@@ -461,7 +462,13 @@ class Pi05JaxFrontendRtx(Pi05TorchFrontendRtx):
         prefix_precision: Optional[str] = None,
         sde: bool = False,
         decoder_precision: Optional[str] = None,
+        sampler: str = 'euler',
+        probeflow_config=None,
     ):
+        self._probeflow_config = _resolve_pi05_sampler(
+            sampler, probeflow_config, use_fp8=use_fp8, cache_frames=cache_frames,
+            sde=sde, denoise_trace=denoise_trace, decoder_kernel=decoder_kernel,
+            decoder_precision=decoder_precision, prefix_precision=prefix_precision)
         # Don't chain to Pi05TorchFrontendRtx.__init__ — it expects a safetensors
         # file. We replicate the body and swap the loader.
         checkpoint_dir = pathlib.Path(checkpoint_dir)
@@ -573,11 +580,12 @@ class Pi05JaxFrontendRtx(Pi05TorchFrontendRtx):
         # Pre-scale decoder action output projection by -1/num_steps
         # (matches the torch frontend's pre-scaling step that bakes the
         # flow-matching residual coefficient into the weights).
+        output_scale = -1.0 if self._probeflow_config is not None else -1.0 / self._num_steps
         self._ckpt_bf16["decoder_action_out_proj_w"] = (
-            self._ckpt_bf16["decoder_action_out_proj_w"] * (-1.0 / self._num_steps)
+            self._ckpt_bf16["decoder_action_out_proj_w"] * output_scale
         )
         self._ckpt_bf16["decoder_action_out_proj_b"] = (
-            self._ckpt_bf16["decoder_action_out_proj_b"] * (-1.0 / self._num_steps)
+            self._ckpt_bf16["decoder_action_out_proj_b"] * output_scale
         )
 
         # ── FP8 quantize large GEMM weights (shared method) ──
@@ -603,7 +611,9 @@ class Pi05JaxFrontendRtx(Pi05TorchFrontendRtx):
         # ── Pre-compute decoder styles (shared helper) ──
         from flash_rt.frontends.torch.pi05_rtx import _precompute_decoder_styles
         self._precomputed_styles = _precompute_decoder_styles(
-            self._ckpt_bf16, self.chunk_size, num_steps=self._num_steps
+            self._ckpt_bf16, self.chunk_size, num_steps=self._num_steps,
+            timesteps=(self._probeflow_config.timesteps()
+                       if self._probeflow_config is not None else None)
         )
 
         # ── Attention backend, fvk, GemmRunner, reusable buffers ──

@@ -521,8 +521,38 @@ def _resolve_effective_hardware(hardware: Optional[str]) -> Optional[str]:
     return hardware
 
 
+def _resolve_pi05_sampler(sampler, config, *, use_fp8, cache_frames, sde, denoise_trace,
+                          decoder_kernel=None, decoder_precision=None, prefix_precision=None):
+    """Validate opt-in sampling before weights or CUDA state are touched."""
+    from flash_rt.models.pi05.probeflow import ProbeFlowConfig
+    if sampler not in ('euler', 'probeflow'):
+        raise ValueError("sampler must be 'euler' or 'probeflow'")
+    if sampler == 'euler':
+        if config is not None:
+            raise ValueError("probeflow_config requires sampler='probeflow'")
+        return None
+    if config is not None and not isinstance(config, ProbeFlowConfig):
+        raise ValueError('probeflow_config must be a ProbeFlowConfig')
+    if use_fp8:
+        raise ValueError('ProbeFlow currently requires BF16 (use_fp8=False)')
+    for name, value in [('cache_frames', cache_frames != 1), ('sde', sde),
+                        ('denoise_trace', denoise_trace)]:
+        if value:
+            raise ValueError(f'ProbeFlow does not support {name}')
+    for name in ('FVK_PI05_RTX_FORCE_INT8', 'FVK_PI05_RTX_INT8_ENCODER_ONLY',
+                 'FVK_PI05_RTX_INT8_VISION'):
+        if os.environ.get(name, '0') == '1':
+            raise ValueError(f'ProbeFlow currently requires BF16; disable {name}')
+    if ((decoder_kernel or os.environ.get('FLASHRT_PI05_DECODER_KERNEL', 'cublaslt'))
+            not in ('auto', 'cublaslt')
+            or (decoder_precision or os.environ.get('FLASHRT_PI05_DECODER_PRECISION', 'fp8')) != 'fp8'
+            or (prefix_precision or os.environ.get('FLASHRT_PI05_PREFIX_PRECISION', 'fp8')) != 'fp8'):
+        raise ValueError('ProbeFlow currently requires the BF16/cublaslt path')
+    return config if config is not None else ProbeFlowConfig()
+
+
 def _precompute_decoder_styles(ckpt: dict, chunk_size: int,
-                               num_steps: int = NUM_STEPS_DEFAULT) -> dict:
+                               num_steps: int = NUM_STEPS_DEFAULT, *, timesteps=None) -> dict:
     """Pre-compute the time-MLP + per-layer style modulations in torch.
 
     Output dict has numpy arrays (dtype bf16 via torch→numpy view):
@@ -540,6 +570,11 @@ def _precompute_decoder_styles(ckpt: dict, chunk_size: int,
     t=1.0, 0.8, 0.6, 0.4, 0.2 with dt=-0.2, not a truncation of the
     10-step table stored in the checkpoint).
     """
+    if timesteps is not None:
+        timesteps = tuple(timesteps)
+        if not timesteps or any(not math.isfinite(t) or not 0 < t <= 1 for t in timesteps):
+            raise ValueError('timesteps must be nonempty, finite and in (0, 1]')
+        num_steps = len(timesteps)
     W = {k: v.to("cuda", bf16) if isinstance(v, torch.Tensor) else v
          for k, v in ckpt.items()}
 
@@ -552,7 +587,9 @@ def _precompute_decoder_styles(ckpt: dict, chunk_size: int,
     fraction = torch.linspace(0.0, 1.0, DEC_D // 2, dtype=torch.float32)
     period = min_period * (max_period / min_period) ** fraction
     _time_emb_rows = []
-    for _ in range(num_steps):
+    for index in range(num_steps):
+        if timesteps is not None:
+            t = torch.tensor(timesteps[index], dtype=torch.float32)
         # period has shape (DEC_D//2,); t is a scalar tensor → sinusoid: (DEC_D//2,)
         sinusoid = t * (1.0 / period) * 2 * math.pi
         _time_emb_rows.append(
@@ -635,7 +672,12 @@ class Pi05TorchFrontendRtx:
                  decoder_kernel: Optional[str] = None,
                  prefix_precision: Optional[str] = None,
                  sde: bool = False,
-                 decoder_precision: Optional[str] = None):
+                 decoder_precision: Optional[str] = None,
+                 sampler: str = 'euler', probeflow_config=None):
+        self._probeflow_config = _resolve_pi05_sampler(
+            sampler, probeflow_config, use_fp8=use_fp8, cache_frames=cache_frames,
+            sde=sde, denoise_trace=denoise_trace, decoder_kernel=decoder_kernel,
+            decoder_precision=decoder_precision, prefix_precision=prefix_precision)
         checkpoint_dir = pathlib.Path(checkpoint_dir)
         # Stochastic sampler: pipelines take a per-step noise scale and
         # per-step noise (infer(..., sde_sigma=, step_noise=)); with no
@@ -800,7 +842,7 @@ class Pi05TorchFrontendRtx:
 
         # Pre-scale decoder action output projection by -1/num_steps.
         # Scaling is specific to the step count (ODE integration step size).
-        num_steps = self._num_steps
+        num_steps = 1 if self._probeflow_config is not None else self._num_steps
         self._ckpt_bf16["decoder_action_out_proj_w"] = \
             self._ckpt_bf16["decoder_action_out_proj_w"] * (-1.0 / num_steps)
         self._ckpt_bf16["decoder_action_out_proj_b"] = \
@@ -836,7 +878,9 @@ class Pi05TorchFrontendRtx:
 
         # ── Pre-compute decoder styles (time MLP + style modulation) ──
         self._precomputed_styles = _precompute_decoder_styles(
-            self._ckpt_bf16, self.chunk_size, num_steps=self._num_steps)
+            self._ckpt_bf16, self.chunk_size, num_steps=self._num_steps,
+            timesteps=(self._probeflow_config.timesteps()
+                       if self._probeflow_config is not None else None))
 
         # ── Attention backend (torch, owns Q/K/V/O) ──
         enc_seq_max = self.num_views * 256 + self.max_prompt_len
@@ -1091,6 +1135,8 @@ class Pi05TorchFrontendRtx:
 
         INT8 modes are not supported. Returns the wall time in seconds.
         """
+        if getattr(self, '_probeflow_config', None) is not None:
+            raise NotImplementedError('ProbeFlow does not support hot weight reload yet')
         if self._int8_weights or self._force_int8_decoder:
             raise NotImplementedError("weight reload is not available for INT8 modes")
         t0 = time.perf_counter()
@@ -1563,6 +1609,8 @@ class Pi05TorchFrontendRtx:
                 positive advantage tag (the standard "select for high
                 advantage" use case). Set ``False`` only for debugging.
         """
+        if cfg_enable and getattr(self, '_probeflow_config', None) is not None:
+            raise NotImplementedError('ProbeFlow does not support CFG yet')
         if not cfg_enable:
             self._rl_config = None
             # If a CFG pipeline was previously built, drop it so the
@@ -1667,6 +1715,14 @@ class Pi05TorchFrontendRtx:
                     prompt_text, prompt_len, state is not None,
                     self._state_prompt_mode)
 
+    def _create_pipeline(self, **kwargs):
+        config = getattr(self, '_probeflow_config', None)
+        if config is None:
+            return Pi05Pipeline(**kwargs)
+        from flash_rt.models.pi05.pipeline_rtx_probeflow import Pi05ProbeFlowPipeline
+        kwargs['num_steps'] = len(config.timesteps())
+        return Pi05ProbeFlowPipeline(probeflow_config=config, **kwargs)
+
     def _set_prompt_fixed(self, prompt_len: int) -> None:
         """Fixed-shape mode: build ONE max-length pipeline + one graph; later
         prompt lengths only update embeds + seqused/devpos (no re-capture).
@@ -1683,7 +1739,7 @@ class Pi05TorchFrontendRtx:
             logger.info("Building fixed-shape Pi05Pipeline (max_prompt_len=%d)...",
                         PI05_STATE_PROMPT_MAX_LEN)
             pipeline_weights = self._build_pipeline_weights()
-            self._fixed_pipeline = Pi05Pipeline(
+            self._fixed_pipeline = self._create_pipeline(
                 gemm=self.gemm, fvk=self.fvk, attn_backend=self.attn_backend,
                 weights=pipeline_weights,
                 num_views=self.num_views,
@@ -1737,7 +1793,7 @@ class Pi05TorchFrontendRtx:
                 self.calibrated = False
 
                 pipeline_weights = self._build_pipeline_weights()
-                self.pipeline = Pi05Pipeline(
+                self.pipeline = self._create_pipeline(
                     gemm=self.gemm, fvk=self.fvk, attn_backend=self.attn_backend,
                     weights=pipeline_weights,
                     num_views=self.num_views,
@@ -2271,6 +2327,8 @@ class Pi05TorchFrontendRtx:
             logger.info("Latency: %.1f ms", latency_ms)
 
         result = {"actions": robot_actions}
+        if getattr(self, '_probeflow_config', None) is not None:
+            result['sampler_metadata'] = dict(self.pipeline.last_sampler_metadata)
         if return_noise:
             result["noise"] = self._noise_buf.float().cpu().numpy()
         if self._denoise_trace:
@@ -2362,6 +2420,8 @@ class Pi05TorchFrontendRtx:
         Disabling rebuilds the standard single-sample pipeline on the
         next :meth:`set_prompt`.
         """
+        if enable and getattr(self, '_probeflow_config', None) is not None:
+            raise NotImplementedError('ProbeFlow does not support batching yet')
         if not enable:
             if isinstance(self.pipeline, Pi05BatchedPipeline):
                 self.pipeline = None
@@ -2449,6 +2509,8 @@ class Pi05TorchFrontendRtx:
         refreshes every live pipeline's styles); its prompts are re-embedded
         from the new embedding table on the swap.
         """
+        if getattr(self, '_probeflow_config', None) is not None:
+            raise NotImplementedError('ProbeFlow does not support batching yet')
         bs = int(batch_size)
         if bs < 1:
             raise ValueError(f"batch_size must be >= 1, got {batch_size}")
