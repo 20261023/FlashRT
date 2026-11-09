@@ -182,3 +182,43 @@ def test_production_capture_rejects_cpu_tensors_without_initializing_cuda(monkey
     graph = driver_module().FastWAMVelocityGraph(head); graph.begin_request()
     with pytest.raises(ValueError, match='CUDA'):
         graph(**inputs())
+
+
+@pytest.mark.parametrize('failure', [None, 'body', 'end'])
+def test_real_capture_orchestration_never_flushes_global_caches_and_retains_failed_owner(monkeypatch, failure):
+    """Exercise production orchestration; only actual CUDA primitives are faked."""
+    from contextlib import nullcontext
+    module = driver_module(); events = []; calls = 0
+    stream = type('Stream', (), {'synchronize': lambda self: events.append('stream_sync')})()
+    class Graph:
+        def capture_begin(self, *, capture_error_mode): events.append(('begin', capture_error_mode))
+        def capture_end(self):
+            events.append('end')
+            if failure == 'end': raise RuntimeError('injected end failure')
+        def replay(self): events.append('replay')
+        def reset(self): events.append('reset')
+    def forbidden(*args, **kwargs): pytest.fail('capture must not flush or synchronize global allocator state')
+    monkeypatch.setattr(torch.cuda, 'current_stream', lambda device: stream)
+    monkeypatch.setattr(torch.cuda, 'default_stream', lambda device: object())
+    monkeypatch.setattr(torch.cuda, 'stream', lambda stream: nullcontext())
+    monkeypatch.setattr(torch.cuda, 'CUDAGraph', Graph)
+    monkeypatch.setattr(torch.cuda, 'empty_cache', forbidden)
+    monkeypatch.setattr(torch.cuda, 'synchronize', forbidden)
+    monkeypatch.setattr(torch._C, '_host_emptyCache', forbidden, raising=False)
+    def body(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 4 and failure == 'body': raise RuntimeError('injected body failure')
+        return kwargs['latents_action'] * 2
+    if failure is None:
+        replay, output, release, meta = module._capture_cuda(body, inputs())
+        torch.testing.assert_close(output, torch.full((1, 2, 1), 2.))
+        assert calls == 4 and meta['warmup_evaluations'] == 3 and meta['encoded_bodies'] == 1
+        replay(); release()
+        assert events == ['stream_sync', ('begin', 'global'), 'end', 'replay', 'stream_sync', 'reset']
+    else:
+        with pytest.raises(module.VelocityCaptureError) as error:
+            module._capture_cuda(body, inputs())
+        assert calls == 4 and events == ['stream_sync', ('begin', 'global'), 'end']
+        error.value.release()
+        assert events[-2:] == ['stream_sync', 'reset']

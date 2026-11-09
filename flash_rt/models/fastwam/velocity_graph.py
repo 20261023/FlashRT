@@ -92,8 +92,14 @@ def _capture_cuda(fn, static):
             fn(**static)
         stream.synchronize()
         before = _native_calls(fn)
-        with torch.cuda.graph(graph, stream=stream):  # retain global capture safety
+        # Torch2.11's convenience context performs process-wide device/host
+        # cache flushes. Own the raw lifecycle on the already-current side
+        # stream instead; retain GLOBAL capture safety, never relaxed mode.
+        graph.capture_begin(capture_error_mode='global')
+        try:
             output = fn(**static)
+        finally:
+            graph.capture_end()
         after = _native_calls(fn)
     except BaseException as exc:
         raise VelocityCaptureError('FastWAM raw velocity capture failed', release=release) from exc

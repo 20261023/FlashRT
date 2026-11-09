@@ -61,6 +61,7 @@ class FastWAMActionPipeline:
         self._lock = threading.RLock()
         self._closing = self._closed = False
         self._execution_stream = self._velocity_graph = None
+        self._last_eager_stream = None
         self._native_modules, self._native_skipped = {}, ()
         self._native_runner = None
         self._validate_model()
@@ -80,6 +81,9 @@ class FastWAMActionPipeline:
                 self._execution_stream = torch.cuda.Stream(device=self.device)
                 self._execution_stream.wait_stream(torch.cuda.current_stream(self.device))
             self._velocity_graph = FastWAMVelocityGraph(model._denoise_action_with_video_cache)
+        elif self.device.type == 'cuda':
+            with torch.cuda.device(self.device):
+                self._last_eager_stream = torch.cuda.current_stream(self.device)
 
     @staticmethod
     def _record_stream(value, stream):
@@ -105,7 +109,21 @@ class FastWAMActionPipeline:
                 self._velocity_graph._check_live()
             stream = self._execution_stream
             if stream is None:
-                yield
+                if self.device.type == 'cuda':
+                    with torch.cuda.device(self.device):
+                        caller = torch.cuda.current_stream(self.device)
+                        previous = self._last_eager_stream
+                        if previous is not None and caller != previous:
+                            caller.wait_stream(previous)
+                        # Chain eager callers too: the final stream represents
+                        # all prior submitted work, including borrowed timestep
+                        # storage and the shared native workspace. Retain it
+                        # even when a public asynchronous helper raises.
+                        self._last_eager_stream = caller
+                        self._record_stream(inputs, caller)
+                        yield
+                else:
+                    yield
                 return
             with torch.cuda.device(self.device):
                 caller = torch.cuda.current_stream(self.device)
@@ -471,9 +489,12 @@ class FastWAMActionPipeline:
             self._closing = True
             if self._execution_stream is not None:
                 self._execution_stream.synchronize()
+            elif self._last_eager_stream is not None:
+                self._last_eager_stream.synchronize()
             if self._velocity_graph is not None:
                 self._velocity_graph.close()
             self._velocity_graph = self._execution_stream = None
+            self._last_eager_stream = None
             self._native_modules.clear()
             self._native_runner = self.model = None
             self._time_rows.clear()

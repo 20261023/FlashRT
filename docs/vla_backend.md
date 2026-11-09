@@ -248,6 +248,11 @@ quiescent:** no unrelated non-captured work on other threads during capture.
 Call `prepare` before concurrent serving. The instance lock cannot coordinate
 arbitrary CUDA users in the process. Inference failures stop further graph work;
 `close()` remains available and failed graph resets can be retried.
+Eager public operations also chain caller streams, retaining the final stream
+until `close()` drains it before dropping borrowed timestep/model storage.
+The graph uses raw `CUDAGraph.capture_begin`/`capture_end` with global capture
+safety rather than Torch2.11's convenience context, which implicitly flushes
+process-wide allocator caches. Only owned-stream synchronization/reset is used.
 
 `execution_metadata.velocity_graph` separates per-request replays, condition
 refreshes, captures, three cold warmup evaluations, encoded bodies and dynamically

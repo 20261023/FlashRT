@@ -429,6 +429,35 @@ def test_graph_replay_failure_ends_request_and_rejects_next_prefill(torch):
     frontend.close()
 
 
+def test_eager_velocity_close_drains_caller_stream_and_retries_before_dropping_banks(torch, monkeypatch):
+    frontend = FastWAMTorchFrontend(model=_tiny_model(torch), sigma_shift=1, action_horizon=2)
+    pipe = frontend.pipeline
+    condition = pipe.prepare_condition(_obs(torch))
+    bank, model = pipe._time_bank, pipe.model
+    events = []
+    class Stream:
+        cuda_stream = 99
+        def wait_stream(self, other): events.append(('wait', other.name))
+        def synchronize(self):
+            events.append('sync')
+            if events.count('sync') == 1: raise RuntimeError('in-flight sync failed')
+    stream = Stream()
+    load = SimpleNamespace(name='construction-stream')
+    pipe.device = torch.device('cuda:0')  # CUDA API boundary only; tensor math remains CPU
+    pipe._last_eager_stream = load
+    monkeypatch.setattr(torch.cuda, 'current_stream', lambda device: stream)
+    monkeypatch.setattr(torch.cuda, 'device', lambda device: nullcontext())
+    result = pipe.evaluate_velocity(torch.zeros(1, 2, 2), 1., condition)
+    torch.testing.assert_close(result, torch.ones(1, 2, 2))
+    assert events == [('wait', 'construction-stream')]
+    with pytest.raises(RuntimeError, match='in-flight sync failed'): frontend.close()
+    assert pipe._time_bank is bank and pipe.model is model and frontend.model is model
+    with pytest.raises(RuntimeError, match='clos'): pipe.evaluate_velocity(torch.zeros(1, 2, 2), 1., condition)
+    frontend.close(); frontend.close()
+    assert events == [('wait', 'construction-stream'), 'sync', 'sync']
+    assert pipe._time_bank is pipe.model is frontend.model is None
+
+
 def test_euler_preserves_original_shift_five_grid(torch):
     model = _tiny_model(torch)
     frontend = FastWAMTorchFrontend(model=model, sigma_shift=5, action_horizon=2, num_inference_steps=2)
