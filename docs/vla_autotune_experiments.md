@@ -393,6 +393,41 @@ No product attention backend, numerical profile, default or original gate was
 changed from this observation. The optional frozen-backend probe is a separate
 diagnostic experiment, not a pre-qualified product implementation.
 
+The explicit backend matrix subsequently ran as job309409 on
+`round015/d78ecfb0`. All four one-hot backends executed at grouping6/18 in both
+runtimes with unchanged frozen official QKV, layout, dtype, scale and masking:
+
+| Torch SDPA backend | Unequal elements versus external FA2 | Maxabs | Relative L2 | Exact versus AUTO |
+|---|---:|---:|---:|---|
+| FLASH_ATTENTION | 559 | .00390625 | 2.94742066e-5 | yes |
+| EFFICIENT_ATTENTION | 853921 | .015625 | .000971597 | no |
+| CUDNN_ATTENTION | 905372 | .015625 | .001023550 | no |
+| MATH | 925829 | .015625 | .001049684 | no |
+
+Independent raw-tensor checks confirmed all15common output arms exact across
+Torch2.7.1/cuDNN90701 and Torch2.11.0/cuDNN91900. Grouping6/18 did not change
+these operator outputs. **None** of these forced Torch backends reproduced the
+external FA2 arm exactly; therefore no exact-candidate confirmation branch was
+eligible. Selecting Math or another backend merely because it sounds more
+precise would move this frozen point farther from that reference.
+
+The separate AUTO trace observed three
+`aten::_scaled_dot_product_flash_attention` calls and three actual CUDA
+`pytorch_flash::flash_fwd_kernel` launches, plus the concatenation kernel. That
+is direct dispatch evidence for this region, not inference from the API name
+or a performance measurement. Its original exported name map also contained a
+mirrored GPU `record_function` annotation. That annotation is **not a kernel**:
+it is excluded in independent analysis, and the summary-classification source
+was corrected with RED->GREEN tests to separate user annotations and keep
+annotation-only traces unverified. Original job artifacts were not rewritten;
+the numerical backend comparisons above are unaffected.
+
+AUTO/Flash is the closest tested Torch arm here, still not FA2-exact. Product
+attention, numerical profiles, original action tolerances and the failed
+seven-fixture qualification remain unchanged. The independent merger PROJ1
+batch/layout contribution remains a separate possible ablation, not a repaired
+ViT or policy inferred from this operator matrix.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot

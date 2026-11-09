@@ -167,6 +167,30 @@ def test_missing_cuda_profiler_activity_is_unknown_not_zero_work(attention):
     assert summary['kernel_identity'] == 'unverified_no_cuda_activity'
 
 
+def test_gpu_user_annotations_are_not_reported_as_cuda_kernels(attention):
+    events = [SimpleNamespace(name='user-region', device_type='DeviceType.CUDA', is_user_annotation=True),
+              SimpleNamespace(name='actual_kernel', device_type='DeviceType.CUDA', is_user_annotation=False)]
+    summary = attention.summarize_dispatch_events(events)
+    assert summary['cuda_kernel_names_in_region'] == {'actual_kernel': 1}
+    assert summary['ignored_cuda_annotation_names'] == {'user-region': 1}
+
+
+def test_own_gpu_region_mirror_is_excluded_even_without_annotation_flag(attention):
+    events = [SimpleNamespace(name='diagnostic-region', device_type='DeviceType.CPU', is_user_annotation=True),
+              SimpleNamespace(name='diagnostic-region', device_type='DeviceType.CUDA', is_user_annotation=False),
+              SimpleNamespace(name='actual_kernel', device_type='DeviceType.CUDA', is_user_annotation=False)]
+    summary = attention.summarize_dispatch_events(events, region_name='diagnostic-region')
+    assert summary['cuda_kernel_names_in_region'] == {'actual_kernel': 1}
+    assert summary['ignored_cuda_annotation_names'] == {'diagnostic-region': 1}
+
+
+def test_only_gpu_region_annotations_do_not_establish_kernel_identity(attention):
+    summary = attention.summarize_dispatch_events([SimpleNamespace(
+        name='diagnostic-region', device_type='DeviceType.CUDA', is_user_annotation=True)])
+    assert summary['cuda_activity_observed'] is False
+    assert summary['cuda_kernel_names_in_region'] == {} and summary['kernel_identity'] == 'unverified_no_cuda_activity'
+
+
 def test_help_and_allocation_guard_without_outputs(tmp_path):
     env = {key: value for key, value in os.environ.items() if not key.startswith('SLURM_')}
     result = subprocess.run([sys.executable, str(SCRIPT), '--help'], env=env, text=True, capture_output=True)

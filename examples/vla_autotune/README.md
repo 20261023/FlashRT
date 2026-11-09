@@ -251,3 +251,5 @@ Backend contexts must restore flags before successful publication. These flags
 are used only in the serial diagnostic process, never installed as a product
 default or a new action-acceptance threshold. Torch's Flash backend is not assumed
 to be the external FA2 binary or bitwise-equivalent to it.
+Mirrored GPU `record_function` annotations are counted separately, never as
+kernel names. An annotation-only trace still has unverified kernel identity.

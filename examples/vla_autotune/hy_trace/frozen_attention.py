@@ -128,15 +128,23 @@ def probe_sdpa_arm(qkv, *, heads, group_size, name, preflight=None, synchronize=
         return output, {**metadata, 'status': 'executed'}
 
 
-def summarize_dispatch_events(events):
+def summarize_dispatch_events(events, *, region_name=None):
     from collections import Counter
-    operators, kernels = Counter(), Counter()
+    operators, kernels, annotations = Counter(), Counter(), Counter()
     for event in events:
-        if str(event.device_type).endswith('CUDA'):
+        is_cuda = str(event.device_type).endswith('CUDA')
+        # Kineto can mirror a record_function region on CUDA. A device-type
+        # label alone does not make that annotation an executed GPU kernel.
+        if getattr(event, 'is_user_annotation', False) or event.name == region_name:
+            if is_cuda:
+                annotations[event.name] += 1
+            continue
+        if is_cuda:
             kernels[event.name] += 1
         elif event.name.startswith('aten::_scaled_dot_product'):
             operators[event.name] += 1
     return {'sdpa_operator_counts': dict(operators), 'cuda_kernel_names_in_region': dict(kernels),
+            'ignored_cuda_annotation_names': dict(annotations),
             'cuda_activity_observed': bool(kernels),
             'kernel_identity': 'observed_region_names_not_one_to_one_attribution' if kernels else 'unverified_no_cuda_activity',
             'semantics': 'Names/counts only; no profiler timing or zero-GPU-work claim'}
@@ -144,13 +152,14 @@ def summarize_dispatch_events(events):
 
 def _profile_auto_sdpa(qkv, *, heads, group_size):
     import torch
+    region = 'frozen_auto_sdpa_no_timing_acceptance'
     with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
                                           torch.profiler.ProfilerActivity.CUDA],
                                 record_shapes=False, with_stack=False, profile_memory=False) as profile:
-        with torch.profiler.record_function('frozen_auto_sdpa_no_timing_acceptance'):
+        with torch.profiler.record_function(region):
             attention_arm(qkv, heads=heads, group_size=group_size)
             torch.cuda.synchronize(qkv.device)
-    return summarize_dispatch_events(profile.events())
+    return summarize_dispatch_events(profile.events(), region_name=region)
 
 
 def _sibling(name):
