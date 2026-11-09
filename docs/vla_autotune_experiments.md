@@ -281,6 +281,38 @@ unknown bound classification; missing prefix-stage evidence was not zeroed or
 inferred from a residual walltime. No robot success, global parameter optimum,
 cross-job performance ranking, or automatic default promotion is claimed.
 
+The next bound refinement (job309386) reused the **same immutable round014
+source, workload and exact gate**, with a new campaign instance and confirmed
+job. It tested the observed10-fail/14-pass region rather than loosening a budget:
+
+| Graph point | Actual NFE | Median ms | P95 ms | Worst relative L2 | Min cosine | Disposition |
+|---|---|---:|---:|---:|---:|---|
+| Torch Euler20 reference | 20 | 251.6074 | 252.3159 | 0 | ~1 | control |
+| Torch Euler11 | 11 | 159.8610 | 160.8566 | .0784776 | .997424 | reject |
+| Torch Euler12 | 12 | 170.1411 | 171.7190 | .0560137 | .998713 | reject |
+| **Torch Euler13** | **13** | **179.7011** | **180.0663** | **.0453660** | **.999179** | **select in this scope** |
+| Torch Euler14 | 14 | 190.6152 | 190.9841 | .0372622 | .999441 | pass, slower |
+| Torch PF eps=.00006,max20 | 13/15/21 | 200.5839 | 262.2253 | .0461508 | .999132 | pass, slower |
+| Torch PF eps=.00007,max20 | 11/13/21 | 180.5588 | 262.7861 | .0702523 | .998064 | reject |
+| Cached native Euler11 | 11 | 170.5311 | 171.0508 | .0744344 | .997701 | reject |
+| Cached native Euler12 | 12 | 180.7251 | 181.2629 | .0544527 | .998793 | reject |
+| Cached native Euler13 | 13 | 190.8152 | 191.5830 | .0428495 | .999268 | pass, slower |
+| Cached native Euler14 | 14 | 201.5966 | 202.1167 | .0340776 | .999540 | pass, slower |
+| Torch Euler20 bookend | 20 | 252.6042 | 252.9031 | 0 | ~1 | pass |
+
+Every40sample bundle was independently checked as in round1 before strict
+ingestion:7validated/5rejected, bookend drift+.39614%. Euler13 reduced the
+same-allocation reference median28.58%. Its per-case relativeL2 values were
+.0328582/.0453660/.0382539/.0346602 for original/noise20261110/noise20261111/image.
+Paired native points sometimes had smaller error, but did not beat the selected
+Torch point's latency; engine choice was measured, not presumed.
+
+The PF points' P95 reflects their actual21NFE requests, not the requested max
+misreported as a fixed work budget. No new tail-latency constraint was invented
+afterward; raw samples/NFE and the existing median objective stay explicit.
+This closes a finite controlled-proxy refinement, **not** a global optimum,
+held-out dataset result, robot-success claim or automatic policy-default change.
+
 ## Hy: keep mechanical checks and official acceptance separate
 
 Semantic BF16 execution, fixed-noise replay and Euler2/PF2/graph-eager mechanics
