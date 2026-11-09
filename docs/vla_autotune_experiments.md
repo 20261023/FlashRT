@@ -236,6 +236,51 @@ separate. Euler10 original-input output differed from same-engine Euler20 by
 The measurements establish execution preservation, not task success or a
 universal sampler budget. Other geometry/hardware remain unqualified.
 
+### Bound v2 FastWAM graph/sampler search
+
+Job309300 exercised the actual controller/worker path after fixing graph replay
+counters being mistaken for immutable backend identity. Its immutable source
+was `round014/baef55ff`; full Candidate, campaign-instance and confirmed job
+binding were enforced, not backfilled into older standalone validation records.
+
+Four requests held geometry/context/proprio fixed: original prepared input/noise,
+new CPU-Torch noises20261110/20261111, and imagebrightness+.1 clipped to[-1,1].
+This is synthetic sensitivity, not representative task evaluation. Before the
+run, the explicit engineering gate was **all7normalized channels, worst relative
+L2<=.05 and minimum cosine>=.999 versus Torch graph Euler20 across all four**.
+It is not a universal VLA tolerance; no threshold was loosened after rejection.
+Hy's original oracle gate and all library defaults remained unchanged.
+
+Each point used8excluded warmups and40total measured requests,10per case, in
+fresh serial processes within one A800 allocation:
+
+| Graph point | Actual NFE | Median ms | Worst relative L2 | Min cosine | Disposition |
+|---|---|---:|---:|---:|---|
+| Torch Euler20 reference | 20 | 252.0941 | 0 | ~1 | control |
+| Torch Euler10 | 10 | 150.3535 | .107391 | .994934 | reject |
+| **Torch Euler14** | **14** | **191.7414** | **.0372622** | **.999441** | **select in this scope** |
+| Torch Euler16 | 16 | 211.8832 | .0220205 | .999802 | pass, slower |
+| Torch Euler18 | 18 | 232.7558 | .0119571 | .999930 | pass, slower |
+| Torch PF eps=.00005,max20 | 15/17/21 | 221.6153 | .0303350 | .999632 | pass, slower |
+| Torch PF eps=.0001,max20 | 9/21 | 139.4244 | .104311 | .995595 | reject |
+| Cached native Euler16 | 16 | 223.8490 | .0203627 | .999831 | pass, slower |
+| Cached native Euler18 | 18 | 243.2042 | .0110135 | .999942 | pass, slower |
+| Cached native Euler20 | 20 | 263.3780 | .00555848 | .999985 | pass, slower |
+| Torch Euler20 bookend | 20 | 251.8910 | 0 | ~1 | pass |
+
+All11complete raw bundles were fetched. Independent CPU checks covered every
+saved action, request coverage, deterministic repeats, numerical metrics, full
+candidate/instance/job identity, actual NFE/replay equality, one prefill/request,
+and steady zero captures/builds/queries before strict ingestion. The ledger
+recorded9validated/2rejected; bookend drift was-.08054%. The selected median was
+23.94%lower than the graph Euler20 reference **within this four-case proxy**.
+The139ms PF point was rejected rather than called the fastest acceptable policy.
+
+The separate profile retained raw-velocity CUDA-event intervals and explicitly
+unknown bound classification; missing prefix-stage evidence was not zeroed or
+inferred from a residual walltime. No robot success, global parameter optimum,
+cross-job performance ranking, or automatic default promotion is claimed.
+
 ## Hy: keep mechanical checks and official acceptance separate
 
 Semantic BF16 execution, fixed-noise replay and Euler2/PF2/graph-eager mechanics
