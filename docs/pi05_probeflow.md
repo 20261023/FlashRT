@@ -1,5 +1,9 @@
 # Pi0.5 FlashRT + ProbeFlow (dev, opt-in BF16)
 
+For the experimental multi-model execution interface, see
+[VLA backend](vla_backend.md). It reuses this Pi0.5 implementation and the shared
+`flash_rt.sampling` policy; the direct frontend interface below is unchanged.
+
 ProbeFlow reduces Action Expert evaluations using the initial/lookahead velocity
 direction. FlashRT still executes the neural model; the sampler and backend are
 orthogonal choices. This adaptation requires no training or checkpoint edits.

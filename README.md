@@ -20,6 +20,11 @@ NVIDIA GPUs, AMD GPUs, and Ascend NPUs, with CUDA, HIP, and AscendC backends.
 
 The flagship integration today is **VLA control** — production frontends for Pi0, Pi0.5, GROOT N1.6, GROOT N1.7, and Pi0-FAST, validated on LIBERO where applicable. The same kernel set also powers BAGEL world-model research paths, Higgs Audio v3 TTS, Wan2.2 / Motus video-policy paths, and **single-stream LLM inference** with Qwen3.6-27B NVFP4 long-context serving. The pattern is workload-shaped (small-batch realtime), not model-class-shaped.
 
+**Experimental model/sampler backend:** [`flash_rt.vla`](docs/vla_backend.md)
+separates FlashRT execution from Euler/ProbeFlow selection for model-level
+optimization. Newly adapted paths are source integrations, not runtime-validated
+performance claims; see the linked support and input/output boundaries.
+
 ## Demos
 
 ### VLA
