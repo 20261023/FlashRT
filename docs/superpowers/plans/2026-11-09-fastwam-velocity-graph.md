@@ -40,18 +40,18 @@ share this orchestration while retaining truthful metadata.
 `FastWAMVelocityGraph(fn, *, capture=None)`, `begin_request()`, `__call__(**kwargs)`,
 `end_request()`, `snapshot()`, `close()`, `VelocityGeometryMismatch`.
 
-- [ ] Write behavior tests: same-pointer refresh; time/x updates; end/nesting
+- [x] Write behavior tests: same-pointer refresh; time/x updates; end/nesting
   admission; borrowed output alias and explicit clone preservation; shape/stride/
   dtype/list mismatch; unsupported overlap; capture/output/replay/release failures;
   retry-safe idempotent close; dynamically derived cold and replay counters.
-- [ ] Run `cpu-env/bin/python -m pytest -q tests/test_fastwam_velocity_graph.py`.
+- [x] Run `cpu-env/bin/python -m pytest -q tests/test_fastwam_velocity_graph.py`.
   Expected missing module/API RED. CPU tests inject capture only, no fake CUDA
   qualification; real production path must reject CPU tensors.
-- [ ] Implement checked tensor trees and owned capture resource; use side-stream
+- [x] Implement checked tensor trees and owned capture resource; use side-stream
   capture on pipeline's current stream, three warmups, global capture safety,
   strong references and no publication until output validation succeeds.
-- [ ] Rerun the test command. Expected all pass, no CUDA initialization.
-- [ ] Commit only driver/tests with actual test evidence; push existing fork.
+- [x] Rerun the test command. Expected all pass, no CUDA initialization.
+- [x] Commit only driver/tests with actual test evidence; push existing fork.
 
 ### Task 2: Pipeline ownership, ordered execution and frontend cleanup
 
@@ -63,17 +63,17 @@ share this orchestration while retaining truthful metadata.
 `use_cuda_graph: bool=False`, explicit `close()`, graph execution metadata;
 standalone `evaluate_velocity()` remains eager/locked.
 
-- [ ] Write tests for static option errors before paths/device probe, unchanged
+- [x] Write tests for static option errors before paths/device probe, unchanged
   default, no model method replacement, Euler10 and PF against eager using real
   CPU toy model plus injected capture, per-request prefill/refresh, NFE and alias
   safety, finally-ended request on error, stream ordering and retry cleanup.
-- [ ] Run those test files; expect unsupported option/API or wrong metadata RED.
-- [ ] Add driver dispatch/request scope, one owned non-default execution stream,
+- [x] Run those test files; expect unsupported option/API or wrong metadata RED.
+- [x] Add driver dispatch/request scope, one owned non-default execution stream,
   current-stream waits/lifetime recording and shared lock for every public model
   operation. Preserve eager code paths and arithmetic. Close graph before model
   and runner references; frontend clears its model only after successful close.
-- [ ] Rerun focused files and selected VLA/Fast/PF suite; expect all green.
-- [ ] Commit/push the independently tested integration (not runtime-qualified).
+- [x] Rerun focused files and selected VLA/Fast/PF suite; expect all green.
+- [x] Commit/push the independently tested integration (not runtime-qualified).
 
 ### Task 3: Honest backend selection and measured integration validation
 
@@ -85,17 +85,33 @@ runner/docs, `docs/vla_backend.md`.
 `backend='torch'`, native flag selected from backend, accurate descriptors and
 return metadata; no change to Candidate identity or numerical gates.
 
-- [ ] Write tests for Torch Fast route/metadata, default partial-native route,
+- [x] Write tests for Torch Fast route/metadata, default partial-native route,
   non-Fast Torch refusal, Torch/native-option conflicts and legacy graph refusal
   before filesystem/CUDA access. Expect current FlashRT-only RED.
-- [ ] Add minimal config/registry routing and metadata; extend runner with explicit
+- [x] Add minimal config/registry routing and metadata; extend runner with explicit
   Euler10 and adaptive PF configuration, preserving independent upstream oracle.
-- [ ] Run focused tests, full selected suite, bare pytest (report dependency
+- [x] Run focused tests, full selected suite, bare pytest (report dependency
   failures by name), whitespace check and staged-only clean export.
-- [ ] Commit/push, then create new immutable source snapshot and run bounded
+- [x] Commit/push, then create new immutable source snapshot and run bounded
   single-A800 serial eager/graph for each engine, same fixed noise and changed
   noise/proprio/image/context/mask. Require same-engine exact arrays, actual NFE,
   one prefill/request, counter separation and successful cleanup. Do not alter
   failed snapshots or describe this as robot-quality acceptance.
-- [ ] One fresh whole-change review; concrete Important fixes use RED->GREEN.
+- [x] One fresh whole-change review; concrete Important fixes use RED->GREEN.
   Preserve failures/unknowns and commit/push factual evidence/docs.
+
+## Recorded completion evidence and boundaries
+
+Implementation checkpoints: e5028b96,8741579e,8d5b9666; review fixes a5140aac.
+Real A800 jobs309097 (Euler10/PF-selected2 and2CUDAresource tests),309138
+(PFdense9/11NFE),309187 (20steps) completed with independently checked raw
+same-engine graph/eager and changed-input controls. These are not robot tests.
+Follow-up045f4cbd fixes worker identity handling for dynamic graph counters;
+the actual CPU pipeline/backend/worker chain reproduced RED before the fix.
+Selected clean-export suite552passed/41subtests/2explicitmodule skips; bare
+pytest still20optional/native collectionerrors and25skips, recorded by name in
+the task-local full log. No full-repository green or all-hardware qualification.
+
+Deferred: old profiler/pilot forwarded library-graph flag preflight. Use the
+new validator, not those wrappers, for library graph verification. Work remains
+on the existing development fork branch; no merge, PR or default promotion.

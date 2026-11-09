@@ -264,11 +264,14 @@ independently. No global CUDA cache flush or second weight copy is introduced.
 
 The library integration is opt-in engineering functionality. The earlier A800
 Euler2 **example pilot** is not evidence for this new ownership/stream
-implementation. Later job309097 at `a5140aac` separately verified actual Euler10
-and adaptive PF's selected2NFE branch, including six changed-input controls per
-engine and real CUDA resource regressions. That run did not exercise PF dense
-restart or the default20-step budget. See the measured iteration notes; other
-geometry/hardware and robot success remain unqualified, and eager is still default.
+implementation. Later jobs at `a5140aac` separately verified actual Euler10 and
+PF's selected2NFE branch (309097), real dense restart with9/11NFE (309138), and
+the20-step budget (309187), including six graph/eager input controls per engine,
+owned cleanup and real CUDA resource regressions. Torch Euler10/20 original-input
+outputs also matched their independent upstream controls exactly. This is
+execution preservation, **not** sampler approximation or robot-quality acceptance.
+See the measured iteration notes; other geometry/hardware and robot success
+remain unqualified, and eager is still default.
 
 ## Explicit numerical and kernel profiles
 

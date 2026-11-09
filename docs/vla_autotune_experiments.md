@@ -199,6 +199,43 @@ quality or FastWAM sampler-approximation acceptance gate was defined, so the
 Dense PF, default20steps, other geometries/hardware and robot success remain
 unqualified by this run. The option is still disabled by default.
 
+Two subsequent parameter-only jobs reused the **unchanged** `round012/a5140aac`
+source; neither edited or retrospectively relabeled job309097:
+
+| Job / point | Scheduled steps | Actual NFE | Eager median ms | Graph median ms |
+|---|---:|---:|---:|---:|
+| 309138 Torch PF max10,eps=.0001 | 8 | 9 | 390.1538 | 140.6916 |
+| 309138 cached PF max10,eps=.0001 | 8 | 9 | 489.7465 | 151.5507 |
+| 309187 Torch Euler20 | 20 | 20 | 804.6938 | 255.0711 |
+| 309187 cached Euler20 | 20 | 20 | 971.2947 | 262.6851 |
+
+Job309138 really exercised discarded-probe/dense restart: both engines selected
+8steps/9NFE on the original input; changed inputs selected8/10steps with9/11NFE.
+Torch proprio selected10/11 while cached proprio selected8/9, illustrating that
+small engine numerical differences can change an adaptive routing decision.
+Same-engine graph/eager arrays, schedules and all twelve refresh pairs were
+exact; all ten mutants affected output and cleanup passed. On identity-checked
+inputs, numerical-only comparison to saved same-engine Euler10 refresh outputs
+gave worst relativeL2=.0408773 (Torch) and.0436711 (cached) across six cases.
+That comparison spans jobs and is **not** a cross-job latency ranking or a robot
+quality gate.
+
+Job309187 covered the library's default **20-step budget** with independent
+direct-upstream Euler20 (median797.6525ms), Torch and cached eager/graph. Actual
+NFE20, one prefill/request, complete raw sample equality, both six-case refresh
+sets and owned cleanup all passed. Torch original-input output was bitwise equal
+to the independent upstream control; cached retained relativeL2=.00471522 versus
+that control, identically in eager/graph. Own-engine median reductions were
+68.30% and72.96%; cached graph still was not faster than Torch graph.
+
+For cached Euler20,305steady host enqueues do not replace the20graph replays
+containing6140logical native Linear calls. Cold3head warmups/oneencoded body remain
+separate. Euler10 original-input output differed from same-engine Euler20 by
+6.55%relativeL2 (Torch) or6.51%(cached), so even an exactly preserved faster
+10-step graph is not automatically qualified as a20-step policy replacement.
+The measurements establish execution preservation, not task success or a
+universal sampler budget. Other geometry/hardware remain unqualified.
+
 ## Hy: keep mechanical checks and official acceptance separate
 
 Semantic BF16 execution, fixed-noise replay and Euler2/PF2/graph-eager mechanics
