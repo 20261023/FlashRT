@@ -54,3 +54,6 @@ ge_check_op.json
 # Local tutorial environments and results
 .reference/
 results/
+
+# Task-local plans, source investigations and generated artifacts.
+/devlocal/

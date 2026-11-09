@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import ctypes
 import logging
+from numbers import Integral
 
 import numpy as np
 
-from flash_rt.core.cuda_buffer import CudaBuffer
+from flash_rt.core.cuda_buffer import CudaBuffer, _check, _cudart
 from flash_rt.core.cuda_graph import CUDAGraph
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ class Pi0Pipeline:
         max_prompt_len: Max tokenised prompt length.
         chunk_size:   Action chunk length Sa (default 10).
         use_fp8:      Enable FP8 E4M3 on vision / encoder GEMMs.
-        use_fp8_decoder: Enable FP8 on decoder GEMMs (else BF16).
+        use_fp8_decoder: Enable FP8 on decoder GEMMs (else FP16).
         num_steps:    Diffusion denoise steps (default 10).
 
     Expected weights dict keys:
@@ -119,6 +120,10 @@ class Pi0Pipeline:
                  chunk_size=CHUNK_SIZE_DEFAULT,
                  use_fp8=True, use_fp8_decoder=True,
                  num_steps=NUM_STEPS_DEFAULT):
+        if isinstance(num_steps, bool) or not isinstance(num_steps, Integral) or num_steps <= 0:
+            raise ValueError("num_steps must be a positive integer")
+        if use_fp8_decoder and not use_fp8:
+            raise ValueError("use_fp8_decoder requires use_fp8 for shared FP8 scratch")
         self.gemm = gemm
         self.fvk = fvk
         # fvk.gmm_fp16 (cuBLAS HGEMM with beta support) needs an
@@ -175,7 +180,9 @@ class Pi0Pipeline:
         # CUDA graph state (set by record_infer_graph)
         self._graph = None
         self._graph_stream = None
-        self._cudart = ctypes.CDLL("libcudart.so")
+        # Reuse the runtime whose pointer/size/status signatures are declared
+        # by cuda_buffer; an independent CDLL would default stream ints to c_int.
+        self._cudart = _cudart
 
         # Pre-expand vision position embedding across num_views.
         self._build_pos_embed_expanded()
@@ -387,7 +394,13 @@ class Pi0Pipeline:
                 self.vision_seq * 3 * VIS_D,
                 self.vision_seq * VIS_H,
             )
-            self._bias_zero_buf = CudaBuffer.device_zeros(nbytes, FP16)
+            zero_buf = CudaBuffer.device_empty(nbytes, FP16)
+            # CudaBuffer.device_zeros uses the legacy default stream;
+            # initialization must be ordered with this execution stream.
+            _check(self._cudart.cudaMemsetAsync(
+                zero_buf.ptr, 0, zero_buf.nbytes,
+                ctypes.c_void_p(stream)), "Pi0 bias scratch initialization")
+            self._bias_zero_buf = zero_buf
         self.fvk.bias_residual_fp16(
             x_ptr, self._bias_zero_buf.ptr.value, bias_ptr,
             seq, dim, stream=stream)
@@ -787,16 +800,21 @@ class Pi0Pipeline:
     #   Phase C: Pi0 decoder (18 layers × 10 steps, flow matching)
     # ══════════════════════════════════════════════════════════════════
 
-    def transformer_decoder(self, stream=0):
+    def transformer_decoder(self, stream=0, *, _step_indices=None, _integrate=True):
+        """Run Euler steps, or evaluate selected times without changing actions.
+
+        ``_integrate=False`` requires output weights scaled by -1 (progress
+        velocity), rather than Euler's -1/N. The state-token row is never
+        projected to actions in either path.
+        """
         fvk = self.fvk
         W = self.weights
         B = self.bufs
         enc_seq = self.encoder_seq_len
         sd = self.S_dec
         sa = self.chunk_size
-        gemm = self.gemm
-
-        for step in range(self.num_steps):
+        steps = range(self.num_steps) if _step_indices is None else _step_indices
+        for step in steps:
             # Build decoder_x for this denoise step.
             self._assemble_decoder_x(step, stream)
 
@@ -817,14 +835,17 @@ class Pi0Pipeline:
             # internal accumulation, one FP16 cast on write; no
             # intermediate BF16/FP16 round-trip through a temp buffer.
             # (Weights pre-scaled by -1/num_steps in the frontend.)
+            # Velocity-only evaluation writes an independent buffer with
+            # beta=0. It must never accumulate into the integration state.
             x_out_action_ptr = B["decoder_x_norm"].ptr.value + DEC_D * 2
+            output_ptr = B["diffusion_noise" if _integrate else "decoder_action_buf"].ptr.value
             fvk.gmm_fp16(
                 self._ctx, x_out_action_ptr,
                 W["decoder_action_out_proj_w"],
-                B["diffusion_noise"].ptr.value,
-                sa, ACTION_DIM, DEC_D, 1.0, stream)
+                output_ptr,
+                sa, ACTION_DIM, DEC_D, 1.0 if _integrate else 0.0, stream)
             fvk.add_bias_fp16(
-                B["diffusion_noise"].ptr.value,
+                output_ptr,
                 W["decoder_action_out_proj_b"],
                 sa, ACTION_DIM, stream)
 
@@ -837,7 +858,7 @@ class Pi0Pipeline:
         attn_ptrs = self._attn_ptrs
         fused = self.use_fp8_decoder and self.fp8_calibrated
 
-        # C1: RMSNorm(decoder_x) → FP8 (or BF16 fallback) → QKV GEMM
+        # C1: RMSNorm(decoder_x) → FP8 (or FP16 fallback) → QKV GEMM
         qkv_name = f"decoder_attn_qkv_w_{i}"
         if fused:
             act_scale_qkv = self.fp8_act_scales[qkv_name].ptr.value
@@ -893,7 +914,7 @@ class Pi0Pipeline:
             state_nk=self._state_nk,
         )
 
-        # C4: Attn output projection (FP8 or BF16) → dec_attn_proj
+        # C4: Attn output projection (FP8 or FP16) → dec_attn_proj
         if self.use_fp8_decoder:
             self._fp8_gemm(
                 dec_o_ptr, sd * DEC_NH * DEC_HD,
@@ -1000,7 +1021,7 @@ class Pi0Pipeline:
         self.transformer_encoder(stream)
         self.transformer_decoder(stream)
 
-    def calibrate_fp8(self):
+    def calibrate_fp8(self, stream=0):
         if not self.use_fp8 or self.fp8_calibrated:
             return
         if len(self.fp8_act_scales) > 0:
@@ -1010,8 +1031,8 @@ class Pi0Pipeline:
                 len(self.fp8_act_scales))
             return
         self.fp8_calibrated = False
-        self.run_pipeline(stream=0)
-        self._cudart.cudaDeviceSynchronize()
+        self.run_pipeline(stream=stream)
+        self._cudart.cudaStreamSynchronize(ctypes.c_void_p(stream))
         self.fp8_calibrated = True
         logger.info("FP8 calibrated: %d activation scales collected",
                     len(self.fp8_act_scales))
@@ -1026,10 +1047,6 @@ class Pi0Pipeline:
         pass
 
     def record_infer_graph(self, external_stream_int=None):
-        if self.use_fp8 and not self.fp8_calibrated:
-            self.calibrate_fp8()
-        self.autotune_gemms()
-
         self._graph = CUDAGraph()
         if external_stream_int is None:
             stream = self._graph.create_stream()
@@ -1040,13 +1057,32 @@ class Pi0Pipeline:
             stream_handle = ctypes.c_void_p(stream_int)
         self._graph_stream = stream_handle
 
+        # Euler updates diffusion_noise in place. Warmup/calibration must
+        # always start from the caller's initial noise, not the last sample's
+        # decoded actions, and must not consume the pending inference input.
+        saved_noise = CudaBuffer.device_empty(self.chunk_size * ACTION_DIM, FP16)
+        _check(self._cudart.cudaMemcpyAsync(
+            saved_noise.ptr, self.input_noise_buf.ptr,
+            saved_noise.nbytes, 3, stream_handle), "Pi0 graph initial-noise save")
+
+        def reset_noise():
+            _check(self._cudart.cudaMemcpyAsync(
+                self.input_noise_buf.ptr, saved_noise.ptr,
+                saved_noise.nbytes, 3, stream_handle), "Pi0 graph initial-noise reset")
+
+        if self.use_fp8 and not self.fp8_calibrated:
+            self.calibrate_fp8(stream=stream_int)
+        self.autotune_gemms()
         for _ in range(3):
+            reset_noise()
             self.run_pipeline(stream=stream_int)
+        reset_noise()
         self._cudart.cudaStreamSynchronize(stream_handle)
 
         self._graph.begin_capture(stream_handle)
         self.run_pipeline(stream=stream_int)
         self._graph.end_capture(stream_handle)
+        reset_noise()
         self._cudart.cudaStreamSynchronize(stream_handle)
         logger.info("CUDA Graph captured for Pi0Pipeline")
 
@@ -1078,7 +1114,13 @@ class Pi0Pipeline:
         assert lang_embeds_np.shape[1] == ENC_D
 
         arr = np.ascontiguousarray(lang_embeds_np)
-        self._lang_embeds_buf = CudaBuffer.from_numpy(arr)
+        existing = getattr(self, '_lang_embeds_buf', None)
+        if existing is not None and existing.nbytes == arr.nbytes:
+            # Captured prefixes hold this source address. A same-length
+            # prompt update must not replace/free the backing allocation.
+            existing.upload(arr)
+        else:
+            self._lang_embeds_buf = CudaBuffer.from_numpy(arr)
         self._current_prompt_len = prompt_len
 
         self._set_decoder_rope_for_prompt(prompt_len)
@@ -1094,7 +1136,7 @@ class Pi0Pipeline:
             self._lang_embeds_buf.ptr,
             self._lang_embeds_buf.nbytes, 3, stream)
 
-    def forward(self):
+    def forward(self, stream=None):
         """Replay the captured graph (or fall back to ``run_pipeline``).
 
         Frontend must write inputs to ``input_images_buf``,
@@ -1102,9 +1144,11 @@ class Pi0Pipeline:
         after return, ``input_noise_buf`` holds the final actions.
         """
         if self._graph is not None:
-            self._graph.replay(self._graph_stream)
-            self._cudart.cudaStreamSynchronize(self._graph_stream)
+            handle = self._graph_stream if stream is None else ctypes.c_void_p(int(stream))
+            self._graph.replay(handle)
+            self._cudart.cudaStreamSynchronize(handle)
         else:
-            self.run_pipeline(stream=0)
-            self._cudart.cudaDeviceSynchronize()
+            stream_int = 0 if stream is None else int(stream)
+            self.run_pipeline(stream=stream_int)
+            self._cudart.cudaStreamSynchronize(ctypes.c_void_p(stream_int))
         return self.bufs["diffusion_noise"].ptr.value

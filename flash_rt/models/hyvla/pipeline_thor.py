@@ -12,12 +12,13 @@ they may NOT live in ``hardware/thor/shared_primitives.py``):
   * ``denoise_forward``  — 32-layer expert tower (``_v`` only) + action
                            head, 10 flow-matching Euler steps.
 
-The BF16 baseline is **correctness-first**: heavy GEMMs are plain
-``torch`` bf16 matmuls and attention is ``F.scaled_dot_product_attention``
-(the numerically-exact reference path, GQA 16/4 + materialized mask).
-The math mirrors the validated reference implementation
-(action-chunk cosine ≥ 0.999 vs the HF reference eager path). The
-optimized path swaps the GEMMs/norms for ``fvk`` pointer kernels, the
+The default ``semantic_bf16`` path keeps plain ``torch`` bf16 GEMMs and
+``F.scaled_dot_product_attention`` (GQA 16/4 + materialized mask). It is
+not numerically identical to official eager math. The opt-in
+``official_local_fp32`` profile implements the verified official local
+RoPE/QK-norm/eager-attention cast boundaries, while retaining BF16 weights,
+projections and value matmuls. It is not an end-to-end official-exact claim.
+The optimized legacy path swaps the GEMMs/norms for ``fvk`` pointer kernels, the
 two masked-attention bodies for fused kernels, and captures one CUDA
 graph — the forward signatures and the ``[vision|text]`` static-routing
 layout are chosen so that swap is local (no structural change). No
@@ -56,6 +57,9 @@ class HyVLAThorBF16Pipeline:
 
     def __init__(self, W):
         self.W = W
+        self.numerical_profile = getattr(W, "numerical_profile", "semantic_bf16")
+        if self.numerical_profile not in ("semantic_bf16", "official_local_fp32"):
+            raise ValueError(f"Unknown HyVLA numerical_profile {self.numerical_profile!r}")
         self.n_heads = 16
         self.n_kv = 4
         self.head_dim = 128
@@ -344,6 +348,21 @@ class HyVLAThorBF16Pipeline:
         return x.reshape(B, -1, C)
 
     # ------------------------------------------------------------------
+    def _rms_norm(self, hidden_states, weight):
+        """Official RMSNorm casts the normalized value BEFORE weight multiply.
+
+        For BF16 hidden states that is an observable intermediate BF16 rounding.
+        For FP32 rotated Q/K the normalized value and output stay FP32 despite
+        the BF16 norm weight. Keep the fused legacy expression for the default.
+        """
+        if self.numerical_profile == "semantic_bf16":
+            return F.rms_norm(hidden_states, (hidden_states.shape[-1],), weight, self.rms_eps)
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.rms_eps)
+        return weight * hidden_states.to(input_dtype)
+
     def _attn(self, q, k, v, mask):
         """GQA attention with a materialized bool mask.
 
@@ -355,6 +374,17 @@ class HyVLAThorBF16Pipeline:
             r = q.shape[1] // k.shape[1]
             k = k.repeat_interleave(r, dim=1)
             v = v.repeat_interleave(r, dim=1)
+        if self.numerical_profile == "official_local_fp32":
+            # modeling_dual_tower.py:eager_attention_forward, not FP32 SDPA:
+            # FP32 QK -> finite mask sentinel -> FP32 softmax -> BF16 probs/V.
+            # The recorded official driver has no ambient autocast. Enforce
+            # those local boundaries even if this adapter's caller enables it.
+            with torch.autocast(device_type=q.device.type, enabled=False):
+                scores = torch.matmul(q.float(), k.float().transpose(-2, -1))
+                scores *= self.head_dim ** -0.5
+                scores = torch.where(mask, scores, -2.3819763e38)
+                probabilities = F.softmax(scores, dim=-1).to(v.dtype)
+                return torch.matmul(probabilities, v)
         with torch.nn.attention.sdpa_kernel(
                 [torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION,
                  torch.nn.attention.SDPBackend.MATH]):
@@ -381,11 +411,11 @@ class HyVLAThorBF16Pipeline:
         _fp4p = self._fp4 and fp4v is not None and w_text is not None
 
         if w_text is None:
-            hs_n = F.rms_norm(hs, (D,), w_vis[4], self.rms_eps)
+            hs_n = self._rms_norm(hs, w_vis[4])
             qkv = self._fp8_gemm(hs_n[0], fp8w[0], fp8w[1]) if _fp8 else hs_n[0] @ w_vis[0].t()
         else:
-            hs_v = F.rms_norm(hs[0, :n_vis], (D,), w_vis[4], self.rms_eps)
-            hs_t = F.rms_norm(hs[0, n_vis:], (D,), w_text[4], self.rms_eps)
+            hs_v = self._rms_norm(hs[0, :n_vis], w_vis[4])
+            hs_t = self._rms_norm(hs[0, n_vis:], w_text[4])
             if _fp8p:
                 qkv = torch.cat([self._fp8_gemm(hs_v, fp8v[0], fp8v[1]),
                                  self._fp8_gemm(hs_t, fp8t[0], fp8t[1])], 0)
@@ -413,8 +443,8 @@ class HyVLAThorBF16Pipeline:
             # RoPE (rotate_half) THEN QK-Norm (RMSNorm over head_dim).
             q = q * cos + _rot_half(q) * sin
             k = k * cos + _rot_half(k) * sin
-            q = F.rms_norm(q, (hd,), qk_w[0], self.rms_eps)
-            k = F.rms_norm(k, (hd,), qk_w[1], self.rms_eps)
+            q = self._rms_norm(q, qk_w[0])
+            k = self._rms_norm(k, qk_w[1])
 
             if kbuf.shape[1] != nkv:            # pre-expanded cache
                 r = kbuf.shape[1] // nkv
@@ -434,7 +464,7 @@ class HyVLAThorBF16Pipeline:
             if self._ffn_mega and ffn_mk is not None and _fp8:
                 hs = self._ffn_mega_bf16(hs, D, w_vis[5], ffn_mk)
             else:
-                hs_n = F.rms_norm(hs, (D,), w_vis[5], self.rms_eps)
+                hs_n = self._rms_norm(hs, w_vis[5])
                 gu = self._fp8_gemm(hs_n[0], fp8w[4], fp8w[5]) if _fp8 else hs_n[0] @ w_vis[2].t()
                 g, u = gu.chunk(2, -1)
                 act = F.silu(g) * u
@@ -448,8 +478,8 @@ class HyVLAThorBF16Pipeline:
                 o_v = att[0, :n_vis] @ w_vis[1].t()
                 o_t = att[0, n_vis:] @ w_text[1].t()
             hs = hs + torch.cat([o_v, o_t], 0)[None]
-            hs_v = F.rms_norm(hs[0, :n_vis], (D,), w_vis[5], self.rms_eps)
-            hs_t = F.rms_norm(hs[0, n_vis:], (D,), w_text[5], self.rms_eps)
+            hs_v = self._rms_norm(hs[0, :n_vis], w_vis[5])
+            hs_t = self._rms_norm(hs[0, n_vis:], w_text[5])
             if _fp4p:
                 N_gu = fp4v[4]
                 gu = torch.cat([self._fp4_gemm_f4(hs_v, fp4v[0], fp4v[1], N_gu, D),
@@ -538,6 +568,42 @@ class HyVLAThorBF16Pipeline:
 
     # ------------------------------------------------------------------
     @torch.no_grad()
+    def embed_state(self, state):
+        """Project the fixed state token once per observation, not per NFE."""
+        W = self.W
+        return (F.linear(state.to(torch.bfloat16), W._state_w, W._state_b))[:, None]
+
+    @torch.no_grad()
+    def evaluate_velocity(self, x_t, time_emb, state_emb, smask, scos, ssin,
+                          kbuf, vbuf, S_p):
+        """Return the raw model-time BF16 action velocity without integration.
+
+        ``x_t`` is read-only FP32 action noise/latent, without a state row.
+        ``time_emb`` is one precomputed BF16 time embedding; ``state_emb`` is
+        the fixed projected state token. Only the suffix KV scratch is written;
+        cached prefix rows ``[:S_p]`` remain unchanged. The state token attends
+        in the expert, but is excluded from the returned action-only velocity.
+        No sign, timestep, or output-domain conversion is applied here.
+        """
+        W = self.W
+        S_s = 1 + x_t.shape[1]
+        action_emb = F.linear(x_t.to(torch.bfloat16), W._ain_w, W._ain_b)
+        t_emb = time_emb.expand_as(action_emb)
+        ate = torch.cat([action_emb, t_emb], 2)
+        ate = F.linear(ate, W._atmlp_in_w, W._atmlp_in_b)
+        ate = F.silu(ate)
+        ate = F.linear(ate, W._atmlp_out_w, W._atmlp_out_b)
+        hs = torch.cat([state_emb, ate], 1)
+        for li in range(32):
+            exp = self._exp_w(li)
+            qk = (W._qk_norm_q[li], W._qk_norm_k[li])
+            hs = self._block(hs, S_s, None, exp, qk, smask, scos, ssin,
+                             kbuf[li], vbuf[li], S_p, fp8w=self._exp_w_fp8(li),
+                             ffn_mk=self._exp_ffn_mk(li))
+        hs = self._rms_norm(hs, W._exp_final_norm_w)
+        return F.linear(hs[:, -x_t.shape[1]:], W._aout_w, W._aout_b)
+
+    @torch.no_grad()
     def denoise(self, state, x_t, time_embs, smask, scos, ssin,
                 kbuf, vbuf, S_p, num_steps=10):
         """32-layer expert tower + action head, ``num_steps`` Euler steps.
@@ -545,26 +611,11 @@ class HyVLAThorBF16Pipeline:
         ``x_t`` (1, chunk, 32) fp32 is updated in place and returned.
         ``time_embs`` (num_steps, 1, D_exp) bf16 precomputed by frontend.
         """
-        W = self.W
-        S_s = 1 + x_t.shape[1]
         dt = -1.0 / num_steps
-        state_emb = (F.linear(state.to(torch.bfloat16), W._state_w, W._state_b))[:, None]
+        state_emb = self.embed_state(state)
         for s in range(num_steps):
-            action_emb = F.linear(x_t.to(torch.bfloat16), W._ain_w, W._ain_b)
-            t_emb = time_embs[s].expand_as(action_emb)
-            ate = torch.cat([action_emb, t_emb], 2)
-            ate = F.linear(ate, W._atmlp_in_w, W._atmlp_in_b)
-            ate = F.silu(ate)
-            ate = F.linear(ate, W._atmlp_out_w, W._atmlp_out_b)
-            hs = torch.cat([state_emb, ate], 1)
-            for li in range(32):
-                exp = self._exp_w(li)
-                qk = (W._qk_norm_q[li], W._qk_norm_k[li])
-                hs = self._block(hs, S_s, None, exp, qk, smask, scos, ssin,
-                                 kbuf[li], vbuf[li], S_p, fp8w=self._exp_w_fp8(li),
-                                 ffn_mk=self._exp_ffn_mk(li))
-            hs = F.rms_norm(hs, (hs.shape[-1],), W._exp_final_norm_w, self.rms_eps)
-            v_t = F.linear(hs[:, -x_t.shape[1]:], W._aout_w, W._aout_b)
+            v_t = self.evaluate_velocity(x_t, time_embs[s], state_emb, smask,
+                                         scos, ssin, kbuf, vbuf, S_p)
             x_t.add_(dt * v_t.to(x_t.dtype))   # in-place: static buffer for CUDA-graph replay
         return x_t
 

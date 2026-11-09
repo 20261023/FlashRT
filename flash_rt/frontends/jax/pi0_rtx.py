@@ -44,6 +44,7 @@ import ml_dtypes
 import numpy as np
 import torch
 
+from flash_rt.core.cuda_buffer import _cudart
 from flash_rt.models.pi0.pipeline_rtx import (
     ACTION_DIM,
     DEC_D,
@@ -56,6 +57,7 @@ from flash_rt.frontends.torch.pi0_rtx import (
     CHUNK_SIZE_DEFAULT,
     MAX_PROMPT_LEN_DEFAULT,
     Pi0TorchFrontendRtx,
+    _resolve_pi0_sampler,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +99,7 @@ def _interleave_qk_np(w: np.ndarray, num_heads: int) -> np.ndarray:
 
 def convert_pi0_orbax(
     checkpoint_dir: Union[str, pathlib.Path],
+    *, output_scale=None,
 ) -> dict:
     """Convert a Pi0 Orbax JAX checkpoint to the rtx pipeline weight dict.
 
@@ -321,12 +324,16 @@ def convert_pi0_orbax(
     ckpt["action_time_mlp_out_b"] = _to_fp16_cuda(
         raw["action_time_mlp_out.bias"])
 
-    # action_out_proj — pre-scale by -1/num_steps later (in __init__ like
-    # the torch frontend does). Store raw for now.
-    ckpt["decoder_action_out_proj_w"] = _to_fp16_cuda(
-        raw["action_out_proj.kernel"])  # (1024, 32) (in, out)
-    ckpt["decoder_action_out_proj_b"] = _to_fp16_cuda(
-        raw["action_out_proj.bias"])
+    # Default preserves this converter's raw-output contract. Explicit
+    # scales use original tensors, never unscale a rounded Euler projection.
+    for destination, source in [
+        ('decoder_action_out_proj_w', 'action_out_proj.kernel'),
+        ('decoder_action_out_proj_b', 'action_out_proj.bias'),
+    ]:
+        value = raw[source]
+        if output_scale is not None:
+            value = value.astype(np.float32) * output_scale
+        ckpt[destination] = _to_fp16_cuda(value)
 
     # ── Embedding matrix (prompt tokenisation) ──
     ckpt["embedding_weight"] = _to_fp16_cuda(
@@ -361,10 +368,17 @@ class Pi0JaxFrontendRtx(Pi0TorchFrontendRtx):
         max_prompt_len: int = MAX_PROMPT_LEN_DEFAULT,
         use_fp8: bool = True,
         use_fp8_decoder: bool = True,
+        num_steps: int = NUM_STEPS_DEFAULT,
+        sampler: str = 'euler', probeflow_config=None,
+        use_cuda_graph: bool = True,
     ):
+        self._probeflow_config = _resolve_pi0_sampler(
+            sampler, probeflow_config, use_fp8=use_fp8,
+            use_fp8_decoder=use_fp8_decoder, num_steps=num_steps)
+        self._num_steps = int(num_steps)
+        self._use_cuda_graph = bool(use_cuda_graph)
         # Don't chain to Pi0TorchFrontendRtx.__init__ — it expects a
         # safetensors file. We replicate the body and swap the loader.
-        import ctypes
         from flash_rt.hardware.rtx.attn_backend import RtxFlashAttnBackend
         from flash_rt import flash_rt_kernels as fvk
         from flash_rt.frontends.torch.pi0_rtx import _precompute_time_proj_all
@@ -392,7 +406,10 @@ class Pi0JaxFrontendRtx(Pi0TorchFrontendRtx):
 
         # ── Load + convert Orbax ──
         self._checkpoint_path = str(checkpoint_dir)
-        raw_ckpt = convert_pi0_orbax(checkpoint_dir)
+        legacy_euler = self._probeflow_config is None and self._num_steps == NUM_STEPS_DEFAULT
+        output_scale = (-1.0 if self._probeflow_config is not None else
+                        (None if legacy_euler else -1.0 / self._num_steps))
+        raw_ckpt = convert_pi0_orbax(checkpoint_dir, output_scale=output_scale)
 
         self._ckpt_fp16: dict = {
             k: v.contiguous() if isinstance(v, torch.Tensor) else v
@@ -403,22 +420,26 @@ class Pi0JaxFrontendRtx(Pi0TorchFrontendRtx):
         # Pre-scale decoder action output projection by -1/num_steps
         # (matches the torch frontend's pre-scaling step that bakes the
         # flow-matching residual coefficient into the weights).
-        dt_scale = -1.0 / NUM_STEPS_DEFAULT
-        self._ckpt_fp16["decoder_action_out_proj_w"] = (
-            self._ckpt_fp16["decoder_action_out_proj_w"] * dt_scale
-        ).contiguous()
-        self._ckpt_fp16["decoder_action_out_proj_b"] = (
-            self._ckpt_fp16["decoder_action_out_proj_b"] * dt_scale
-        ).contiguous()
+        if legacy_euler:
+            dt_scale = -1.0 / self._num_steps
+            self._ckpt_fp16["decoder_action_out_proj_w"] = (
+                self._ckpt_fp16["decoder_action_out_proj_w"] * dt_scale
+            ).contiguous()
+            self._ckpt_fp16["decoder_action_out_proj_b"] = (
+                self._ckpt_fp16["decoder_action_out_proj_b"] * dt_scale
+            ).contiguous()
 
         # ── Pre-compute time_proj_all (shared helper from torch frontend) ──
         self._time_proj_all = _precompute_time_proj_all(
-            self._ckpt_fp16, self.chunk_size, num_steps=NUM_STEPS_DEFAULT)
+            self._ckpt_fp16, self.chunk_size, num_steps=self._num_steps,
+            timesteps=(self._probeflow_config.timesteps()
+                       if self._probeflow_config is not None else None))
 
         # ── FP8 quantize large GEMMs (shared method) ──
         self._fp8_weights: dict = {}
         self._fp8_store: list = []
-        self._quantize_all_fp8()
+        if self._use_fp8 or self._use_fp8_decoder:
+            self._quantize_all_fp8()
 
         # ── Attention backend ──
         enc_seq_max = self.num_views * 256 + self.max_prompt_len
@@ -446,7 +467,9 @@ class Pi0JaxFrontendRtx(Pi0TorchFrontendRtx):
         self._state_buf_host = torch.empty(
             1, ACTION_DIM, dtype=fp16, device="cuda"
         )
-        self._cudart = ctypes.CDLL("libcudart.so")
+        self._cudart = _cudart
+        self._graph_torch_stream = torch.cuda.Stream()
+        self._graph_torch_stream.wait_stream(torch.cuda.current_stream())
 
         logger.info(
             "Pi0JaxFrontendRtx initialised (num_views=%d, Sa=%d)",

@@ -67,7 +67,7 @@ del _os, _sys
 
 from flash_rt import _extensions as _ext  # noqa: E402
 
-__all__ = ["load_model", "VLAModel", "catalog"]
+__all__ = ["load_model", "VLAModel", "catalog", "vla"]
 
 
 def __getattr__(name):
@@ -92,6 +92,9 @@ def __getattr__(name):
     if name == "catalog":
         import flash_rt.catalog as mod
         return mod
+    if name == "vla":
+        import importlib
+        return importlib.import_module("flash_rt.vla")
     if name == "structures":
         raise ImportError(
             "flash_rt.structures moved to the flashrt-structures "

@@ -2326,7 +2326,10 @@ class Pi05TorchFrontendRtx:
             logger.info("Raw actions[0,:5]: %s", raw_actions[0, :5])
             logger.info("Latency: %.1f ms", latency_ms)
 
-        result = {"actions": robot_actions}
+        # This CPU array was already downloaded for action decoding. Retain it
+        # for cross-sampler numerical replay instead of requiring denoise_trace
+        # (which is incompatible with adaptive sampling) or another GPU copy.
+        result = {"actions": robot_actions, "raw_actions": raw_actions}
         if getattr(self, '_probeflow_config', None) is not None:
             result['sampler_metadata'] = dict(self.pipeline.last_sampler_metadata)
         if return_noise:

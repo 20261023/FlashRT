@@ -28,12 +28,14 @@ import math
 import os
 import pathlib
 import time
+from numbers import Integral, Real
 from typing import Optional, Union
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
+from flash_rt.core.cuda_buffer import _check, _cudart
 from flash_rt.core.utils.actions import unnormalize_actions, LIBERO_ACTION_DIM
 from flash_rt.hardware.rtx.attn_backend import RtxFlashAttnBackend
 from flash_rt.models.pi0.pipeline_rtx import (
@@ -43,6 +45,7 @@ from flash_rt.models.pi0.pipeline_rtx import (
     DEC_L, DEC_D, DEC_H, DEC_HD,
     ACTION_DIM, CHUNK_SIZE_DEFAULT, NUM_STEPS_DEFAULT,
 )
+from flash_rt.sampling.probeflow import ProbeFlowConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,30 @@ fp8_e4m3 = torch.float8_e4m3fn
 
 IMG_HW = 224
 MAX_PROMPT_LEN_DEFAULT = 48
+
+
+def _positive_int(value, name):
+    if isinstance(value, bool) or not isinstance(value, Integral) or value <= 0:
+        raise ValueError(f'{name} must be a positive integer')
+    return int(value)
+
+
+def _resolve_pi0_sampler(sampler, config, *, use_fp8, use_fp8_decoder, num_steps):
+    """Validate sampler choices before checkpoint/device access in both loaders."""
+    _positive_int(num_steps, 'num_steps')
+    if sampler not in ('euler', 'probeflow'):
+        raise ValueError("sampler must be 'euler' or 'probeflow'")
+    if sampler == 'euler':
+        if config is not None:
+            raise ValueError("probeflow_config requires sampler='probeflow'")
+        if use_fp8_decoder and not use_fp8:
+            raise ValueError('use_fp8_decoder requires use_fp8 for shared FP8 scratch')
+        return None
+    if config is not None and not isinstance(config, ProbeFlowConfig):
+        raise ValueError('probeflow_config must be a ProbeFlowConfig')
+    if use_fp8 or use_fp8_decoder:
+        raise ValueError('Pi0 ProbeFlow requires FP16: disable use_fp8 and use_fp8_decoder')
+    return config if config is not None else ProbeFlowConfig()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -69,8 +96,14 @@ def _interleave_qk(w: torch.Tensor, num_heads: int) -> torch.Tensor:
     )
 
 
-def convert_pi0_safetensors(safetensors_path: Union[str, pathlib.Path]) -> dict:
-    """Convert a Pi0 PyTorch safetensors file to the BF16 weight dict.
+def convert_pi0_safetensors(safetensors_path: Union[str, pathlib.Path], *,
+                            output_scale: Optional[float] = None) -> dict:
+    """Convert Pi0 safetensors to FP16 weights with an explicit output scale.
+
+    ``output_scale=None`` preserves the legacy -1/10 FP16 conversion.
+    Explicit scales are applied to the original output tensors in FP32, not
+    recovered by unscaling an already-rounded Euler projection. ProbeFlow
+    uses -1; configurable Euler uses -1/N.
 
     Key transformations (matching pi05 for the shared vision/encoder
     backbones, Pi0-specific for the decoder):
@@ -259,12 +292,18 @@ def convert_pi0_safetensors(safetensors_path: Union[str, pathlib.Path]) -> dict:
     ckpt["action_time_mlp_out_w"] = g("action_time_mlp_out.weight").t().contiguous()
     ckpt["action_time_mlp_out_b"] = g("action_time_mlp_out.bias").contiguous()
 
-    # action_out_proj — pre-scaled by -1/num_steps.
-    dt_scale = -1.0 / NUM_STEPS_DEFAULT
-    ckpt["decoder_action_out_proj_w"] = (
-        g("action_out_proj.weight").t().contiguous() * dt_scale).contiguous()
-    ckpt["decoder_action_out_proj_b"] = (
-        g("action_out_proj.bias").contiguous() * dt_scale).contiguous()
+    # Never unscale the old -1/10 projection: it has already been rounded.
+    if output_scale is None:
+        dt_scale = -1.0 / NUM_STEPS_DEFAULT
+        ckpt["decoder_action_out_proj_w"] = (
+            g("action_out_proj.weight").t().contiguous() * dt_scale).contiguous()
+        ckpt["decoder_action_out_proj_b"] = (
+            g("action_out_proj.bias").contiguous() * dt_scale).contiguous()
+    else:
+        ckpt["decoder_action_out_proj_w"] = (
+            g_raw("action_out_proj.weight").float().t() * output_scale).to(fp16).contiguous()
+        ckpt["decoder_action_out_proj_b"] = (
+            g_raw("action_out_proj.bias").float() * output_scale).to(fp16).contiguous()
 
     # ── Embedding matrix (prompt tokenisation) ──
     ckpt["embedding_weight"] = g(
@@ -275,22 +314,35 @@ def convert_pi0_safetensors(safetensors_path: Union[str, pathlib.Path]) -> dict:
 
 
 def _precompute_time_proj_all(ckpt: dict, chunk_size: int,
-                              num_steps: int = NUM_STEPS_DEFAULT) -> torch.Tensor:
-    """Pre-compute ``silu(time_emb[s] @ W_t.T + b) → broadcast to Sa rows``.
+                              num_steps: int = NUM_STEPS_DEFAULT, *,
+                              timesteps=None) -> torch.Tensor:
+    """Pre-compute ``time_emb[s] @ W_t.T + b`` broadcast to action rows.
 
-    Output: ``(num_steps * chunk_size, DEC_D)`` bf16 on CUDA. Frontend
+    Output: ``(len(timesteps) * chunk_size, DEC_D)`` FP16 on CUDA. Frontend
     stores the pointer; the pipeline reads step slice
     ``[s * Sa * DEC_D * 2 : (s+1) * Sa * DEC_D * 2]`` bytes per step.
 
     Note: unlike Pi0.5's style pre-compute, Pi0 does NOT apply silu here
     — the ``action_time_mlp`` silu lives inside the per-step assembly
-    (``fused_add_silu_bf16``). What we pre-compute is just the time
+    (``fused_add_silu_fp16``). What we pre-compute is just the time
     half of the linear map + bias, identical to ``pi0_thor``.
     """
+    num_steps = _positive_int(num_steps, 'num_steps')
+    chunk_size = _positive_int(chunk_size, 'chunk_size')
+    if timesteps is None:
+        times = tuple(1.0 - step / num_steps for step in range(num_steps))
+    else:
+        times = tuple(timesteps)
+        if not times or any(isinstance(t, bool) or not isinstance(t, Real)
+                            or not math.isfinite(t) or not 0.0 < t <= 1.0
+                            for t in times):
+            raise ValueError('timesteps must be nonempty finite model times in (0, 1]')
+    # Validate before reading weights or touching CUDA. Exact float keys are
+    # shared with the sampler; never round the tiny positive probe time to 0.
     # Keep the projection step in fp32 to match the reference's dtype
     # (PI0Pytorch's embed_suffix casts time_emb to timestep.dtype — in
     # the eval harness, timestep is fp32, so the linear map stays full
-    # precision). bf16 casting here is only applied to the final buffer
+    # precision). FP16 casting here is only applied to the final buffer
     # that the decoder kernel consumes.
     W_t = ckpt["_action_time_mlp_in_wt_raw"].to("cuda", torch.float32)
     b = ckpt["_action_time_mlp_in_b"].to("cuda", torch.float32)
@@ -300,18 +352,17 @@ def _precompute_time_proj_all(ckpt: dict, chunk_size: int,
     period = 4e-3 * (4.0 / 4e-3) ** fraction
     scaling = 1.0 / period * 2 * math.pi
 
-    out = torch.empty(num_steps, chunk_size, DEC_D, dtype=fp16, device="cuda")
-    for step in range(num_steps):
-        t_val = 1.0 - step / num_steps
+    out = torch.empty(len(times), chunk_size, DEC_D, dtype=fp16, device="cuda")
+    for step, t_val in enumerate(times):
         sin_input = scaling * t_val  # fp64
         time_emb_f32 = torch.cat(
             [torch.sin(sin_input), torch.cos(sin_input)],
             dim=-1).to(torch.float32)  # (Da,) fp32
         tp = (time_emb_f32.unsqueeze(0) @ W_t.t()
-              + b.unsqueeze(0)).to(fp16)  # (1, Da) → bf16
+              + b.unsqueeze(0)).to(fp16)  # (1, Da) → FP16
         out[step] = tp.expand(chunk_size, -1)
 
-    return out.reshape(num_steps * chunk_size, DEC_D).contiguous()
+    return out.reshape(len(times) * chunk_size, DEC_D).contiguous()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -337,6 +388,12 @@ class Pi0TorchFrontendRtx:
     (``set_prompt`` / ``infer`` / ``calibrate_with_real_data`` /
     ``get_latency_stats``) so eval scripts can swap between Pi0 and Pi0.5.
     ``observation`` must include a ``"state"`` numpy array.
+
+    Euler defaults to ten steps and the original FP8-enabled FP16 kernels.
+    ProbeFlow is opt-in via ``sampler='probeflow'`` and requires both FP8
+    flags to be false. ``num_steps`` controls Euler only; adaptive schedules
+    are configured by ``ProbeFlowConfig``. Set ``use_cuda_graph=False`` for
+    eager native execution, without requiring a prior calibration call.
     """
 
     def __init__(self,
@@ -345,7 +402,15 @@ class Pi0TorchFrontendRtx:
                  chunk_size: int = CHUNK_SIZE_DEFAULT,
                  max_prompt_len: int = MAX_PROMPT_LEN_DEFAULT,
                  use_fp8: bool = True,
-                 use_fp8_decoder: bool = True):
+                 use_fp8_decoder: bool = True,
+                 num_steps: int = NUM_STEPS_DEFAULT,
+                 sampler: str = 'euler', probeflow_config=None,
+                 use_cuda_graph: bool = True):
+        self._probeflow_config = _resolve_pi0_sampler(
+            sampler, probeflow_config, use_fp8=use_fp8,
+            use_fp8_decoder=use_fp8_decoder, num_steps=num_steps)
+        self._num_steps = int(num_steps)
+        self._use_cuda_graph = bool(use_cuda_graph)
         checkpoint_dir = pathlib.Path(checkpoint_dir)
         self.num_views = int(num_views)
         self.chunk_size = int(chunk_size)            # Sa
@@ -370,7 +435,9 @@ class Pi0TorchFrontendRtx:
                 "checkpoint (generated by "
                 "openpi_src/examples/convert_jax_model_to_pytorch.py)")
         self._checkpoint_path = str(safetensors_path)
-        raw_ckpt = convert_pi0_safetensors(safetensors_path)
+        output_scale = (-1.0 if self._probeflow_config is not None else
+                        (None if self._num_steps == NUM_STEPS_DEFAULT else -1.0 / self._num_steps))
+        raw_ckpt = convert_pi0_safetensors(safetensors_path, output_scale=output_scale)
 
         self._ckpt_fp16: dict = {}
         for k, v in raw_ckpt.items():
@@ -382,12 +449,15 @@ class Pi0TorchFrontendRtx:
 
         # Pre-compute time_proj_all (keeps underlying tensor alive).
         self._time_proj_all = _precompute_time_proj_all(
-            self._ckpt_fp16, self.chunk_size, num_steps=NUM_STEPS_DEFAULT)
+            self._ckpt_fp16, self.chunk_size, num_steps=self._num_steps,
+            timesteps=(self._probeflow_config.timesteps()
+                       if self._probeflow_config is not None else None))
 
         # FP8 quantize large GEMMs.
         self._fp8_weights: dict = {}
         self._fp8_store: list = []
-        self._quantize_all_fp8()
+        if self._use_fp8 or self._use_fp8_decoder:
+            self._quantize_all_fp8()
 
         # Attention backend — pass S_dec as the "decoder chunk" so its
         # dec_Q / dec_O_masked / enc_K extend KV capacity include the
@@ -412,7 +482,9 @@ class Pi0TorchFrontendRtx:
             self.chunk_size, ACTION_DIM, dtype=fp16, device="cuda")
         self._state_buf_host = torch.empty(
             1, ACTION_DIM, dtype=fp16, device="cuda")
-        self._cudart = ctypes.CDLL("libcudart.so")
+        self._cudart = _cudart
+        self._graph_torch_stream = torch.cuda.Stream()
+        self._graph_torch_stream.wait_stream(torch.cuda.current_stream())
 
         logger.info("Pi0TorchFrontendRtx initialised (num_views=%d, Sa=%d)",
                     self.num_views, self.chunk_size)
@@ -448,30 +520,32 @@ class Pi0TorchFrontendRtx:
             store.append(scale)
             fp8[name] = (w_fp8.data_ptr(), scale.data_ptr())
 
-        for i in range(VIS_L):
-            quant(f"vision_attn_qkv_w_{i}", W["vision_attn_qkv_w"][i])
-            quant(f"vision_attn_o_w_{i}", W["vision_attn_o_w"][i])
-            quant(f"vision_ffn_up_w_{i}", W["vision_ffn_up_w"][i])
-            quant(f"vision_ffn_down_w_{i}", W["vision_ffn_down_w"][i])
-        quant("vision_projector_w", W["encoder_multi_modal_projector_w"])
+        if self._use_fp8:
+            for i in range(VIS_L):
+                quant(f"vision_attn_qkv_w_{i}", W["vision_attn_qkv_w"][i])
+                quant(f"vision_attn_o_w_{i}", W["vision_attn_o_w"][i])
+                quant(f"vision_ffn_up_w_{i}", W["vision_ffn_up_w"][i])
+                quant(f"vision_ffn_down_w_{i}", W["vision_ffn_down_w"][i])
+            quant("vision_projector_w", W["encoder_multi_modal_projector_w"])
 
-        for i in range(ENC_L):
-            quant(f"encoder_attn_qkv_w_{i}", W["encoder_attn_qkv_w"][i])
-            quant(f"encoder_attn_o_w_{i}", W["encoder_attn_o_w"][i])
-            gate_up = torch.cat(
-                [W["encoder_ffn_gate_w"][i], W["encoder_ffn_up_w"][i]],
-                dim=1).contiguous()
-            quant(f"encoder_ffn_gate_up_w_{i}", gate_up)
-            quant(f"encoder_ffn_down_w_{i}", W["encoder_ffn_down_w"][i])
+            for i in range(ENC_L):
+                quant(f"encoder_attn_qkv_w_{i}", W["encoder_attn_qkv_w"][i])
+                quant(f"encoder_attn_o_w_{i}", W["encoder_attn_o_w"][i])
+                gate_up = torch.cat(
+                    [W["encoder_ffn_gate_w"][i], W["encoder_ffn_up_w"][i]],
+                    dim=1).contiguous()
+                quant(f"encoder_ffn_gate_up_w_{i}", gate_up)
+                quant(f"encoder_ffn_down_w_{i}", W["encoder_ffn_down_w"][i])
 
-        for i in range(DEC_L):
-            quant(f"decoder_attn_qkv_w_{i}", W["decoder_attn_qkv_w"][i])
-            quant(f"decoder_attn_o_w_{i}", W["decoder_attn_o_w"][i])
-            gate_up = torch.cat(
-                [W["decoder_ffn_gate_w"][i], W["decoder_ffn_up_w"][i]],
-                dim=1).contiguous()
-            quant(f"decoder_ffn_gate_up_w_{i}", gate_up)
-            quant(f"decoder_ffn_down_w_{i}", W["decoder_ffn_down_w"][i])
+        if self._use_fp8_decoder:
+            for i in range(DEC_L):
+                quant(f"decoder_attn_qkv_w_{i}", W["decoder_attn_qkv_w"][i])
+                quant(f"decoder_attn_o_w_{i}", W["decoder_attn_o_w"][i])
+                gate_up = torch.cat(
+                    [W["decoder_ffn_gate_w"][i], W["decoder_ffn_up_w"][i]],
+                    dim=1).contiguous()
+                quant(f"decoder_ffn_gate_up_w_{i}", gate_up)
+                quant(f"decoder_ffn_down_w_{i}", W["decoder_ffn_down_w"][i])
 
         logger.info("FP8 quantized %d Pi0 GEMM weights", len(fp8))
 
@@ -543,6 +617,21 @@ class Pi0TorchFrontendRtx:
     # Public API
     # -----------------------------------------------------------------
 
+    def _create_pipeline(self, **kwargs):
+        config = getattr(self, '_probeflow_config', None)
+        if config is None:
+            return Pi0Pipeline(**kwargs)
+        from flash_rt.models.pi0.pipeline_rtx_probeflow import Pi0ProbeFlowPipeline
+        kwargs['num_steps'] = len(config.timesteps())
+        return Pi0ProbeFlowPipeline(probeflow_config=config, **kwargs)
+
+    def _prepare_execution_stream(self):
+        if getattr(self, '_graph_torch_stream', None) is None:
+            self._graph_torch_stream = torch.cuda.Stream()
+        # Weights, prompt data or explicit noise may have been produced on
+        # the caller's stream. Keep their producers ahead of native reads.
+        self._graph_torch_stream.wait_stream(torch.cuda.current_stream())
+
     def set_prompt(self, prompt_text) -> None:
         embeds, prompt_len = _embed_prompt(
             prompt_text, self.embedding_weight, max_len=self.max_prompt_len)
@@ -554,20 +643,18 @@ class Pi0TorchFrontendRtx:
             self.calibrated = False
 
             pipeline_weights = self._build_pipeline_weights()
-            # Pi0 on RTX runs the FP16 pipeline with FP8 on by default
-            # to match pi0_thor's FP16 math path. The alternative
-            # non-FP8 ``else`` fallback paths in the pipeline exist for
-            # pi0.5 compatibility and are not fully wired for FP16
-            # buffers; avoid hitting them by keeping FP8 enabled.
+            # Both native quantized and non-quantized paths use FP16
+            # buffers/kernels. ProbeFlow deliberately selects the latter.
             use_fp8 = bool(self._use_fp8)
             use_fp8_decoder = bool(self._use_fp8_decoder)
-            self.pipeline = Pi0Pipeline(
+            self.pipeline = self._create_pipeline(
                 gemm=self.gemm, fvk=self.fvk, attn_backend=self.attn_backend,
                 weights=pipeline_weights,
                 num_views=self.num_views,
                 max_prompt_len=prompt_len,
                 chunk_size=self.chunk_size,
-                use_fp8=use_fp8, use_fp8_decoder=use_fp8_decoder)
+                use_fp8=use_fp8, use_fp8_decoder=use_fp8_decoder,
+                num_steps=getattr(self, '_num_steps', NUM_STEPS_DEFAULT))
 
         embeds_np = embeds.contiguous().view(torch.uint16).cpu().numpy()
         self.pipeline.set_language_embeds(embeds_np)
@@ -621,7 +708,7 @@ class Pi0TorchFrontendRtx:
         if not 0.0 <= percentile <= 100.0:
             raise ValueError(f"percentile must be in [0, 100], got {percentile}")
 
-        if n == 1:
+        if n == 1 or not getattr(self, '_use_fp8', True):
             self._calibrate_single_frame(obs_list[0])
         else:
             self._calibrate_multi_frame(
@@ -632,8 +719,8 @@ class Pi0TorchFrontendRtx:
         self.calibrate(sample_observations)
 
     def _calibrate_single_frame(self, sample) -> None:
-        logger.info("Calibrating FP8 with a single real sample...")
-        self._graph_torch_stream = torch.cuda.Stream()
+        logger.info("Preparing Pi0 with a single real sample...")
+        self._prepare_execution_stream()
 
         with torch.cuda.stream(self._graph_torch_stream):
             images = self._stack_images(sample)
@@ -661,14 +748,21 @@ class Pi0TorchFrontendRtx:
             if os.environ.get("PI0_FORCE_DYNAMIC_FP8") != "1":
                 self.pipeline.calibrate_fp8()
             self.pipeline.autotune_gemms()
-            self.pipeline.record_infer_graph(external_stream_int=stream_int)
+            # The calibration forward integrated in place. Restore the
+            # original noise before graph warmup/capture (or eager reuse).
+            self._copy_tensor_to_pipeline_buf_stream(
+                noise, self.pipeline.input_noise_buf, stream_int)
+            if getattr(self, '_use_cuda_graph', True):
+                self.pipeline.record_infer_graph(external_stream_int=stream_int)
+            self._cudart.cudaStreamSynchronize(ctypes.c_void_p(stream_int))
 
         self.calibrated = True
-        self.graph_recorded = True
+        self.graph_recorded = getattr(self, '_use_cuda_graph', True)
         self._precision_spec = self._snapshot_precision_spec(
             method="single_frame", n=1, percentile=None)
-        self._warn_if_scale_ceiling_exceeded()
-        logger.info("Pi0 calibration + graph capture complete")
+        if getattr(self, '_use_fp8', True):
+            self._warn_if_scale_ceiling_exceeded()
+        logger.info("Pi0 preparation complete (CUDA graphs=%s)", self.graph_recorded)
 
     def _calibrate_multi_frame(
         self, obs_list, *, percentile: float, verbose: bool,
@@ -683,7 +777,7 @@ class Pi0TorchFrontendRtx:
         logger.info(
             "Calibrating FP8 across %d real samples (percentile=%.2f)...",
             n, percentile)
-        self._graph_torch_stream = torch.cuda.Stream()
+        self._prepare_execution_stream()
         self.pipeline.fp8_calibrated = False
 
         per_sample: list[np.ndarray] = []
@@ -735,10 +829,14 @@ class Pi0TorchFrontendRtx:
             if os.environ.get("PI0_FORCE_DYNAMIC_FP8") != "1":
                 self.pipeline.fp8_calibrated = True
             self.pipeline.autotune_gemms()
-            self.pipeline.record_infer_graph(external_stream_int=stream_int)
+            self._copy_tensor_to_pipeline_buf_stream(
+                noise, self.pipeline.input_noise_buf, stream_int)
+            if getattr(self, '_use_cuda_graph', True):
+                self.pipeline.record_infer_graph(external_stream_int=stream_int)
+            self._cudart.cudaStreamSynchronize(ctypes.c_void_p(stream_int))
 
         self.calibrated = True
-        self.graph_recorded = True
+        self.graph_recorded = getattr(self, '_use_cuda_graph', True)
         self._precision_spec = self._snapshot_precision_spec(
             method="percentile", n=n, percentile=percentile)
         self._warn_if_scale_ceiling_exceeded(label=f"pi0_rtx_N{n}")
@@ -797,17 +895,27 @@ class Pi0TorchFrontendRtx:
         """:class:`ModelPrecisionSpec` captured at calibration time."""
         return getattr(self, "_precision_spec", None)
 
-    def infer(self, observation: dict, debug: bool = False) -> dict:
+    def infer(self, observation: dict, debug: bool = False, *, noise=None) -> dict:
+        """Infer with optional initial noise of shape ``(chunk_size, 32)``.
+
+        The caller's noise is copied, never integrated in place. ``actions``
+        keeps the original unnormalization and LIBERO slicing semantics.
+        ``raw_actions`` and ``sampler_metadata`` expose normalized actions
+        and actual neural evaluation counts, including discarded probes.
+        """
         if self.pipeline is None:
             raise RuntimeError("set_prompt must be called before infer")
+        if noise is not None and tuple(noise.shape) != (self.chunk_size, ACTION_DIM):
+            raise ValueError(f'noise must have shape ({self.chunk_size}, {ACTION_DIM})')
 
         t0 = time.perf_counter()
 
+        self._prepare_execution_stream()
         with torch.cuda.stream(self._graph_torch_stream):
             stream_int = self._graph_torch_stream.cuda_stream
 
             self._fill_img_buf(observation)
-            self._noise_buf.normal_()
+            self._fill_noise_buf(noise)
             self._fill_state_buf(observation.get("state"))
 
             self._copy_tensor_to_pipeline_buf_stream(
@@ -818,12 +926,19 @@ class Pi0TorchFrontendRtx:
                 self._state_buf_host, self.pipeline.input_state_buf,
                 stream_int)
 
-            out_ptr = self.pipeline.forward()
+            if getattr(self, '_use_cuda_graph', True) and not self.graph_recorded:
+                # No prior calibrate call is required. Inputs are now ready
+                # on this stream; graph preparation restores initial noise.
+                self._cudart.cudaStreamSynchronize(ctypes.c_void_p(stream_int))
+                self.pipeline.record_infer_graph(external_stream_int=stream_int)
+                self.graph_recorded = True
+            out_ptr = self.pipeline.forward(stream=stream_int)
 
-            self._cudart.cudaMemcpyAsync(
+            _check(self._cudart.cudaMemcpyAsync(
                 ctypes.c_void_p(self._noise_out.data_ptr()),
                 ctypes.c_void_p(out_ptr),
-                self._noise_out.numel() * 2, 3, stream_int)
+                self._noise_out.numel() * 2, 3, ctypes.c_void_p(stream_int)),
+                "Pi0 output D2D copy")
 
         self._cudart.cudaStreamSynchronize(
             ctypes.c_void_p(self._graph_torch_stream.cuda_stream))
@@ -839,7 +954,28 @@ class Pi0TorchFrontendRtx:
             logger.info("Raw actions[0,:5]: %s", raw_actions[0, :5])
             logger.info("Latency: %.1f ms", latency_ms)
 
-        return {"actions": robot_actions}
+        return {"actions": robot_actions, "raw_actions": raw_actions,
+                "sampler_metadata": self._sampler_metadata()}
+
+    def _sampler_metadata(self):
+        if getattr(self, '_probeflow_config', None) is not None:
+            return dict(self.pipeline.last_sampler_metadata)
+        steps = getattr(self, '_num_steps', NUM_STEPS_DEFAULT)
+        return {'sampler': 'euler', 'scheduled_steps': steps, 'nfe': steps,
+                'timesteps': [1.0 - index / steps for index in range(steps)]}
+
+    def _fill_noise_buf(self, noise):
+        if noise is None:
+            self._noise_buf.normal_()
+            return
+        expected = (self.chunk_size, ACTION_DIM)
+        if tuple(noise.shape) != expected:
+            raise ValueError(f'noise must have shape {expected}')
+        source = torch.as_tensor(noise).to(
+            device=self._noise_buf.device, dtype=self._noise_buf.dtype)
+        if not torch.isfinite(source).all().item():
+            raise ValueError('noise must contain finite values representable in FP16')
+        self._noise_buf.copy_(source)
 
     def get_latency_stats(self) -> dict:
         if not self.latency_records:
@@ -908,9 +1044,9 @@ class Pi0TorchFrontendRtx:
         nbytes = src.numel() * src.element_size()
         assert nbytes == dst_buf.nbytes, \
             f"size mismatch: src {nbytes} vs dst {dst_buf.nbytes}"
-        self._cudart.cudaMemcpyAsync(
+        _check(self._cudart.cudaMemcpyAsync(
             dst_buf.ptr, ctypes.c_void_p(src.data_ptr()), nbytes, 3,
-            stream_int)
+            ctypes.c_void_p(stream_int)), "Pi0 input D2D copy")
 
 
 # ════════════════════════════════════════════════════════════════════
