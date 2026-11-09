@@ -154,8 +154,11 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
             current_backend = dict(result.get('backend_metadata', {}))
             if isinstance(current_backend.get('execution_coverage'), dict):
                 coverage = dict(current_backend['execution_coverage'])
-                coverage.pop('native_linear_calls', None)
-                coverage.pop('native_plan_stats', None)
+                # Request/cumulative work counters are evidence, not immutable
+                # identity. Keep the engine, graph-mode flag and installed
+                # modules here; retain ALL counters in execution_metadata.
+                for key in ('native_linear_calls', 'native_plan_stats', 'velocity_graph'):
+                    coverage.pop(key, None)
                 current_backend['execution_coverage'] = coverage
             execution_metadata.append(result.get('execution_metadata', {}))
             if backend_metadata is None:

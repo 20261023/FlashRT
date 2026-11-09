@@ -134,6 +134,11 @@ unchanged during their experiments.
   comparison inconclusive rather than choosing the most optimistic run.
 - Load, prepare and steady samples are separate. Actual NFE and mapped clocks
   are preserved in `measurement.sampler_metadata`; top-level aliases remain.
+- Per-request native enqueue/Linear counts and raw-field graph counters remain
+  complete in `execution_metadata`, not the worker's immutable backend-identity
+  comparison. Engine, graph-mode flag, native implementation and installed module
+  coverage still must remain unchanged; growing replay totals are not a backend
+  substitution.
 - Failed cleanup retains samples as partial evidence, not valid measurement.
 
 ## Profiling and dataflow

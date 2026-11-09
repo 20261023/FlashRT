@@ -2,6 +2,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from flash_rt.vla import BackendConfig
 from flash_rt.vla.autotune.schema import Candidate
@@ -95,6 +96,81 @@ def test_dynamic_native_call_counts_are_evidence_not_backend_identity(tmp_path):
                             device_info={'uuid': 'cpu-fixture'}, profile=False)
     assert record['state'] == 'measured'
     assert [item['native_linear_calls']['head'] for item in record['execution_metadata']] == [1, 2]
+
+
+class GraphCounterBackend(CPUBackend):
+    def infer(self, *args, **kwargs):
+        result = super().infer(*args, **kwargs)
+        coverage = {'backend': 'flashrt_bf16_linear_partial', 'fully_native': False,
+                    'cuda_graph': True, 'native_linear_backend': 'cached',
+                    'native_linear_modules': ['action.head'],
+                    'velocity_graph': {'replays': 2, 'total_replays': self.calls*2,
+                                       'captures': 0, 'condition_refreshes': 1}}
+        result['backend_metadata']['execution_coverage'] = coverage
+        result['execution_metadata'] = coverage
+        return result
+
+
+def test_dynamic_graph_work_is_retained_but_not_compared_as_backend_identity(tmp_path):
+    candidate = Candidate('graph', BackendConfig(model='pi05', checkpoint='/weights'), 'toy-replay')
+    backend = GraphCounterBackend()
+    record = run_experiment(candidate, workload(tmp_path), tmp_path/'graph-counters',
+        attempt_id='graph-counts', comparison_id='c1', warmup=0, repeats=2,
+        backend_factory=lambda config: backend, device_info={'uuid': 'cpu-fixture'}, profile=False)
+    assert record['state'] == 'measured'
+    assert [item['velocity_graph']['total_replays'] for item in record['execution_metadata']] == [2, 4]
+    identity = record['backend_metadata']['execution_coverage']
+    assert 'velocity_graph' not in identity
+    assert identity['cuda_graph'] is True and identity['native_linear_modules'] == ['action.head']
+    assert backend.closed
+
+
+@pytest.mark.parametrize('changed_field,new_value', [
+    ('cuda_graph', False), ('backend', 'upstream_torch_reference'),
+    ('native_linear_backend', 'legacy'), ('native_linear_modules', ['different.head']),
+])
+def test_ignoring_graph_counters_does_not_hide_changed_execution_identity(tmp_path, changed_field, new_value):
+    class ChangedIdentity(GraphCounterBackend):
+        def infer(self, *args, **kwargs):
+            result = super().infer(*args, **kwargs)
+            if self.calls == 2:
+                result['backend_metadata']['execution_coverage'][changed_field] = new_value
+            return result
+    candidate = Candidate('identity', BackendConfig(model='pi05', checkpoint='/weights'), 'toy-replay')
+    backend = ChangedIdentity()
+    record = run_experiment(candidate, workload(tmp_path), tmp_path/'identity-change',
+        attempt_id='changed-identity', comparison_id='c1', warmup=0, repeats=2,
+        backend_factory=lambda config: backend, device_info={'uuid': 'cpu-fixture'}, profile=False)
+    assert record['state'] == 'failed'
+    assert 'Backend identity changed' in record['failure']['message']
+    assert 'measurement' not in record and backend.closed
+
+
+def test_real_fastwam_pipeline_graph_worker_roundtrip_keeps_counters_out_of_identity(tmp_path):
+    torch = pytest.importorskip('torch')
+    from flash_rt.frontends.torch.fastwam import FastWAMTorchFrontend
+    from flash_rt.vla.backend import VLABackend
+    from test_fastwam_adapter import _tiny_model, _attach_cpu_graph, _obs
+    config = BackendConfig(model='fastwam', checkpoint='/unused-cpu-toy', backend='torch')
+    frontend = FastWAMTorchFrontend(model=_tiny_model(torch), sigma_shift=1,
+                                   action_horizon=2, num_inference_steps=2)
+    releases = _attach_cpu_graph(frontend, torch)
+    obs = _obs(torch)
+    np.savez(tmp_path/'fast.npz', noise=np.ones((1, 2, 2), np.float32),
+             **{key: value.numpy() for key, value in obs.items()})
+    data = NPZWorkload({'schema_version': 1, 'workload_id': 'fast-cpu-graph', 'model': 'fastwam',
+        'requests': [{'request_id': 'one', 'npz_path': 'fast.npz',
+                      'fields': {key: key for key in obs}, 'noise_key': 'noise'}]}, tmp_path)
+    backend = VLABackend(config, frontend, hardware='injected-cpu-boundary', precision='fp32',
+                         action_domain='normalized-cpu-toy')
+    record = run_experiment(Candidate('fast-graph', config, 'fast-cpu-graph'), data,
+        tmp_path/'fast-graph', attempt_id='fast-graph', comparison_id='c1', warmup=1, repeats=2,
+        backend_factory=lambda config: backend, device_info={'uuid': 'cpu-toy'}, profile=False)
+    assert record['state'] == 'measured', record.get('failure')
+    assert [m['velocity_graph']['total_replays'] for m in record['execution_metadata']] == [6, 8]
+    identity = record['backend_metadata']['execution_coverage']
+    assert record['backend_metadata']['backend'] == 'torch' and identity['cuda_graph'] is True
+    assert 'velocity_graph' not in identity and releases == [True]
 
 
 def test_real_worker_bundle_roundtrips_through_controller_ledger(tmp_path):
