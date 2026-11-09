@@ -47,3 +47,16 @@ def test_describe_needs_no_checkpoint_access_or_gpu():
 def test_invalid_fixed_step_budget_is_rejected(steps):
     with pytest.raises(ValueError, match='num_steps'):
         BackendConfig(model='pi0', checkpoint='/weights', num_steps=steps)
+
+
+def test_fastwam_torch_descriptor_does_not_claim_native_execution():
+    descriptor = describe_backend(BackendConfig(model='fastwam', checkpoint='/missing', backend='torch'))
+    assert descriptor['backend'] == 'torch'
+    assert descriptor['execution_coverage'] == 'upstream-torch-operators-shared-pipeline'
+    assert descriptor['runtime_verified'] is False
+
+
+@pytest.mark.parametrize('model,framework', [('pi0', 'torch'), ('pi05', 'torch'), ('hyvla', 'torch'), ('fastwam', 'jax')])
+def test_torch_backend_is_not_silently_extended_to_unimplemented_models(model, framework):
+    with pytest.raises(ValueError, match='backend'):
+        BackendConfig(model=model, checkpoint='/missing', backend='torch', framework=framework)

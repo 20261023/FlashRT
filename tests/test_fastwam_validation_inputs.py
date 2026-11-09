@@ -15,6 +15,72 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class RunnerContracts(unittest.TestCase):
+    def test_explicit_euler10_torch_graph_and_adaptive_pf_are_not_euler2_aliases(self):
+        args = RUNNER.parser().parse_args(['--run', '--backend', 'torch', '--num-steps', '10',
+                                         '--use-cuda-graph', '--output', '/unused'])
+        config = RUNNER.build_backend_config(args, {'model': 'fixture'})
+        self.assertEqual(config.num_steps, 10)
+        self.assertEqual(config.backend, 'torch')
+        self.assertTrue(config.options['use_cuda_graph'])
+        self.assertNotIn('native_linear_backend', config.options)
+        args = RUNNER.parser().parse_args(['--run', '--backend', 'torch', '--sampler', 'probeflow',
+                                         '--pf-max', '10', '--pf-epsilon', '.008', '--output', '/unused'])
+        config = RUNNER.build_backend_config(args, {'model': 'fixture'})
+        self.assertIsNone(config.num_steps)
+        self.assertEqual(config.probeflow.max_steps, 10)
+
+    def test_graph_instrumentation_counts_logical_callbacks_not_capture_enqueues(self):
+        model = SimpleNamespace(mot=SimpleNamespace(prefill_video_cache_tensor=lambda: 'kv'),
+                                _denoise_action_with_video_cache=lambda: 'eager')
+        pipeline = SimpleNamespace(_evaluate_clock_velocity=lambda *args: 'raw')
+        captured_head = model._denoise_action_with_video_cache
+        counts = RUNNER.instrument_model(model, pipeline=pipeline)
+        for _ in range(4): self.assertEqual(captured_head(), 'eager')  # cold work, not sampler NFE
+        self.assertEqual(pipeline._evaluate_clock_velocity(), 'raw')
+        self.assertEqual(pipeline._evaluate_clock_velocity(), 'raw')
+        self.assertEqual(model.mot.prefill_video_cache_tensor(), 'kv')
+        self.assertEqual(counts, {'nfe': 2, 'video_prefill': 1})
+
+    def test_library_graph_refresh_controls_cover_variable_nfe_and_restore_inputs(self):
+        arrays = {'input_image': np.zeros((1, 3, 2, 2), np.float32),
+                  'context': np.zeros((1, 3, 2), np.float32),
+                  'context_mask': np.ones((1, 3), bool), 'proprio': np.zeros((1, 2), np.float32),
+                  'noise': np.zeros((1, 2, 1), np.float32)}
+        originals = {key: value.copy() for key, value in arrays.items()}
+        driver = object(); pipe = SimpleNamespace(_velocity_graph=driver)
+        counts = {'nfe': 0, 'video_prefill': 0}
+        def infer(obs, noise):
+            nfe = 5 if np.any(noise) else 2
+            counts['nfe'] += nfe; counts['video_prefill'] += 1
+            value = sum(float(value.sum()) for value in obs.values()) + float(noise.sum())
+            return {'actions': np.full((1, 32, 7), value, np.float32),
+                    'sampler_metadata': {'nfe': nfe, 'timesteps': list(range(nfe))}, 'execution_metadata': {}}
+        owner = SimpleNamespace(frontend=SimpleNamespace(pipeline=pipe), infer=infer)
+        checks, raw = RUNNER.graph_refresh_checks(owner, arrays, counts, synchronize=lambda: None)
+        self.assertEqual([row['case'] for row in checks], ['original', 'noise', 'proprio', 'image', 'context', 'mask'])
+        self.assertTrue(all(row['passed'] for row in checks))
+        self.assertTrue(all(row['input_effect_observed'] for row in checks[1:]))
+        self.assertEqual(checks[1]['execution']['graph']['actual_callbacks']['nfe'], 5)
+        self.assertEqual(checks[2]['execution']['eager']['actual_callbacks']['nfe'], 2)
+        self.assertEqual(counts['video_prefill'], 12)
+        self.assertEqual(len(raw), 17)
+        self.assertIs(pipe._velocity_graph, driver)
+        for key in arrays: np.testing.assert_array_equal(arrays[key], originals[key])
+
+    def test_library_graph_refresh_failure_restores_graph_and_all_inputs(self):
+        arrays = {'input_image': np.zeros((1, 3, 2, 2), np.float32),
+                  'context': np.zeros((1, 3, 2), np.float32),
+                  'context_mask': np.ones((1, 3), bool), 'proprio': np.zeros((1, 2), np.float32),
+                  'noise': np.zeros((1, 2, 1), np.float32)}
+        originals = {key: value.copy() for key, value in arrays.items()}
+        driver = object(); pipe = SimpleNamespace(_velocity_graph=driver)
+        def fail(obs, noise): raise RuntimeError('injected infer failure')
+        owner = SimpleNamespace(frontend=SimpleNamespace(pipeline=pipe), infer=fail)
+        with self.assertRaisesRegex(RuntimeError, 'infer failure'):
+            RUNNER.graph_refresh_checks(owner, arrays, {'nfe': 0, 'video_prefill': 0}, synchronize=lambda: None)
+        self.assertIs(pipe._velocity_graph, driver)
+        for key in arrays: np.testing.assert_array_equal(arrays[key], originals[key])
+
     def setUp(self):
         self.source_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.source_directory.cleanup)

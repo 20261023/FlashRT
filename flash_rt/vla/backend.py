@@ -170,7 +170,7 @@ class VLABackend:
                     or metadata.get('sampler') != self.config.sampler):
                 raise RuntimeError('Frontend sampler metadata does not match the requested policy')
             result['backend_metadata'] = {
-                'model': self.config.model, 'backend': 'flashrt',
+                'model': self.config.model, 'backend': self.config.backend,
                 'sampler': self.config.sampler, 'hardware': self.hardware,
                 'precision': self.precision, 'framework': self.config.framework,
                 'action_domain': self.action_domain,

@@ -65,7 +65,7 @@ These are usage examples, not commands executed during development.
 | `pi0` | Pi0 native RTX-family pipeline, FP16 | Existing Pi0 image/state frontend and LIBERO-decoded actions; state token remains separate from action rows |
 | `pi05` (`pi0.5`) | Pi0.5 native RTX-family pipeline, BF16 | Existing Pi0.5 image frontend and state-in-prompt processing; LIBERO-decoded actions |
 | `hyvla` | Hy-Embodied-0.5-VLA native semantic BF16 pipeline | Camera history/prefix/state handling from Hy-VLA; normalized padded model actions, **not decoded robot commands** |
-| `fastwam` | Actual upstream first-frame graph + **partial native FlashRT BF16 Linear binding**, eager | Prepared Wan/T5 inputs; normalized batched `[1,H,A]` actions, not robot commands |
+| `fastwam` | Upstream first-frame model + **partial native FlashRT BF16 Linear binding**, or explicit Torch operators; eager default, opt-in raw-field graph | Prepared Wan/T5 inputs; normalized batched `[1,H,A]` actions, not robot commands |
 
 The first API deliberately uses nonquantized paths. `precision="auto"` resolves
 to FP16 for Pi0 and BF16 for the other models. An incompatible explicit precision
@@ -212,14 +212,55 @@ transpose or global module monkeypatch is required. Per-request
 `execution_metadata` lists installed modules and their actual native call counts.
 VAE, patch Conv3d, attention/SDPA, norms, RoPE and activations/modulation remain
 upstream operations. **This is a concrete partial native port, not a fully native
-FastWAM backend and not a demonstrated speedup.** CUDA Graph capture is not yet
-implemented for this family.
+FastWAM backend and not an automatic performance win.** See the measured iteration
+notes for the specific A800 outcomes and their numerical/experimental limits.
 
 The direct `FastWAMTorchFrontend` additionally accepts an initialized upstream
 `model=` for advanced integration; this is separate from the unified local-file
 loader. Its default `native_linear=False` is explicitly labeled
 `upstream_torch_reference`, not FlashRT execution. Do not use that reference-only
 mode as evidence of native acceleration.
+
+### Explicit Torch and raw-velocity graph selection
+
+`BackendConfig(model="fastwam", backend="torch", ...)` runs Torch operators
+through the common first-frame pipeline, without installing native Linear or
+loading a native GEMM extension. Its descriptor and result backend label are
+`torch`. This is **not** the independent upstream `infer_action` sampler oracle.
+Other model families do not gain a Torch backend from this addition. Do not pass
+`native_linear_backend` with this engine; unused native selections reject.
+
+Both engines accept `options={..., "use_cuda_graph": True}`. The default remains
+`False`. FlashRT+graph additionally requires `"native_linear_backend": "cached"`;
+legacy+graph is rejected before model/device loading, not silently upgraded.
+
+Only the non-integrating raw-velocity body is captured. VAE and video KV prefill
+run once per request outside capture. Conditions are copied anew at the first
+evaluation of **every** request, even for reused input pointers; latent/time
+refresh on every evaluation. Euler and adaptive PF routing/integration stay
+outside capture. One fixed tensor-tree shape/stride/dtype/device geometry is
+supported; a change raises `VelocityGeometryMismatch`, without replay, automatic
+recapture or eager fallback. A new backend instance can select a new geometry.
+
+The pipeline owns an ordered side stream and serializes all public GPU model
+operations on it. **First preparation/capture must run while the process is CUDA
+quiescent:** no unrelated non-captured work on other threads during capture.
+Call `prepare` before concurrent serving. The instance lock cannot coordinate
+arbitrary CUDA users in the process. Inference failures stop further graph work;
+`close()` remains available and failed graph resets can be retried.
+
+`execution_metadata.velocity_graph` separates per-request replays, condition
+refreshes, captures, three cold warmup evaluations, encoded bodies and dynamically
+observed native Linear calls encoded per replay. Logical replay work is not the
+Python Linear-forward or successful CPU GEMM-enqueue counters. Sampler NFE counts
+only logical field evaluations, never capture encoding or warmup. Raw head output
+is borrowed scratch internally; returned complete CPU action arrays are retained
+independently. No global CUDA cache flush or second weight copy is introduced.
+
+The library integration is opt-in engineering functionality. The earlier A800
+Euler2 **example pilot** is not evidence of Euler10/adaptive-PF qualification for
+this new ownership/stream implementation. Consult per-run measurements before
+making that claim; other geometry/hardware and robot success remain unqualified.
 
 ## Explicit numerical and kernel profiles
 
@@ -255,6 +296,9 @@ comparisons are required before selecting this candidate for performance.
   including prompt bucket aliases, without destroying framework-owned streams
   or flushing process-global CUDA caches. Do not use a retained frontend or
   externally exported runtime after its owning backend has been closed.
+- FastWAM direct frontend and backend cleanup drain the owned execution stream
+  and release its raw-field graph before dropping model/runner references; reset
+  failure retains owners and rejects inference until a successful close retry.
 - No automated search, performance winner selection, task-success evaluation or
   agent-driven code mutation is run by this execution layer.
 - The initial source-only phase did not execute models. Later verification and

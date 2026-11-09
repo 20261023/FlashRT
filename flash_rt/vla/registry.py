@@ -40,7 +40,7 @@ _CAPABILITIES = {
         'hardware': ('cuda_sm80', 'rtx_sm87', 'rtx_sm89', 'thor', 'rtx_sm120'),
         'action_domain': 'normalized-model-actions-batched',
         'options': ('source_dir', 'model_config', 'backbone_dir',
-                    'sigma_shift', 'action_horizon', 'native_linear_backend'),
+                    'sigma_shift', 'action_horizon', 'native_linear_backend', 'use_cuda_graph'),
         'execution_coverage': 'partial-native-linear-upstream-other-operators',
     },
 }
@@ -63,7 +63,9 @@ def describe_backend(config: BackendConfig) -> dict:
         'default_action_domain': spec['action_domain'],
         'options': dict(config.options),
         'runtime_verified': False,
-        **({'execution_coverage': spec['execution_coverage']}
+        **({'execution_coverage': ('upstream-torch-operators-shared-pipeline'
+                                  if config.model == 'fastwam' and config.backend == 'torch'
+                                  else spec['execution_coverage'])}
            if 'execution_coverage' in spec else {}),
         **({'blocker': spec['blocker']} if 'blocker' in spec else {}),
     }
@@ -114,8 +116,13 @@ def load_backend(config: BackendConfig) -> VLABackend:
             'semantic_bf16', 'official_local_fp32'):
         raise ValueError('Unknown HyVLA numerical_profile')
     if config.model == 'fastwam':
+        if config.backend == 'torch' and 'native_linear_backend' in config.options:
+            raise ValueError('native_linear_backend is incompatible with backend="torch"')
         if config.options.get('native_linear_backend', 'legacy') not in ('legacy', 'cached'):
             raise ValueError('native_linear_backend must be legacy or cached')
+        if (config.backend == 'flashrt' and config.options.get('use_cuda_graph', False)
+                and config.options.get('native_linear_backend', 'legacy') != 'cached'):
+            raise ValueError('FastWAM native CUDA graph requires native_linear_backend="cached"')
         missing = {'sigma_shift', 'action_horizon', 'model_config', 'backbone_dir'} - set(config.options)
         if missing:
             raise ValueError(f'FastWAM requires explicit options: {sorted(missing)}')
@@ -150,7 +157,7 @@ def load_backend(config: BackendConfig) -> VLABackend:
         name = 'FastWAMTorchFrontend'
         # This binding is deliberately PARTIAL native execution, recorded in
         # both candidate descriptors and per-request execution metadata.
-        kwargs.update(native_linear=True, dtype='bf16', device='cuda',
+        kwargs.update(native_linear=config.backend == 'flashrt', dtype='bf16', device='cuda',
                       num_inference_steps=config.num_steps)
     elif config.model == 'hyvla':
         module = 'flash_rt.frontends.torch.hyvla_probeflow'

@@ -130,3 +130,35 @@ def test_fastwam_cached_plan_is_explicitly_selected_without_changing_model_optio
                  'sigma_shift': 5., 'action_horizon': 32, 'native_linear_backend': 'cached'}))
     assert backend.frontend.kwargs['native_linear_backend'] == 'cached'
     assert backend.frontend.kwargs['num_inference_steps'] == 2
+
+
+@pytest.mark.parametrize('kind,native', [('torch', False), ('flashrt', True)])
+def test_fastwam_graph_routes_requested_engine_and_returns_honest_backend_label(monkeypatch, kind, native):
+    monkeypatch.setattr(registry, '_cuda_target', lambda value: 'cuda_sm80')
+    monkeypatch.setattr(registry, 'import_module', lambda module: SimpleNamespace(FastWAMTorchFrontend=MinimalFrontend))
+    options = {'model_config': '/model.json', 'backbone_dir': '/wan', 'sigma_shift': 5.,
+               'action_horizon': 32, 'use_cuda_graph': True}
+    if native: options['native_linear_backend'] = 'cached'
+    backend = load_backend(BackendConfig(model='fastwam', checkpoint='/weights', backend=kind,
+                                        options=options, num_steps=10))
+    assert backend.frontend.kwargs['native_linear'] is native
+    assert backend.frontend.kwargs['use_cuda_graph'] is True
+    assert backend.frontend.kwargs['num_inference_steps'] == 10
+    result = backend.infer({'context': [1]})
+    assert result['backend_metadata']['backend'] == kind
+
+
+@pytest.mark.parametrize('kind,extra', [
+    ('torch', {'native_linear_backend': 'cached'}),
+    ('torch', {'native_linear_backend': 'legacy'}),
+    ('flashrt', {'use_cuda_graph': True}),
+    ('flashrt', {'use_cuda_graph': 'true', 'native_linear_backend': 'cached'}),
+])
+def test_fastwam_graph_engine_conflicts_reject_before_device_and_model(monkeypatch, kind, extra):
+    def forbidden(*args): raise AssertionError('must reject before CUDA or model import')
+    monkeypatch.setattr(registry, '_cuda_target', forbidden)
+    monkeypatch.setattr(registry, 'import_module', forbidden)
+    options = {'model_config': '/missing', 'backbone_dir': '/missing', 'sigma_shift': 5., 'action_horizon': 32}
+    options.update(extra)
+    with pytest.raises(ValueError, match='native_linear_backend|cached|use_cuda_graph'):
+        load_backend(BackendConfig(model='fastwam', checkpoint='/missing', backend=kind, options=options))

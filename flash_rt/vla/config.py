@@ -46,8 +46,9 @@ class BackendConfig:
         if not isinstance(checkpoint, str) or not checkpoint.strip():
             raise ValueError('checkpoint must be a nonempty local path')
         object.__setattr__(self, 'checkpoint', checkpoint)
-        if self.backend != 'flashrt':
-            raise ValueError('Only backend="flashrt" is implemented')
+        if self.backend != 'flashrt' and not (
+                self.backend == 'torch' and model == 'fastwam' and self.framework == 'torch'):
+            raise ValueError('backend="torch" is supported only for Torch FastWAM; otherwise use backend="flashrt"')
         if self.sampler not in ('euler', 'probeflow'):
             raise ValueError('sampler must be euler or probeflow')
         if self.framework not in ('torch', 'jax'):

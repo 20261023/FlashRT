@@ -256,10 +256,17 @@ def load_upstream_reference(args, config, torch):
     return model
 
 
-def instrument_model(model):
-    """Count actual denoiser evaluations and video prefills, not requested NFE."""
+def instrument_model(model, *, pipeline=None):
+    """Count actual field callbacks/prefills, not requested budgets or cold work.
+
+    A captured head skips its Python wrapper on replay. For library graph mode,
+    count the pipeline's logical callback outside capture, independently of the
+    sampler metadata. Cold warmup/encoding is not sampler NFE.
+    """
     counters = {'nfe': 0, 'video_prefill': 0}
-    denoise = model._denoise_action_with_video_cache
+    owner, name = ((model, '_denoise_action_with_video_cache') if pipeline is None
+                   else (pipeline, '_evaluate_clock_velocity'))
+    denoise = getattr(owner, name)
     prefill = model.mot.prefill_video_cache_tensor
 
     def counted_denoise(*args, **kwargs):
@@ -270,7 +277,7 @@ def instrument_model(model):
         counters['video_prefill'] += 1
         return prefill(*args, **kwargs)
 
-    model._denoise_action_with_video_cache = counted_denoise
+    setattr(owner, name, counted_denoise)
     model.mot.prefill_video_cache_tensor = counted_prefill
     return counters
 
@@ -297,12 +304,79 @@ def build_backend_config(args, model_config):
     from flash_rt.sampling import ProbeFlowConfig
     from flash_rt.vla import BackendConfig
     probe = ProbeFlowConfig(epsilon=args.pf_epsilon, max_steps=args.pf_max) if args.sampler == 'probeflow' else None
-    return BackendConfig(model='fastwam', checkpoint=str(args.checkpoint),
+    options = {'model_config': model_config, 'backbone_dir': str(args.backbone_dir),
+               'source_dir': str(args.source_dir), 'sigma_shift': 5., 'action_horizon': 32}
+    if args.backend == 'flashrt':
+        options['native_linear_backend'] = args.native_linear_backend or 'legacy'
+    elif args.native_linear_backend is not None:
+        raise ValueError('native_linear_backend is incompatible with backend="torch"')
+    if args.use_cuda_graph:
+        options['use_cuda_graph'] = True
+    return BackendConfig(model='fastwam', checkpoint=str(args.checkpoint), backend=args.backend,
         sampler=args.sampler, precision='bf16', framework='torch', hardware='cuda_sm80',
-        num_steps=2 if args.sampler == 'euler' else None, probeflow=probe,
-        options={'model_config': model_config, 'backbone_dir': str(args.backbone_dir),
-                 'source_dir': str(args.source_dir), 'sigma_shift': 5., 'action_horizon': 32,
-                 'native_linear_backend': args.native_linear_backend})
+        num_steps=args.num_steps if args.sampler == 'euler' else None, probeflow=probe, options=options)
+
+
+def graph_refresh_checks(owner, arrays, counters, *, synchronize):
+    """Six same-weight library graph/eager controls, outside formal samples.
+
+    The temporary evaluator selection is local to this serial diagnostic; the
+    public API does not gain an eager-fallback or mutable graph mode switch.
+    """
+    import numpy as np
+    pipe = owner.frontend.pipeline
+    driver = pipe._velocity_graph
+    if driver is None:
+        raise ValueError('Graph refresh checks require a graph-enabled pipeline')
+    originals = {key: value.copy() for key, value in arrays.items()}
+    rows, raw = [], {}
+    base = None
+    cases = (('original', None), ('noise', 'noise'), ('proprio', 'proprio'),
+             ('image', 'input_image'), ('context', 'context'), ('mask', 'context_mask'))
+    try:
+        for name, field in cases:
+            for key, value in originals.items():
+                arrays[key][...] = value
+            if name == 'mask':
+                valid = np.flatnonzero(arrays[field][0])
+                if len(valid) < 2:
+                    raise ValueError('Mask refresh control requires two valid tokens')
+                arrays[field][0, valid[-1]] = False
+            elif name == 'image':
+                arrays[field][...] = np.clip(arrays[field] + .1, -1, 1)
+            elif field is not None:
+                arrays[field][...] += .25
+            obs = {key: value for key, value in arrays.items() if key != 'noise'}
+            outputs, observations = {}, {}
+            for mode in ('graph', 'eager'):
+                pipe._velocity_graph = driver if mode == 'graph' else None
+                before = dict(counters)
+                result = owner.infer(obs, noise=arrays['noise'])
+                synchronize()
+                delta = {key: counters[key] - before[key] for key in counters}
+                nfe = result['sampler_metadata']['nfe']
+                if delta != {'nfe': nfe, 'video_prefill': 1}:
+                    raise RuntimeError(f'Refresh control actual callback counts differ from metadata: {delta}')
+                outputs[mode] = np.asarray(result['actions']).copy()
+                observations[mode] = {'actual_callbacks': delta, 'sampler_metadata': result['sampler_metadata'],
+                                     'velocity_graph': result['execution_metadata'].get('velocity_graph')}
+            if base is None:
+                base = outputs['graph'].copy()
+            exact = bool(np.array_equal(outputs['graph'], outputs['eager']))
+            same_work = observations['graph']['actual_callbacks'] == observations['eager']['actual_callbacks']
+            rows.append({'case': name, 'changed_input_field': field, 'passed': exact and same_work,
+                'comparison': action_metrics(outputs['graph'], outputs['eager']), 'execution': observations,
+                'input_effect_observed': not np.array_equal(outputs['graph'], base),
+                'effect_vs_original': action_metrics(outputs['graph'], base)})
+            for mode, value in outputs.items():
+                raw[f'{name}_{mode}_actions'] = value
+            if field is not None:
+                raw[f'{name}_changed_input'] = arrays[field].copy()
+    finally:
+        pipe._velocity_graph = driver
+        for key, value in originals.items():
+            arrays[key][...] = value
+    return rows, raw
 
 
 def run_actions(args, report):
@@ -323,14 +397,14 @@ def run_actions(args, report):
         # CPU tensors preserve the same observation-upload boundary as unified infer.
         reference_obs = {key: torch.from_numpy(value) for key, value in obs.items()}
         schedule_t, schedule_d = model.infer_action_scheduler.build_inference_schedule(
-            2, device=torch.device('cuda:0'), dtype=torch.bfloat16, shift_override=5.)
-        reference_metadata = {'sampler': 'euler', 'scheduled_steps': 2, 'nfe': 2,
+            args.num_steps, device=torch.device('cuda:0'), dtype=torch.bfloat16, shift_override=5.)
+        reference_metadata = {'sampler': 'euler', 'scheduled_steps': args.num_steps, 'nfe': args.num_steps,
                               'model_timesteps': schedule_t.float().cpu().tolist(),
                               'sigma_deltas': schedule_d.float().cpu().tolist(),
                               'sigma_shift': 5., 'action_infer_mode': 'first_frame'}
 
         def infer():
-            result = model.infer_action(prompt=None, action_horizon=32, num_inference_steps=2,
+            result = model.infer_action(prompt=None, action_horizon=32, num_inference_steps=args.num_steps,
                                         sigma_shift=5., seed=args.seed, rand_device='cpu',
                                         tiled=False, compile_action_infer=False, **reference_obs)
             return {'actions': result['action'].numpy()[None],
@@ -348,7 +422,8 @@ def run_actions(args, report):
 
     torch.cuda.synchronize()
     report['load_ms'] = (time.perf_counter_ns() - load_start) / 1e6
-    counters = instrument_model(model)
+    counters = (instrument_model(model, pipeline=owner.frontend.pipeline)
+                if owner is not None and args.use_cuda_graph else instrument_model(model))
     torch.cuda.reset_peak_memory_stats()
     first, first_ms, first_counts = timed_infer(infer, counters, torch)
     for _ in range(args.warmups):
@@ -364,8 +439,16 @@ def run_actions(args, report):
     replay_metrics = [action_metrics(baseline, result['actions']) for result in [first, *results[1:], replay]]
     replay_ok = all(np.allclose(baseline, result['actions'], atol=args.replay_atol,
                                rtol=args.replay_rtol, equal_nan=False)
-                    for result in [first, *results[1:], replay])
-    if not args.reference:
+                     for result in [first, *results[1:], replay])
+    refresh_ok = True
+    if args.use_cuda_graph:
+        checks, raw = graph_refresh_checks(owner, arrays, counters, synchronize=torch.cuda.synchronize)
+        np.savez_compressed(args.output / 'refresh_checks.npz', **raw)
+        write_json(args.output / 'refresh_checks.json', checks)
+        refresh_ok = all(row['passed'] for row in checks) and all(row['input_effect_observed'] for row in checks[1:])
+        report.update(graph_refresh_checks_passed=bool(refresh_ok),
+                      extra_refresh_requests_excluded_from_samples=2*len(checks))
+    if not args.reference and args.backend == 'flashrt':
         for result in [first, *results, replay]:
             coverage = result['execution_metadata']
             if (coverage.get('backend') != 'flashrt_bf16_linear_partial'
@@ -373,10 +456,16 @@ def run_actions(args, report):
                     or not coverage.get('native_linear_modules')
                     or not any(coverage.get('native_linear_calls', {}).values())):
                 raise RuntimeError('Unified backend did not actually execute native linears; no silent fallback accepted')
+    elif not args.reference:
+        for result in [first, *results, replay]:
+            coverage = result['execution_metadata']
+            if coverage.get('native_linear_modules') or result['backend_metadata']['backend'] != 'torch':
+                raise RuntimeError('Torch backend unexpectedly executed or reported native Linear')
     for result in [first, *results, replay]:
         metadata = result['sampler_metadata']
-        if (args.sampler == 'euler' or args.pf_max == 2) and metadata['nfe'] != 2:
-            raise RuntimeError('Euler2/PF2 candidate executed a different NFE')
+        expected_nfe = args.num_steps if args.sampler == 'euler' else 2 if args.pf_max == 2 else None
+        if expected_nfe is not None and metadata['nfe'] != expected_nfe:
+            raise RuntimeError('Euler/PF2 candidate executed a different NFE than its explicit budget')
     np.savez(args.output / 'actions.npz', **arrays, actions=baseline,
              repeat_actions=np.stack([result['actions'] for result in results]),
              first_actions=first['actions'], replay_actions=replay['actions'],
@@ -401,8 +490,11 @@ def run_actions(args, report):
         task_success_evaluated=False, no_video_rollout=True)
     if owner is not None:
         owner.close()
+        report['owned_cleanup'] = 'passed'
     if not replay_ok:
         raise RuntimeError('Fixed-input fixed-noise replay exceeded explicitly configured tolerances')
+    if not refresh_ok:
+        raise RuntimeError('Library graph/eager equality or non-vacuous input refresh control failed')
     return torch
 
 
@@ -444,8 +536,8 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     modes = p.add_mutually_exclusive_group(required=True)
     modes.add_argument('--prepare-context', action='store_true')
-    modes.add_argument('--run', action='store_true', help='Unified native-linear BackendConfig candidate')
-    modes.add_argument('--reference', action='store_true', help='Direct pinned upstream infer_action Euler2')
+    modes.add_argument('--run', action='store_true', help='Unified explicit BackendConfig candidate')
+    modes.add_argument('--reference', action='store_true', help='Direct pinned upstream infer_action Euler')
     modes.add_argument('--compare', nargs=2, type=Path, metavar=('LEFT_DIR', 'RIGHT_DIR'))
     p.add_argument('--source-dir', type=Path, default=HERE / 'fastwam-source/upstream')
     p.add_argument('--model-config', type=Path, default=HERE / 'fastwam-source/libero_model_resolved.json',
@@ -456,7 +548,11 @@ def parser():
     p.add_argument('--input-fixture', type=Path, help='Optional already preprocessed NPZ input_image/proprio/noise')
     p.add_argument('--prompt', default='pick up the black bowl between the plate and the ramekin and place it on the plate')
     p.add_argument('--sampler', choices=('euler', 'probeflow'), default='euler')
-    p.add_argument('--native-linear-backend', choices=('legacy', 'cached'), default='legacy')
+    p.add_argument('--backend', choices=('flashrt', 'torch'), default='flashrt')
+    p.add_argument('--native-linear-backend', choices=('legacy', 'cached'), default=None,
+                   help='FlashRT-only runner selection (default legacy); incompatible with backend=torch')
+    p.add_argument('--num-steps', type=int, default=2, help='Explicit Euler budget; ignored for adaptive PF')
+    p.add_argument('--use-cuda-graph', action='store_true', help='Opt-in library raw-field graph, not the old pilot override')
     p.add_argument('--pf-max', type=int, default=2, help='2 means fixed PF2; >2 is explicitly adaptive')
     p.add_argument('--pf-epsilon', type=float, default=.008)
     p.add_argument('--seed', type=int, default=20261109)
@@ -473,6 +569,14 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     allocation = require_allocation()
+    if args.num_steps < 1:
+        raise ValueError('num-steps must be positive')
+    if args.backend == 'torch' and args.native_linear_backend is not None:
+        raise ValueError('native_linear_backend is incompatible with backend="torch"')
+    if args.backend == 'flashrt':
+        args.native_linear_backend = args.native_linear_backend or 'legacy'
+    if args.use_cuda_graph and (not args.run or (args.backend == 'flashrt' and args.native_linear_backend != 'cached')):
+        raise ValueError('Library graph requires --run and Torch or cached native backend')
     if args.repeats < 1 or args.warmups < 0 or not 2 <= args.pf_max <= 64:
         raise ValueError('repeats>=1, warmups>=0 and 2<=pf-max<=64 required')
     import math
@@ -482,7 +586,7 @@ def main(argv=None):
     if not math.isfinite(args.pf_epsilon) or args.pf_epsilon <= 0:
         raise ValueError('pf-epsilon must be finite and positive')
     if args.reference and args.sampler != 'euler':
-        raise ValueError('Direct upstream reference is Euler2 only')
+        raise ValueError('Direct upstream reference is Euler only')
     if (args.run or args.reference) and args.context is None:
         raise ValueError('--context is required; encode T5 in a separate allocation process first')
     for key in ('source_dir', 'model_config', 'checkpoint', 'backbone_dir', 'context', 'input_fixture'):

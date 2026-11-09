@@ -98,8 +98,29 @@ Cached native mode needs the separate extension built by
 `scripts/build_gemm_plan.py` in that exact Python/CUDA/source environment; it
 never silently falls back. Native execution is **partial**, not a full native
 port. The default fixture is a deterministic synthetic two-camera pattern, not
-a representative LIBERO scene or a task-success measurement. Euler uses2steps in
-this validator; ProbeFlow `--pf-max` can select a separate explicit budget.
+a representative LIBERO scene or a task-success measurement. Euler defaults to
+2steps in this validator; `--num-steps 10` selects a different explicit budget.
+ProbeFlow `--pf-max` selects its separate explicit adaptive budget.
+
+The validator also accepts the new **library** path, separately from the old
+fixed-Euler2 pilot below:
+
+```bash
+srun -n 1 -c 8 python -B -u "$V" --run --backend torch --num-steps 10 \
+  --use-cuda-graph "${COMMON[@]}" --output "$VLA_TASK_ROOT/torch-library-graph10"
+srun -n 1 -c 8 python -B -u "$V" --run --native-linear-backend cached \
+  --sampler probeflow --pf-max 10 --use-cuda-graph \
+  "${COMMON[@]}" --output "$VLA_TASK_ROOT/cached-library-graph-pf"
+```
+
+Torch uses the common pipeline, **not** the independent direct-upstream oracle.
+Do not supply `--native-linear-backend` with `--backend torch`. Library graph
+runs automatically perform six same-weight graph/eager refresh controls after
+formal samples, retain actions and changed inputs, and reject a parity failure
+or a control with no observed output effect. Actual pipeline callbacks establish
+sampler NFE independently of metadata; captured head Python enqueues are not
+misreported as GPU work. Cleanup must succeed before a passing report is written.
+These additions are not retroactive qualification by the earlier pilot results.
 
 ## Raw-velocity graph pilot and profiler
 
