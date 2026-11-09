@@ -8,6 +8,14 @@ import os
 from pathlib import Path
 
 _KIND = 'diagnostic_frozen_block0_operators_not_recorded_block0_or_action_acceptance'
+_SDPA_BACKENDS = ('FLASH_ATTENTION', 'EFFICIENT_ATTENTION', 'CUDNN_ATTENTION', 'MATH')
+# Exact host-dispatch rejection strings in Torch2.7.1/2.11 attention.cpp and
+# cuda/sdp_utils.cpp. Never reinterpret an arbitrary CUDA/cuDNN failure as this.
+_NO_DISPATCH = frozenset((
+    'No available kernel. Aborting execution.',
+    'No viable backend for scaled_dot_product_attention was found.',
+    'No viable backend for scaled_dot_product_attention was found. This is likely due to turning off both the math kernel and the fused kernels.',
+))
 
 
 def validate_reference_report(report, *, job_id, checkpoint, official_trace):
@@ -29,7 +37,7 @@ def split_qkv(qkv, *, heads):
     return qkv.reshape(batch, tokens, 3, heads, width//(3*heads)).unbind(2)
 
 
-def attention_arm(qkv, *, heads, group_size, flash_fn=None):
+def attention_arm(qkv, *, heads, group_size, flash_fn=None, observer=None):
     """Hold QKV values fixed; vary only camera grouping or attention backend."""
     import torch
     import torch.nn.functional as F
@@ -41,12 +49,108 @@ def attention_arm(qkv, *, heads, group_size, flash_fn=None):
         q, k, v = split_qkv(group, heads=heads)
         scale = q.shape[-1]**-.5
         if flash_fn is not None:
+            if observer is not None:
+                observer('flash', q, k, v)
             output = flash_fn(q, k, v, softmax_scale=scale, causal=False)
         else:
-            output = F.scaled_dot_product_attention(q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3),
-                v.permute(0, 2, 1, 3), dropout_p=0., is_causal=False, scale=scale).permute(0, 2, 1, 3)
+            q, k, v = (value.permute(0, 2, 1, 3) for value in (q, k, v))
+            if observer is not None:
+                observer('sdpa', q, k, v)
+            output = F.scaled_dot_product_attention(q, k, v, dropout_p=0.,
+                is_causal=False, scale=scale).permute(0, 2, 1, 3)
         outputs.append(output.reshape(group.shape[0], group.shape[1], -1))
     return torch.cat(outputs, 0)
+
+
+def sdpa_flags():
+    import torch
+    cuda = torch.backends.cuda
+    return {'flash': cuda.flash_sdp_enabled(), 'efficient': cuda.mem_efficient_sdp_enabled(),
+            'cudnn': cuda.cudnn_sdp_enabled(), 'math': cuda.math_sdp_enabled()}
+
+
+def _layout(value):
+    return {'shape': list(value.shape), 'live_stride': list(value.stride()),
+            'storage_offset': value.storage_offset(), 'dtype': str(value.dtype), 'device': str(value.device)}
+
+
+def _observed_inputs(kind, q, k, v):
+    return {'api': kind, **{name: _layout(value) for name, value in (('q', q), ('k', k), ('v', v))}}
+
+
+def _sdpa_preflight(qkv, *, heads, group_size, name):
+    import torch
+    import warnings
+    if name == 'MATH':
+        return {'supported': True, 'checker': 'math_no_fused_preflight', 'warnings': []}
+    cuda = torch.backends.cuda
+    checker = {'FLASH_ATTENTION': cuda.can_use_flash_attention,
+               'EFFICIENT_ATTENTION': cuda.can_use_efficient_attention,
+               'CUDNN_ATTENTION': cuda.can_use_cudnn_attention}[name]
+    tensors = [value.permute(0, 2, 1, 3) for value in split_qkv(qkv[:group_size], heads=heads)]
+    params = cuda.SDPAParams(*tensors, None, 0., False, False)
+    with warnings.catch_warnings(record=True) as messages:
+        warnings.simplefilter('always')
+        supported = bool(checker(params, debug=True))
+    return {'supported': supported, 'checker': checker.__name__,
+            'warnings': [str(item.message) for item in messages]}
+
+
+def probe_sdpa_arm(qkv, *, heads, group_size, name, preflight=None, synchronize=None):
+    """One-hot diagnostic selection, never implicit fallback or hidden GPU faults."""
+    import torch
+    from torch.nn.attention import sdpa_kernel, SDPBackend
+    if name not in _SDPA_BACKENDS:
+        raise ValueError('Unknown SDPA backend')
+    split_qkv(qkv, heads=heads)
+    if type(group_size) is not int or group_size < 1 or qkv.shape[0] % group_size:
+        raise ValueError('Camera group must divide the frozen QKV batch')
+    preflight = preflight or _sdpa_preflight
+    synchronize = synchronize or (lambda: torch.cuda.synchronize(qkv.device))
+    with sdpa_kernel(getattr(SDPBackend, name)):
+        observed = []
+        metadata = {'backend': name, 'group_size': group_size, 'selected_flags': sdpa_flags(),
+                    'observed_sdpa_inputs': observed}
+        metadata['preflight'] = preflight(qkv, heads=heads, group_size=group_size, name=name)
+        if not metadata['preflight']['supported']:
+            return None, {**metadata, 'status': 'unsupported'}
+        try:
+            output = attention_arm(qkv, heads=heads, group_size=group_size,
+                observer=lambda kind, q, k, v: observed.append(_observed_inputs(kind, q, k, v)))
+        except RuntimeError as error:
+            message = str(error).strip()
+            if message not in _NO_DISPATCH:
+                raise
+            return None, {**metadata, 'status': 'unsupported', 'dispatch_error': message}
+        # Synchronization faults are execution errors even if their wording
+        # resembles a host dispatch rejection. They must fail the process.
+        synchronize()
+        return output, {**metadata, 'status': 'executed'}
+
+
+def summarize_dispatch_events(events):
+    from collections import Counter
+    operators, kernels = Counter(), Counter()
+    for event in events:
+        if str(event.device_type).endswith('CUDA'):
+            kernels[event.name] += 1
+        elif event.name.startswith('aten::_scaled_dot_product'):
+            operators[event.name] += 1
+    return {'sdpa_operator_counts': dict(operators), 'cuda_kernel_names_in_region': dict(kernels),
+            'cuda_activity_observed': bool(kernels),
+            'kernel_identity': 'observed_region_names_not_one_to_one_attribution' if kernels else 'unverified_no_cuda_activity',
+            'semantics': 'Names/counts only; no profiler timing or zero-GPU-work claim'}
+
+
+def _profile_auto_sdpa(qkv, *, heads, group_size):
+    import torch
+    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
+                                          torch.profiler.ProfilerActivity.CUDA],
+                                record_shapes=False, with_stack=False, profile_memory=False) as profile:
+        with torch.profiler.record_function('frozen_auto_sdpa_no_timing_acceptance'):
+            attention_arm(qkv, heads=heads, group_size=group_size)
+            torch.cuda.synchronize(qkv.device)
+    return summarize_dispatch_events(profile.events())
 
 
 def _sibling(name):
@@ -62,6 +166,8 @@ def main(argv=None):
     parser.add_argument('--official-trace', type=Path, required=True)
     parser.add_argument('--checkpoint', type=Path, required=True)
     parser.add_argument('--reference', type=Path, help='Required native input: same-job official frozen-attention output')
+    parser.add_argument('--probe-sdpa-backends', action='store_true',
+                        help='Extra frozen one-hot backend controls and name-only auto dispatch profiling; no product changes')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args(argv)
     common = _sibling('diagnose')
@@ -86,8 +192,13 @@ def main(argv=None):
     rebuild_view = _sibling('frozen_ops').rebuild_view
     outputs, metrics, layouts = {}, {}, {}
     flash_backend = None
+    backend_probes, auto_dispatch = {}, None
+    attention_inputs = {}
+    def input_observer(name):
+        rows = attention_inputs.setdefault(name, [])
+        return lambda kind, q, k, v: rows.append(_observed_inputs(kind, q, k, v))
     def keep(name, value):
-        layouts[name] = {'shape': list(value.shape), 'live_stride': list(value.stride()), 'dtype': str(value.dtype)}
+        layouts[name] = _layout(value)
         outputs[name] = value.detach().cpu().contiguous().clone()
         return value
     def compare(name, a, b):
@@ -124,8 +235,10 @@ def main(argv=None):
             flash_backend = {'version': getattr(flash_attn, '__version__', 'unknown'),
                              'module': str(Path(flash_attn.__file__).resolve())}
             qkv = qa
-            expected = keep('attention_flash_per_camera', attention_arm(qkv, heads=16, group_size=6, flash_fn=flash_attn_func))
-            flash_batch = keep('attention_flash_combined', attention_arm(qkv, heads=16, group_size=18, flash_fn=flash_attn_func))
+            expected = keep('attention_flash_per_camera', attention_arm(qkv, heads=16, group_size=6,
+                flash_fn=flash_attn_func, observer=input_observer('flash_group6')))
+            flash_batch = keep('attention_flash_combined', attention_arm(qkv, heads=16, group_size=18,
+                flash_fn=flash_attn_func, observer=input_observer('flash_group18')))
             compare('flash_combined_vs_flash_per_camera_same_qkv', flash_batch, expected)
         else:
             prior = json.loads((args.reference/'result.json').read_text())
@@ -142,12 +255,40 @@ def main(argv=None):
             compare('native_recomputed_qkv_vs_frozen_official_per_camera', qa, qkv)
         q, k, v = split_qkv(qkv, heads=16)
         for name, value in (('frozen_q', q), ('frozen_k', k), ('frozen_v', v)):
-            layouts[name] = {'shape': list(value.shape), 'live_stride': list(value.stride()), 'dtype': str(value.dtype)}
-        sa = keep('attention_sdpa_per_camera', attention_arm(qkv, heads=16, group_size=6))
-        sb = keep('attention_sdpa_combined', attention_arm(qkv, heads=16, group_size=18))
+            layouts[name] = _layout(value)
+        initial_sdpa_flags = sdpa_flags()
+        sa = keep('attention_sdpa_per_camera', attention_arm(qkv, heads=16, group_size=6,
+            observer=input_observer('auto_sdpa_group6')))
+        sb = keep('attention_sdpa_combined', attention_arm(qkv, heads=16, group_size=18,
+            observer=input_observer('auto_sdpa_group18')))
         compare('sdpa_per_camera_vs_frozen_flash_same_qkv', sa, expected)
         compare('sdpa_combined_vs_frozen_flash_same_qkv', sb, expected)
         compare('sdpa_combined_vs_sdpa_per_camera_same_qkv', sb, sa)
+        if args.probe_sdpa_backends:
+            # Observe AUTO before any forced selector context. Profiling is
+            # separate from all numerical arms and exports no duration table.
+            auto_dispatch = _profile_auto_sdpa(qkv, heads=16, group_size=6)
+            for backend_name in _SDPA_BACKENDS:
+                arms = {}
+                for group_size in (6, 18):
+                    name = f'attention_sdpa_{backend_name.lower()}_group{group_size}'
+                    value, detail = probe_sdpa_arm(qkv, heads=16, group_size=group_size, name=backend_name)
+                    backend_probes[name] = detail
+                    if value is None:
+                        continue
+                    arms[group_size] = keep(name, value)
+                    compare(name + '_vs_frozen_flash', value, expected)
+                    compare(name + '_vs_auto', value, sa if group_size == 6 else sb)
+                    if torch.equal(value, expected):
+                        repeated, confirmation = probe_sdpa_arm(qkv, heads=16, group_size=group_size, name=backend_name)
+                        if repeated is None or not torch.equal(value, repeated):
+                            raise RuntimeError('Exact FA2 candidate did not reproduce on its confirmation arm')
+                        keep(name + '_repeat', repeated)
+                        detail['exact_confirmation'] = confirmation
+                if 6 in arms and 18 in arms:
+                    compare(f'{backend_name.lower()}_group18_vs_group6', arms[18], arms[6])
+            if sdpa_flags() != initial_sdpa_flags:
+                raise RuntimeError('Diagnostic SDPA selectors did not restore initial backend flags')
     torch.cuda.synchronize()
     save_file(outputs, str(args.output/'operator_outputs.safetensors'))
     result = {'kind': _KIND,
@@ -158,6 +299,10 @@ def main(argv=None):
         'metrics': metrics, 'layouts': layouts, 'model_constructed': False, 'performance_measurement': False,
         'flash_backend': flash_backend,
         'bf16_reduced_precision_reduction': torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction,
+        'math_sdp_fp16_bf16_reduction_allowed': torch.backends.cuda.fp16_bf16_reduction_math_sdp_allowed(),
+        'cudnn_version': torch.backends.cudnn.version(), 'initial_sdpa_flags': initial_sdpa_flags,
+        'sdpa_backend_probes': backend_probes, 'auto_sdpa_dispatch': auto_dispatch,
+        'observed_attention_inputs': attention_inputs,
         'caveat': 'Reconstructed block0 input, not a recorded block0 boundary. Native attention consumes frozen official QKV. Within-runtime arms isolate grouping/backend; no full-policy parity or performance claim.'}
     (args.output/'result.json').write_text(json.dumps(result, indent=2, allow_nan=False)+'\n')
     print(json.dumps({'engine': args.engine, 'metrics': metrics}), flush=True)

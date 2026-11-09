@@ -339,6 +339,28 @@ This does **not** repair the earlier mismatch already present at the ViT exit,
 or qualify the seven original action fixtures. Attention/block arithmetic after
 the exact patch/position inputs still needs localization before a product fix.
 
+Job309182 (`round013/ddbb5faa`) then reconstructed block0 input from those accepted
+patch+position values and loaded only norm1/QKV weight and bias. LayerNorm
+camera6/batch18 and QKV Linear camera6/batch18 on identical normalized values
+were exact; the reconstructed inputs, norms, QKV and auto-SDPA outputs were also
+bitwise equal across Torch2.7.1+cu128 and2.11.0+cu128, independently reread from
+raw tensors. FA2 2.7.4.post1 per-camera/combined attention was exact too.
+
+Holding those official QKV values fixed, both Torch runtimes' auto-SDPA differed
+from the external FA2 arm at559/4064256elements, affecting148/3528tokens:
+maxabs=.00390625, relativeL2=2.94742066e-5. SDPA camera6/batch18 were exact to each
+other. Thus this frozen point demonstrates an attention-API implementation
+contribution, not a measured runtime-version or batch contribution. It does not
+identify the actual auto-selected CUDA kernel merely by the SDPA API name.
+
+No recorded block0 output oracle was present in the earlier traces, so this
+reconstruction/operator comparison must not be labeled reproduced block0 or full
+policy parity. Nor does its small local residual quantify amplification through
+projection/residual/MLP/later blocks or explain all the separate proj1 difference.
+No product attention backend, numerical profile, default or original gate was
+changed from this observation. The optional frozen-backend probe is a separate
+diagnostic experiment, not a pre-qualified product implementation.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot

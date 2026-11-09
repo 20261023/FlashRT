@@ -233,3 +233,21 @@ FA2 here is an **operator API arm**, not independently reproduced block0/policy
 acceptance. Tensor layouts, package/runtime provenance and raw differences are
 saved, not benchmark timings. No attention backend, profile, default or action
 threshold is changed by this diagnostic.
+
+Add `--probe-sdpa-backends` to **both fresh same-job processes** to additionally
+test one-hot Torch `FLASH_ATTENTION`, `EFFICIENT_ATTENTION`, `CUDNN_ATTENTION`
+and `MATH` at grouping6/18 on the same official QKV. Defaults are unchanged.
+Preflight rejection and only exact known host-dispatch rejection strings are
+recorded as unsupported; OOM, device/cuDNN execution and synchronization faults
+still fail instead of being hidden as skips. Each FA2-exact candidate is repeated
+once and retained. No backend is silently substituted.
+
+Before forced contexts, a separate AUTO profiler exports observed SDPA operator
+names and CUDA kernel names/counts in its region, never a timing table. Missing
+CUDA activity is unverified kernel identity, not zero GPU work. Actual BNHD/BHND
+arguments, strides and storage offsets are observed immediately before API calls;
+runtime/cuDNN versions, enabled flags and math-reduction flags are recorded.
+Backend contexts must restore flags before successful publication. These flags
+are used only in the serial diagnostic process, never installed as a product
+default or a new action-acceptance threshold. Torch's Flash backend is not assumed
+to be the external FA2 binary or bitwise-equivalent to it.
