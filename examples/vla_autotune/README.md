@@ -153,3 +153,36 @@ and `--prior` artifacts. Preserve each runtime's actual source revision and dtyp
 profile. CPU-canonical artifact strides are labeled separately from live tensor
 strides; intermediate differences are not a new action-acceptance tolerance.
 These host-copy-heavy observations are not performance measurements.
+
+### Frozen early-vision operator controls
+
+`hy_trace/frozen_ops.py` narrows an admitted boundary observation without loading
+the complete policy. In each allocated A800 process it reads only three selected
+checkpoint tensors (patch weight/bias and learned position), accepted official
+trace values, and the native report's **live** merger layout. Run the exact same
+immutable script in the recorded official and native runtimes, serially in one
+allocation, with fresh output directories:
+
+```bash
+srun -n 1 -c 8 python -B -u "$REPO/examples/vla_autotune/hy_trace/frozen_ops.py" \
+  --official-trace /runs/accepted-trace/official/baseline \
+  --native-report /runs/accepted-trace/native/baseline/result.json \
+  --checkpoint /local/Hy-Embodied-0.5-VLA-RoboTwin/model.safetensors \
+  --label official-runtime --output /runs/frozen-ops/official-runtime
+```
+
+The three independent controls are patch convolution per-camera batch6 versus
+combined batch18; direct BF16 positional interpolation versus FP32 then BF16;
+and frozen proj1 values in official per-camera/non-contiguous, native combined/
+non-contiguous, and a separately labeled contiguous batch layout. Values are
+held fixed within each control. Output includes raw operator tensors, exactness,
+unequal-element counts, numerical differences, and CPU lowering operation counts
+(not profiler timings). Overlapping layouts and mismatched merger geometries
+reject instead of constructing an invalid view. `--help` needs no Torch or GPU;
+actual execution refuses an unallocated/login-node call before reading weights
+or creating output. This runner does not submit jobs or change model behavior.
+
+Within-runtime A/B comparisons isolate their stated variable. Cross-runtime
+differences also include environment/kernel changes, and even a reference match
+does not constitute an action gate, seven-fixture qualification, or performance
+measurement. Keep the original action acceptance thresholds unchanged.
