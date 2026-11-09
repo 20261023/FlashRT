@@ -207,3 +207,29 @@ Within-runtime A/B comparisons isolate their stated variable. Cross-runtime
 differences also include environment/kernel changes, and even a reference match
 does not constitute an action gate, seven-fixture qualification, or performance
 measurement. Keep the original action acceptance thresholds unchanged.
+
+### Frozen first spatial-attention controls
+
+`hy_trace/frozen_attention.py` follows the patch/position exclusions with a
+smaller block0 probe. It reconstructs block0 input values from the accepted
+patch+position tensors, loads only norm1/QKV weight and bias (four checkpoint
+tensors), and compares camera6 versus batch18 LayerNorm and QKV Linear. The two
+Linear arms share identical frozen normalized values rather than conflating a
+possible upstream norm difference.
+
+Run `--engine official` in the recorded official runtime, then `--engine native`
+in the native runtime in the **same allocated job**, passing the first process's
+fresh output as `--reference`. Other required arguments are `--official-trace`,
+`--checkpoint` and fresh `--output`. The official process compares FA2's actual
+`flash_attn_func` and Torch SDPA, each with camera6/batch18 grouping and identical
+QKV. The native process imports no FA2 binary: it consumes the saved official
+QKV, compares its own recomputed QKV separately, and evaluates Torch SDPA.
+Reference admission binds job, canonical checkpoint path/stat, trace path and
+reconstructed input values; it performs no content-hash scan.
+
+The reconstructed patch layout is labeled source-derived, not a measured live
+block0 layout. No recorded block0 output oracle exists in the earlier traces:
+FA2 here is an **operator API arm**, not independently reproduced block0/policy
+acceptance. Tensor layouts, package/runtime provenance and raw differences are
+saved, not benchmark timings. No attention backend, profile, default or action
+threshold is changed by this diagnostic.
