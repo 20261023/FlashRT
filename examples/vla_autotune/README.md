@@ -259,7 +259,7 @@ kernel names. An annotation-only trace still has unverified kernel identity.
 `hy_trace/proj1_camera_ablation.py` is a process-exclusive **example override**,
 not a registered backend option. It keeps `official_local_fp32`, Euler10,
 attention and every merger operation after PROJ1 unchanged. Only that first
-Linear uses camera `i:i+1` calls on the existing weights; pooler/predictor/proj2
+Linear uses per-camera calls on the existing weights; pooler/predictor/proj2
 remain batched. It never patches global `F.linear`, casts input differently, or
 adds `.contiguous()`.
 
@@ -267,10 +267,23 @@ First run `--arm preflight` in its own allocated process with `--checkpoint`,
 `--official-trace`, `--native-report`, historical `--profile-qkv`, the frozen Git
 `--source-revision`, and fresh `--output`. It rebuilds native B3 values/layout,
 checks just the current checkpoint's two PROJ1 tensors against the accepted
-frozen weights, then requires the **actual native B1 slices** to reproduce the
-saved official projection exactly. Their singleton leading stride stays225792,
-not an assumed official196. No full policy is constructed. It also requires real
+frozen weights, then requires the selected candidate to reproduce the saved
+official projection **exactly**. The default uses actual native B1 slices with
+singleton leading stride225792, not an assumed official196. That candidate was
+rejected in job309625 before any full policy was constructed. It also requires real
 CUDA activity for the separately filtered name-only profiler confirmation.
+
+The optional `--fold-spatial` follow-up removes only that singleton dimension
+before each Linear: an HWD view retaining non-contiguous spatial/channel strides,
+original storage and per-camera offset, then restores B1 **after** Linear. It
+does not use contiguous or 2D+bias fusion. This targets Torch's leading-stride
+fold predicate, not a different mathematical layer. The tiny precondition saves
+the candidate and both rejected native B1/B3 controls, raw arrays, unequal counts
+and lowering operation counts (not timings). CPU `mm`+separate `add_` evidence
+does not guarantee GPU equality. Use the same flag in preflight and both full
+arms; mismatched proof/mode is rejected before model construction. Binding is
+fixed before capture and restored on exit. The baseline still applies **no**
+merger override; its metadata explicitly reports `native_b3`.
 
 Full-model arms consume that same-job/source/checkpoint `--preflight-report`.
 Run `--arm baseline` on all seven original fixtures first, adding `--prior` for

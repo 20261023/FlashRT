@@ -38,7 +38,8 @@ def test_camera_projection_preserves_values_order_and_native_singleton_strides()
 
 
 @pytest.mark.parametrize('batch', [1, 3])
-def test_copied_merger_keeps_production_pooler_gelu_and_proj2_math_batched(batch):
+@pytest.mark.parametrize('fold_spatial',[False,True])
+def test_copied_merger_keeps_production_pooler_gelu_and_proj2_math_batched(batch,fold_spatial):
     module = ablation()
     tree = ast.parse((ROOT/'flash_rt/models/hyvla/pipeline_thor.py').read_text())
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name=='HyVLAThorBF16Pipeline')
@@ -51,7 +52,7 @@ def test_copied_merger_keeps_production_pooler_gelu_and_proj2_math_batched(batch
         _mg_pred0_w=values((4,6),3),_mg_pred0_b=values((4,),4),
         _mg_pred2_w=values((3,4),5),_mg_pred2_b=values((3,),6),
         _mg_proj2_w=values((3,3),7),_mg_proj2_b=values((3,),8))
-    owner = SimpleNamespace(W=weights)
+    owner = SimpleNamespace(W=weights,_camera_proj1_fold_spatial=fold_spatial)
     x = values((batch,16,2),9)
     expected = scope['merger_forward'](owner,x,grid=4)
     with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU],record_shapes=True,acc_events=True) as profile:
@@ -59,8 +60,105 @@ def test_copied_merger_keeps_production_pooler_gelu_and_proj2_math_batched(batch
     torch.testing.assert_close(actual,expected,atol=1e-12,rtol=0)
     assert actual.abs().sum()>0 and owner.W is weights
     shapes=[event.input_shapes[0] for event in profile.events() if event.name=='aten::linear']
-    assert shapes[:batch]==[[1,4,4,2]]*batch
+    assert shapes[:batch]==([[4,4,2]] if fold_spatial else [[1,4,4,2]])*batch
     assert shapes[batch:]==[[batch,2,2,4,6],[batch,2,2,4,4],[batch,2,2,3]]
+
+
+def test_folded_hwd_views_preserve_values_storage_offsets_and_separate_mm_bias_path():
+    module=ablation()
+    base=torch.arange(36.,dtype=torch.float64).reshape(3,2,2,3)
+    native=torch.empty_strided(base.shape,(12,2,1,4),dtype=base.dtype);native.copy_(base)
+    weight=torch.tensor([[1.,0.,-1.],[.5,1.,0.]],dtype=base.dtype);bias=torch.tensor([1.,-2.],dtype=base.dtype)
+    observed=[]
+    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU],acc_events=True) as profile:
+        value=module.per_camera_proj1(native,weight,bias,fold_spatial=True,
+            observer=lambda view:observed.append((view.shape,view.stride(),view.storage_offset(),view.untyped_storage().data_ptr())))
+    expected=torch.stack([-torch.ones(12),4.5*torch.arange(12.)-1],-1).double().reshape(3,2,2,2)
+    torch.testing.assert_close(value,expected,atol=0,rtol=0)
+    assert [tuple(row[0]) for row in observed]==[(2,2,3)]*3
+    assert [row[1] for row in observed]==[(2,1,4)]*3
+    assert [row[2] for row in observed]==[0,12,24]
+    assert all(row[3]==native.untyped_storage().data_ptr() for row in observed)
+    names=[event.name for event in profile.events()]
+    assert names.count('aten::mm')==3 and names.count('aten::add_')==3
+    assert 'aten::addmm' not in names and 'aten::bmm' not in names
+    torch.testing.assert_close(native,base,atol=0,rtol=0)
+
+
+def test_fold_mode_is_admitted_and_restored_with_instance_binding():
+    module=ablation();events=[];backend=FakeBackend(events);state={}
+    backend.frontend.pipe._camera_proj1_fold_spatial='original-marker'
+    with module.scoped_backend(lambda cfg:backend,config(),arm='camera_proj1',
+        preflight={'operator_exact':True,'fold_spatial':True},fold_spatial=True,state=state,
+        synchronize=lambda:None,expected_frontend_type=FakeFrontend):
+        assert backend.frontend.pipe._camera_proj1_fold_spatial is True
+    assert backend.frontend.pipe._camera_proj1_fold_spatial=='original-marker'
+    with pytest.raises(ValueError,match='precondition|layout|fold'):
+        with module.scoped_backend(lambda cfg:backend,config(),arm='camera_proj1',
+            preflight={'operator_exact':True,'fold_spatial':False},fold_spatial=True,state={},
+            synchronize=lambda:None,expected_frontend_type=FakeFrontend):pass
+
+
+@pytest.mark.parametrize('failure',['body','reset'])
+def test_fold_binding_is_removed_after_failure_when_original_attribute_absent(failure):
+    module=ablation();backend=FakeBackend([]);state={}
+    class Graph:
+        def reset(self):
+            assert backend.frontend.pipe._camera_proj1_fold_spatial is True
+            if failure=='reset':raise RuntimeError('reset failed')
+    with pytest.raises(RuntimeError,match=failure):
+        with module.scoped_backend(lambda cfg:backend,config(),arm='camera_proj1',fold_spatial=True,
+            preflight={'operator_exact':True,'fold_spatial':True},state=state,synchronize=lambda:None,
+            expected_frontend_type=FakeFrontend):
+            backend.frontend._vit_graph_cache['one']={'graph':Graph()}
+            if failure=='body':raise RuntimeError('body failed')
+    assert '_camera_proj1_fold_spatial' not in backend.frontend.pipe.__dict__
+    assert 'merger_forward' not in backend.frontend.pipe.__dict__
+
+
+def test_frozen_controls_keep_rejected_b1_and_b3_beside_folded_candidate():
+    module=ablation();values=torch.arange(36.,dtype=torch.float64).reshape(3,2,2,3)
+    view=torch.empty_strided(values.shape,(12,2,1,4),dtype=values.dtype);view.copy_(values)
+    weight=torch.tensor([[1.,0.,-1.],[.5,1.,0.]],dtype=view.dtype);bias=torch.tensor([1.,-2.],dtype=view.dtype)
+    outputs,evidence=module.projection_controls(view,weight,bias,fold_spatial=True)
+    expected=torch.stack([-torch.ones(12),4.5*torch.arange(12.)-1],-1).double().reshape(3,2,2,2)
+    assert set(outputs)=={'candidate','native_b1','native_batch'}
+    for output in outputs.values():torch.testing.assert_close(output,expected,atol=0,rtol=0)
+    assert evidence['input_unchanged'] is True
+    assert [v['live_stride'] for v in evidence['candidate_slice_views']]==[[2,1,4]]*3
+    assert [v['live_stride'] for v in evidence['native_b1_slice_views']]==[[12,2,1,4]]*3
+    assert evidence['lowering']['candidate']['aten::mm']==3
+    assert evidence['lowering']['candidate']['aten::add_']==3
+    assert 'aten::addmm' not in evidence['lowering']['candidate']
+
+
+def test_precondition_requires_matching_fold_mode_before_full_model(tmp_path):
+    module=ablation();checkpoint=tmp_path/'model.safetensors';checkpoint.write_bytes(b'fixture')
+    stat=checkpoint.stat()
+    proof={'kind':'hy_camera_proj1_exact_frozen_precondition','operator_exact':True,
+           'fold_spatial':True,'job_id':'7','source_revision':'0'*40,
+           'checkpoint':{'path':str(checkpoint.resolve()),'bytes':stat.st_size,'mtime_ns':stat.st_mtime_ns}}
+    module.validate_precondition(proof,job_id='7',source_revision='0'*40,checkpoint=checkpoint,fold_spatial=True)
+    with pytest.raises(ValueError,match='fold|mode|precondition'):
+        module.validate_precondition(proof,job_id='7',source_revision='0'*40,checkpoint=checkpoint,fold_spatial=False)
+
+
+def test_fold_mode_reaches_bound_instance_and_first_published_metadata():
+    module=ablation();backend=FakeBackend([]);published=[]
+    vla=SimpleNamespace(load_backend=lambda cfg:backend)
+    helper=SimpleNamespace(write_json=lambda path,record:published.append(copy.deepcopy(record)))
+    def run(argv):
+        with vla.load_backend(config()):
+            assert backend.frontend.pipe._camera_proj1_fold_spatial is True
+        helper.write_json(Path('/unused/result.json'),completed_record(True,'camera_proj1'))
+        return 0
+    helper.main=run
+    assert module.run_wrapped_validator(helper,vla,[],arm='camera_proj1',
+        preflight={'operator_exact':True,'fold_spatial':True},fold_spatial=True,source_revision='0'*40,
+        synchronize=lambda:None,expected_frontend_type=FakeFrontend)==0
+    extra=published[0]['experimental_merger_proj1']
+    assert extra['fold_spatial'] is True and extra['effective_projection'] == 'per_camera_hwd'
+    assert '_camera_proj1_fold_spatial' not in backend.frontend.pipe.__dict__
 
 
 class FakeFrontend:
@@ -301,7 +399,7 @@ def test_factory_boundary_rechecks_checkpoint_before_model_construction(tmp_path
     assert events==[] and vla.load_backend is forbidden
 
 
-@pytest.mark.parametrize('change', ['duplicate','cross_arm_fixture','checkpoint','runtime','proof','source'])
+@pytest.mark.parametrize('change', ['duplicate','cross_arm_fixture','checkpoint','runtime','proof','source','fold'])
 def test_seven_keys_do_not_hide_duplicate_or_cross_arm_execution(change):
     module=ablation();arms={'baseline':{},'camera_proj1':{}}
     for variant in module.VARIANTS:
@@ -316,6 +414,7 @@ def test_seven_keys_do_not_hide_duplicate_or_cross_arm_execution(change):
     if change=='runtime':record['runtime']['torch']='wrong'
     if change=='proof':record['experimental_merger_proj1']['precondition']['job_id']='8'
     if change=='source':record['experimental_merger_proj1']['source_revision']='1'*40
+    if change=='fold':record['experimental_merger_proj1']['fold_spatial']=True
     with pytest.raises(ValueError):module.aggregate(arms)
 
 

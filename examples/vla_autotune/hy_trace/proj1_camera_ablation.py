@@ -36,18 +36,48 @@ def _layout(value):
             'storage_offset': value.storage_offset(), 'dtype': str(value.dtype)}
 
 
-def per_camera_proj1(values, weight, bias, *, observer=None):
+def per_camera_proj1(values, weight, bias, *, observer=None, fold_spatial=False):
     import torch
     import torch.nn.functional as F
     if values.ndim != 4 or values.shape[0] < 1:
         raise ValueError('Camera PROJ1 requires nonempty BHWD input')
+    if type(fold_spatial) is not bool:
+        raise TypeError('fold_spatial must be bool')
     outputs = []
     for index in range(values.shape[0]):
-        view = values[index:index + 1]  # keep actual singleton leading stride
+        # HWD removes only singleton metadata: preserve strides/storage/offset.
+        # Non-contiguous nD linear permits mm plus a separate bias addition;
+        # do not flatten to a 2D+bias addmm or make a contiguous copy.
+        view = values[index] if fold_spatial else values[index:index + 1]
         if observer is not None:
             observer(view)
-        outputs.append(F.linear(view, weight, bias))
+        output = F.linear(view, weight, bias)
+        outputs.append(output.unsqueeze(0) if fold_spatial else output)
     return torch.cat(outputs, dim=0)
+
+
+def projection_controls(view, weight, bias, *, fold_spatial=False):
+    """Frozen diagnostic arms; preserve the rejected B1/B3 controls and input."""
+    from collections import Counter
+    import torch
+    import torch.nn.functional as F
+    before = view.detach().cpu().clone()
+    observed, b1_observed, lowering = [], [], {}
+    def run(name, fn):
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU], acc_events=True) as profile:
+            output = fn()
+        lowering[name] = dict(Counter(event.name for event in profile.events()
+            if event.name in ('aten::linear', 'aten::mm', 'aten::bmm', 'aten::add_', 'aten::addmm')))
+        return output
+    outputs = {'candidate': run('candidate', lambda: per_camera_proj1(view, weight, bias,
+        fold_spatial=fold_spatial, observer=lambda item: observed.append(_layout(item))))}
+    outputs['native_b1'] = run('native_b1', lambda: per_camera_proj1(view, weight, bias,
+        observer=lambda item: b1_observed.append(_layout(item))))
+    outputs['native_batch'] = run('native_batch', lambda: F.linear(view, weight, bias))
+    if not torch.equal(view.detach().cpu(), before):
+        raise RuntimeError('Camera projection mutated its frozen input')
+    return outputs, {'candidate_slice_views': observed, 'native_b1_slice_views': b1_observed,
+                     'input_unchanged': True, 'lowering': lowering}
 
 
 def camera_merger(self, x, grid=14):
@@ -60,6 +90,7 @@ def camera_merger(self, x, grid=14):
     x = x.reshape(B, h, w, -1)
     observed = []
     x = per_camera_proj1(x, W._mg_proj1_w, W._mg_proj1_b,
+                        fold_spatial=getattr(self, '_camera_proj1_fold_spatial', False),
                         observer=lambda view: observed.append(_layout(view)))
     self._camera_proj1_encoding_views = observed
     # The production post-PROJ1 math remains batched, without casts/contiguous.
@@ -91,11 +122,13 @@ def _owned_graphs(frontend):
 
 @contextmanager
 def scoped_backend(real_factory, config, *, arm, preflight, state, synchronize,
-                   expected_frontend_type):
+                   expected_frontend_type, fold_spatial=False):
     if arm not in ('baseline', 'camera_proj1'):
         raise ValueError('Unknown ablation arm')
     if preflight.get('operator_exact') is not True:
         raise ValueError('Exact frozen projection precondition must pass before model construction')
+    if type(fold_spatial) is not bool or preflight.get('fold_spatial', False) is not fold_spatial:
+        raise ValueError('Projection precondition fold layout mode differs from requested mode')
     if (config.model != 'hyvla' or config.sampler != 'euler' or config.num_steps != 10
             or config.options.get('numerical_profile') != 'official_local_fp32'
             or config.options.get('use_cuda_graph') is not True):
@@ -104,6 +137,7 @@ def scoped_backend(real_factory, config, *, arm, preflight, state, synchronize,
     backend = real_factory(config)
     frontend = pipe = None
     own = _MISSING
+    own_fold = _MISSING
     primary = None
     state['cleanup'] = {'passed': False, 'status': 'active'}
     try:
@@ -112,9 +146,11 @@ def scoped_backend(real_factory, config, *, arm, preflight, state, synchronize,
             raise ValueError('Unexpected frontend/profile at ablation boundary')
         pipe = frontend.pipe
         own = pipe.__dict__.get('merger_forward', _MISSING)
+        own_fold = pipe.__dict__.get('_camera_proj1_fold_spatial', _MISSING)
         if frontend._vit_graph_cache or frontend._graph_cache:
             raise ValueError('Ablation binding must precede every prepare/capture; graph caches must be empty')
         if arm == 'camera_proj1':
+            pipe._camera_proj1_fold_spatial = fold_spatial
             pipe.merger_forward = MethodType(camera_merger, pipe)
         state['bound_before_prepare'] = True
         yield backend
@@ -156,6 +192,11 @@ def scoped_backend(real_factory, config, *, arm, preflight, state, synchronize,
                 pipe.__dict__.pop('merger_forward', None)
             else:
                 pipe.merger_forward = own
+            if pipe is not None:
+                if own_fold is _MISSING:
+                    pipe.__dict__.pop('_camera_proj1_fold_spatial', None)
+                else:
+                    pipe._camera_proj1_fold_spatial = own_fold
         except BaseException as error:
             errors.append(f'method restore: {type(error).__name__}: {error}')
         try:
@@ -267,7 +308,9 @@ def aggregate(arms):
             job, source = record.get('job_id'), extra.get('source_revision')
             if (not job or not source or proof.get('kind') != _PREFLIGHT_KIND
                     or proof.get('operator_exact') is not True or proof.get('job_id') != job
-                    or proof.get('source_revision') != source):
+                    or proof.get('source_revision') != source
+                    or type(extra.get('fold_spatial', False)) is not bool
+                    or extra.get('fold_spatial', False) is not proof.get('fold_spatial', False)):
                 raise ValueError('Ablation execution proof/job/source identity differs')
             identity = (job, source, proof)
             if anchor is None:
@@ -304,18 +347,21 @@ def _read_arrays(folder):
 
 def run_wrapped_validator(helper, vla_module, forwarded, *, arm, preflight, source_revision,
                           synchronize, expected_frontend_type, prior=None,
-                          checkpoint_path=None, output_path=None):
+                          checkpoint_path=None, output_path=None, fold_spatial=False):
     state = {'cleanup': {'passed': False, 'status': 'not_constructed'}, 'failed_owners': []}
     real_factory, real_writer = vla_module.load_backend, helper.write_json
     def factory(config):
         if checkpoint_path is not None and Path(config.checkpoint).expanduser().resolve() != Path(checkpoint_path).expanduser().resolve():
             raise ValueError('Actual backend checkpoint differs from admitted projection precondition')
         return scoped_backend(real_factory, config, arm=arm, preflight=preflight, state=state,
-                              synchronize=synchronize, expected_frontend_type=expected_frontend_type)
+                              synchronize=synchronize, expected_frontend_type=expected_frontend_type,
+                              fold_spatial=fold_spatial)
     def publish(path, record):
         if output_path is not None and Path(path).resolve().parent != Path(output_path).expanduser().resolve():
             raise ValueError('Actual validator output differs from the admitted output directory')
         extra = {'arm': arm, 'only_changed_operator': 'merger.PROJ1 call batching' if arm == 'camera_proj1' else None,
+                 'fold_spatial': fold_spatial,
+                 'effective_projection': ('per_camera_hwd' if fold_spatial else 'per_camera_b1') if arm == 'camera_proj1' else 'native_b3',
                  'nominal_profile': 'official_local_fp32', 'production_option': False,
                  'logical_architecture_changed': False, 'attention_changed': False, 'original_gate_changed': False,
                  'source_revision': source_revision, 'source_file': str(Path(__file__).resolve()),
@@ -352,6 +398,14 @@ def _checkpoint_stat(checkpoint):
     return {'path': str(path), 'bytes': stat.st_size, 'mtime_ns': stat.st_mtime_ns}
 
 
+def validate_precondition(proof, *, job_id, source_revision, checkpoint, fold_spatial=False):
+    if (proof.get('kind') != _PREFLIGHT_KIND or proof.get('operator_exact') is not True
+            or proof.get('job_id') != job_id or proof.get('source_revision') != source_revision
+            or proof.get('checkpoint') != _checkpoint_stat(checkpoint)
+            or type(fold_spatial) is not bool or proof.get('fold_spatial', False) is not fold_spatial):
+        raise ValueError('Projection precondition job/source/checkpoint/fold mode admission failed')
+
+
 def validate_forwarded_point(point, *, checkpoint, output):
     if Path(point.checkpoint).expanduser().resolve() != Path(checkpoint).expanduser().resolve():
         raise ValueError('Forwarded validator checkpoint differs from admitted checkpoint')
@@ -369,7 +423,6 @@ def validate_profile_confirmation(summary):
 
 def preflight_operator(args):
     import torch
-    import torch.nn.functional as F
     from safetensors import safe_open
     from safetensors.torch import save_file
     common, ops = _sibling('diagnose'), _sibling('frozen_ops')
@@ -393,16 +446,13 @@ def preflight_operator(args):
             if (not torch.equal(weight.cpu(), checkpoint.get_tensor(prefix+'weight').to(torch.bfloat16))
                     or not torch.equal(bias.cpu(), checkpoint.get_tensor(prefix+'bias').to(torch.bfloat16))):
                 raise ValueError('Current checkpoint PROJ1 tensors differ from accepted frozen reference')
-        before = view.cpu().clone()
-        observed = []
-        candidate = per_camera_proj1(view, weight, bias, observer=lambda item: observed.append(_layout(item)))
-        control = F.linear(view, weight, bias)
-        if not torch.equal(view.cpu(), before):
-            raise RuntimeError('Camera projection mutated its frozen input')
-        exact = torch.equal(candidate, expected)
-        metrics = {'candidate_vs_reference': common.difference(common._array(candidate), common._array(expected)),
-                   'native_batch_vs_reference': common.difference(common._array(control), common._array(expected))}
-        save_file({'candidate': candidate.cpu().contiguous(), 'native_batch': control.cpu().contiguous()},
+        outputs, evidence = projection_controls(view, weight, bias, fold_spatial=args.fold_spatial)
+        exact = torch.equal(outputs['candidate'], expected)
+        metrics = {}
+        for name, value in outputs.items():
+            metrics[name + '_vs_reference'] = common.difference(common._array(value), common._array(expected))
+            metrics[name + '_vs_reference']['unequal_elements'] = int((value != expected).sum().item())
+        save_file({name: value.cpu().contiguous() for name, value in {**outputs, 'reference': expected}.items()},
                   str(args.output/'operator_outputs.safetensors'))
         # A separate current-GPU check confirms annotation exclusion. The QKV
         # source remains explicitly historical, never disguised as this job.
@@ -413,9 +463,10 @@ def preflight_operator(args):
         dispatch = attention._profile_auto_sdpa(qkv, heads=16, group_size=6)
         validate_profile_confirmation(dispatch)
     record = {'kind': _PREFLIGHT_KIND, 'operator_exact': exact, 'job_id': os.environ['SLURM_JOB_ID'],
+              'fold_spatial': args.fold_spatial,
               'source_revision': args.source_revision, 'checkpoint': _checkpoint_stat(args.checkpoint),
               'official_trace': str(args.official_trace.resolve()), 'native_report': str(args.native_report.resolve()),
-              'candidate_slice_views': observed, 'metrics': metrics, 'profile_dispatch': dispatch,
+              **evidence, 'metrics': metrics, 'profile_dispatch': dispatch,
               'profile_qkv_historical_source': str(args.profile_qkv.resolve()),
               'model_constructed': False, 'original_gate_changed': False}
     (args.output/'result.json').write_text(json.dumps(record, indent=2, allow_nan=False)+'\n')
@@ -435,6 +486,8 @@ def main(argv=None):
     parser.add_argument('--profile-qkv', type=Path)
     parser.add_argument('--preflight-report', type=Path)
     parser.add_argument('--prior', type=Path)
+    parser.add_argument('--fold-spatial', action='store_true',
+                        help='Prototype no-copy HWD views instead of native B1 slices; same exact precondition required')
     args, forwarded = parser.parse_known_args(argv)
     _sibling('diagnose').require_step()  # before Torch, model IO or output creation
     if args.arm == 'preflight':
@@ -444,10 +497,8 @@ def main(argv=None):
     if args.preflight_report is None or (args.arm == 'baseline' and args.prior is None):
         raise ValueError('Full model arms require current exact precondition; baseline also requires prior control')
     proof = json.loads(args.preflight_report.read_text())
-    if (proof.get('kind') != _PREFLIGHT_KIND or proof.get('operator_exact') is not True
-            or proof.get('job_id') != os.environ['SLURM_JOB_ID'] or proof.get('source_revision') != args.source_revision
-            or proof.get('checkpoint') != _checkpoint_stat(args.checkpoint)):
-        raise ValueError('Projection precondition job/source/checkpoint admission failed')
+    validate_precondition(proof, job_id=os.environ['SLURM_JOB_ID'], source_revision=args.source_revision,
+                          checkpoint=args.checkpoint, fold_spatial=args.fold_spatial)
     helper = _module(args.runner, 'hy_camera_validation_runner')
     actual = ['--checkpoint', str(args.checkpoint), '--output', str(args.output), *forwarded]
     point = helper.parse_args(actual)
@@ -462,7 +513,7 @@ def main(argv=None):
     return run_wrapped_validator(helper, vla, actual, arm=args.arm, preflight=proof,
         source_revision=args.source_revision, synchronize=torch.cuda.synchronize,
         expected_frontend_type=HyVLAFlowFrontend, prior=args.prior,
-        checkpoint_path=args.checkpoint, output_path=args.output)
+        checkpoint_path=args.checkpoint, output_path=args.output, fold_spatial=args.fold_spatial)
 
 
 if __name__ == '__main__':

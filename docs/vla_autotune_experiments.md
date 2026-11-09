@@ -428,6 +428,25 @@ seven-fixture qualification remain unchanged. The independent merger PROJ1
 batch/layout contribution remains a separate possible ablation, not a repaired
 ViT or policy inferred from this operator matrix.
 
+Job309625 (`round016/aa3da4b3`) tested actual native per-camera B1 slices as an
+EXACT frozen precondition **before** any full-policy construction. It failed
+that gate and exited1:0:314261/1204224unequal elements, maxabs1, relativeL2
+.00246554148, versus314260/.00246555918 for native B3. The two native arms differed
+at160elements (maxabs.125). No baseline/candidate seven-fixture model runs took
+place; neither the old failed job nor original action gate was reclassified.
+The corrected profiler filter did separately observe actual CUDA kernels while
+excluding the mirrored annotation in this job.
+
+Torch2.11's `should_fold` checks leading stride relations even for singleton
+dimensions. Thus official B1 leading stride196 satisfies14*14 while native
+225792 does not. The next example-only `--fold-spatial` candidate removes that
+singleton axis before Linear, preserving the non-contiguous HWD view/storage/
+offset and restoring B1 afterwards. It retains separate bias addition rather
+than copying into a contiguous or 2D+bias-fused path. This source-based hypothesis
+must pass a **new** exact GPU precondition, with the rejected B1/B3 controls kept,
+before any full-policy ablation. No production/profile/attention/default or
+quality threshold is changed, and no GPU success is inferred from CPU tests.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
