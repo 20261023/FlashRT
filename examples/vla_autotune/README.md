@@ -312,3 +312,9 @@ and one admitted experiment; a missing/wrong/duplicated fixture cannot become
 original **padded40x32** elementwise/cosine gate; public40x20 is separately
 reported, never silently substituted. No old failed job is relabeled or default
 promoted, even if this new prototype eventually passes its recorded gate.
+
+Measured outcome of the fold follow-up: job309681 passed the frozen EXACT gate
+but only6/7original full-policy fixtures, versus4/7for the exactly reproduced
+baseline. State still failed3public/padded elements; the aggregate stayed nonzero.
+Thus `--fold-spatial` is a partial diagnostic result, **not** a qualified product
+fix or a recommended default. Keep original tolerances and all failed records.

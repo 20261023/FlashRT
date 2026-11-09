@@ -447,6 +447,48 @@ must pass a **new** exact GPU precondition, with the rejected B1/B3 controls kep
 before any full-policy ablation. No production/profile/attention/default or
 quality threshold is changed, and no GPU success is inferred from CPU tests.
 
+That follow-up actually ran as job309681 on `round017/97218269`. The HWD frozen
+candidate was **bitwise equal** to the saved official projection at all1204224
+elements, while the retained native B1/B3 controls still differed314261/314260.
+Observed lowering was3`mm`+3`add_` for HWD, versus3`bmm`+3`add_` for B1 and
+1`bmm`+1`add_` for B3. Actual HWD views retained strides[14,1,196] and offsets
+0/225792/451584. Source folding reasoning was therefore tested, not assumed.
+
+All14fresh full-policy processes then completed their mechanical checks and
+owned cleanup. Every baseline reproduced old308140 inputs, oracles, configuration,
+runtime, checkpoint and saved actions exactly; snapshot source differences were
+explicitly reported. Candidate fixed-noise replay and graph/eager outputs were
+exact in every case, with actual Euler10NFE. Independent raw-array recomputation
+confirmed the original padded40x32 gate and separate public40x20 dispositions:
+
+| Fixture | Baseline elements outside original gate | HWD candidate elements outside gate | Baseline maxabs | HWD maxabs | Candidate disposition |
+|---|---:|---:|---:|---:|---|
+| baseline | 0 | 0 | .00634766 | .00854492 | pass |
+| episode_start | 0 | 0 | .01171875 | .01171875 | pass |
+| current | 0 | 0 | .00830078 | .01025391 | pass |
+| history | 4 | 0 | .01196289 | .00993347 | pass |
+| prompt | 0 | 0 | .00683594 | .01171875 | pass |
+| state | 2 | **3** | .01123047 | **.01663208** | **reject** |
+| noise | 6 | 0 | .02349854 | .01318359 | pass |
+
+All outliers above are in public20 as well; no padded-only failure was hidden
+by public truncation. The gate is elementwise`.01+.01*abs(reference)` plus
+cosine>=.999, not a uniform maxabs threshold: a maxabs>.01 can still pass.
+State candidate failures are at zero-based(step,channel)(14,9),(15,9),(35,9),
+with absdeltas .01342773/.01663208/.01406860 versus allowed
+.01331171/.01191901/.01136251. Its cosine .99998731 and lower RMSE than baseline
+do not override these violations. RMSE also increased in several already-passing
+fixtures, so neither a monotonic accuracy improvement nor full official equality
+follows from fixing this one frozen operator.
+
+The resulting4/7->6/7 is a **partial causal ablation**, not a complete gate fix:
+the job correctly remains FAILED1:0 with aggregate exit1. No production option,
+default, tolerance, source snapshot or old failed qualification was changed.
+The prototype is not promoted. Merger-before-input ViT differences remain a
+separate known source; the next useful work is boundary localization of the state
+residual, not another blind cast/backend/tolerance change. This is still recorded
+numerical testing, not representative robot task-success qualification.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
