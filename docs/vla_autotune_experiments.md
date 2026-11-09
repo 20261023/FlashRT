@@ -172,6 +172,38 @@ sorting/projection hypothesis cannot explain the entire earlier visual mismatch.
 Live merger layouts are non-contiguous in both implementations; canonical CPU
 artifact strides must never be substituted for them in a layout experiment.
 
+The next **frozen single-operator** diagnostic (job309016, source checkpoint
+`d91ef23b`) ran the recorded Torch2.7.1 and native Torch2.11 runtimes serially in
+one A800 allocation. It constructed no full policy and changed no action gate.
+All seven saved operator arms were independently reread on CPU and were bitwise
+identical **across these two runtimes**. Relative to the accepted official trace:
+
+| Frozen control | Unequal elements | Relative L2 | Maxabs |
+|---|---:|---:|---:|
+| PatchConv, per-camera batch6 | 0 | 0 | 0 |
+| PatchConv, combined batch18 | 0 | 0 | 0 |
+| Position interpolation, direct BF16 | 0 | 0 | 0 |
+| Position interpolation, FP32 then BF16 | 0 | 0 | 0 |
+| proj1, official per-camera live views | 0 | 0 | 0 |
+| proj1, native combined non-contiguous layout | 314260/1204224 | .002465559 | 1 |
+| proj1, contiguous combined batch control | 440808/1204224 | .003142936 | 1 |
+
+Thus patch batching and the interpolation cast hypothesis do **not** explain the
+observed difference for these exact frozen inputs, weights and targets. No
+speculative interpolation/profile change was made. This is not a universal
+statement about other input geometry or hardware.
+
+For proj1, CPU profiler lowering actually recorded three `mm` plus three `add_`
+calls for the official views, versus one `bmm` plus one `add_` for the native
+batched layout. The contiguous control used one `addmm`. These are operation
+counts, not GPU timings or a measured reduction-kernel/algorithm attribution.
+They prove an independent batching/layout contribution with values held fixed;
+blindly adding `.contiguous()` does not restore official equality here.
+
+This does **not** repair the earlier mismatch already present at the ViT exit,
+or qualify the seven original action fixtures. Attention/block arithmetic after
+the exact patch/position inputs still needs localization before a product fix.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
