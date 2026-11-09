@@ -1,0 +1,20 @@
+{
+  "repository": "https://github.com/yuantianyuan01/FastWAM",
+  "commit": "7faa71108368fbb3b6885649f112af607427a2d4",
+  "archive_url": "https://codeload.github.com/yuantianyuan01/FastWAM/tar.gz/7faa71108368fbb3b6885649f112af607427a2d4",
+  "archive_bytes": 432435,
+  "source_subdirectory": "upstream",
+  "integrity_note": "Pinned commit URL; no independent content checksum was computed. Extracted upstream files are unmodified.",
+  "resolved_config_sources": [
+    "upstream/configs/model/fastwam.yaml",
+    "upstream/configs/data/libero_2cam.yaml",
+    "upstream/configs/task/libero_uncond_2cam224_1e-4.yaml",
+    "Original-release model configuration (action shift 5, inspected read-only)"
+  ],
+  "resolved_config_overrides": {
+    "action_scheduler": "Explicit original-release train/infer shift 5; pinned commit defaults to 1",
+    "loading": "Local backbone, no T5 in action process, no common-file redirect or pretrained DiT; full released MoT+proprio checkpoint required",
+    "training": "Gradient checkpointing and compilation disabled for inference",
+    "dimensions": "action_dim 7, proprio_dim 8, action_horizon 32, concatenated image 224x448; both experts use 24x128 attention and 30 blocks, action hidden width remains 1024"
+  }
+}

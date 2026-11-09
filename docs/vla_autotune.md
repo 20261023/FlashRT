@@ -2,6 +2,9 @@
 
 `flash_rt.vla.autotune` is a small controller/worker layer above the
 [execution backend](vla_backend.md), not a new inference engine or serving daemon.
+See [measured iteration notes](vla_autotune_experiments.md) for scoped outcomes,
+including failed candidates, and [source-checkout examples](../examples/vla_autotune/README.md)
+for validation and explicitly experimental graph/diagnostic runners.
 
 ```text
 Candidate + workload + dataflow hypothesis + source/patch reference
