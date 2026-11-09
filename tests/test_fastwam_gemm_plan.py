@@ -98,13 +98,15 @@ def test_request_metadata_uses_plan_stat_deltas_not_cumulative_identity():
     module = SimpleNamespace(calls=10, _runner=runner)
     pipe = object.__new__(FastWAMActionPipeline)
     pipe._lock = threading.RLock()
+    pipe._closing = pipe._closed = False
+    pipe._velocity_graph = pipe._execution_stream = None
     pipe._native_modules, pipe._native_skipped = {"action_expert.head": module}, ()
     pipe._native_runner = runner
     pipe.native_linear_backend = "cached"
     pipe.device, pipe.image_multiple = torch.device("cpu"), (32, 32)
     pipe.sampler, pipe.sigma_shift, pipe.time_scale = "euler", 5.0, 1000
     pipe._initial_state = lambda noise: torch.zeros(1, 2, 2)
-    pipe.prepare_condition = lambda obs: None
+    pipe._prepare_condition = lambda obs: None
 
     def euler(state, condition):
         if values["launches"] == 100:

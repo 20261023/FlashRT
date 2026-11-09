@@ -32,6 +32,12 @@ class FastWAMTorchFrontend:
     this is NOT a fully native FlashRT model port or a performance claim.
     ``native_linear_backend='legacy'`` preserves the old binary by default;
     ``'cached'`` explicitly requires the standalone host-side plan extension.
+    ``use_cuda_graph=False`` keeps eager execution. Opt-in captures only the raw
+    field, on one owned ordered stream, with one fixed input geometry. Native
+    graphs require cached Linear; changing geometry raises instead of recapture
+    or fallback. Prepare/capture must occur while other CUDA work in this process
+    is quiescent; an instance lock cannot coordinate unrelated GPU threads.
+    Sampler decisions, VAE and per-request video prefill remain outside capture.
 
     Alternatively pass ``model=`` with an already initialized upstream model;
     its weights/device/dtype are not silently changed. Source/checkpoint loading
@@ -55,11 +61,18 @@ class FastWAMTorchFrontend:
         probeflow_config=None,
         native_linear: bool = False,
         native_linear_backend: str = "legacy",
+        use_cuda_graph: bool = False,
     ):
         steps, probe = validate_sampler(sampler, sigma_shift, num_inference_steps, probeflow_config)
         horizon = positive_integer(action_horizon, "action_horizon")
         if not isinstance(native_linear, bool):
             raise TypeError("native_linear must be bool")
+        if not isinstance(use_cuda_graph, bool):
+            raise TypeError("use_cuda_graph must be bool")
+        if use_cuda_graph and native_linear and native_linear_backend != "cached":
+            raise ValueError("FastWAM CUDA graph with native Linear requires cached backend")
+        if use_cuda_graph and device is not None and not str(device).startswith("cuda"):
+            raise ValueError("use_cuda_graph requires a CUDA device")
         if native_linear_backend not in ("legacy", "cached"):
             raise ValueError("native_linear_backend must be 'legacy' or 'cached'")
         if native_linear_backend == "cached" and not native_linear:
@@ -95,6 +108,8 @@ class FastWAMTorchFrontend:
         device = _canonical_device(device if device is not None else getattr(model, "device", "cuda"), torch)
         if native_linear and (dtype != torch.bfloat16 or device.type != "cuda"):
             raise ValueError("native_linear requires CUDA BF16")
+        if use_cuda_graph and device.type != "cuda":
+            raise ValueError("use_cuda_graph requires a CUDA device")
         if model is None:
             from flash_rt.models.fastwam.loader import load_local_model
             model = load_local_model(config, *paths, device=device, dtype=dtype)
@@ -104,6 +119,7 @@ class FastWAMTorchFrontend:
             sampler=sampler, num_inference_steps=steps, probeflow_config=probe,
             native_linear=native_linear, device=device, dtype=dtype,
             native_linear_backend=native_linear_backend,
+            use_cuda_graph=use_cuda_graph,
         )
         self.sampler = sampler
         self.device, self.dtype = device, dtype
@@ -111,6 +127,7 @@ class FastWAMTorchFrontend:
         self.action_horizon = horizon
         self.num_inference_steps = steps
         self.native_linear_backend = native_linear_backend
+        self.use_cuda_graph = use_cuda_graph
 
     @property
     def execution_metadata(self):
@@ -129,3 +146,8 @@ class FastWAMTorchFrontend:
         Optional noise is floating [1,action_horizon,action_dim]; it is copied.
         """
         return self.pipeline.infer(obs, noise=noise)
+
+    def close(self):
+        """Release owned graph/pipeline references; failed resets can be retried."""
+        self.pipeline.close()
+        self.model = None

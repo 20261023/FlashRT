@@ -38,6 +38,9 @@ def test_shifted_sigma_is_not_a_1000_scaled_integration_delta():
     ({"native_linear": "true"}, TypeError, "native_linear"),
     ({"native_linear": True, "device": "cpu"}, ValueError, "CUDA"),
     ({"native_linear": True, "dtype": "fp16"}, ValueError, "BF16"),
+    ({"use_cuda_graph": "true"}, TypeError, "use_cuda_graph"),
+    ({"use_cuda_graph": True, "device": "cpu"}, ValueError, "CUDA"),
+    ({"use_cuda_graph": True, "native_linear": True}, ValueError, "cached"),
 ])
 def test_invalid_options_fail_before_files_or_torch(monkeypatch, kwargs, error, match):
     frontend = importlib.import_module("flash_rt.frontends.torch.fastwam")
@@ -290,6 +293,140 @@ def test_euler_scales_model_time_but_not_integration(torch):
     assert result["sampler_metadata"]["nfe"] == 2
     assert result["execution_metadata"]["backend"] == "upstream_torch_reference"
     assert result["execution_metadata"]["fully_native"] is False
+
+
+def _attach_cpu_graph(frontend, torch):
+    """Inject only capture/stream boundaries, leaving real pipeline math intact."""
+    from flash_rt.models.fastwam.velocity_graph import FastWAMVelocityGraph
+    released = []
+    def capture(fn, static):
+        output = torch.empty_like(static['latents_action'])
+        return (lambda: output.copy_(fn(**static)), output, lambda: released.append(True),
+                {'warmup_evaluations': 0, 'encoded_bodies': 1, 'captured_native_linear_calls': {}})
+    frontend.pipeline._velocity_graph = FastWAMVelocityGraph(
+        frontend.model._denoise_action_with_video_cache, capture=capture)
+    return released
+
+
+@pytest.mark.parametrize('sampler,dense', [('euler', False), ('probeflow', False), ('probeflow', True)])
+def test_pipeline_graph_matches_euler10_and_both_probe_branches_with_borrowed_output(torch, sampler, dense):
+    def field(state, time):
+        return torch.ones_like(state) * ((1 if time.item() > 500 else -1) if dense else time/1000)
+    options = dict(sigma_shift=1, action_horizon=3, sampler=sampler)
+    if sampler == 'euler': options['num_inference_steps'] = 10
+    else: options['probeflow_config'] = ProbeFlowConfig(epsilon=.1, max_steps=4)
+    eager = FastWAMTorchFrontend(model=_tiny_model(torch, field=field), **options)
+    graphed = FastWAMTorchFrontend(model=_tiny_model(torch, field=field), **options)
+    original = graphed.model._denoise_action_with_video_cache
+    released = _attach_cpu_graph(graphed, torch)
+    noise = torch.zeros(1, 3, 2)
+    expected = eager.infer(_obs(torch), noise)
+    actual = graphed.infer(_obs(torch), noise)
+    np.testing.assert_array_equal(actual['actions'], expected['actions'])
+    assert actual['sampler_metadata'] == expected['sampler_metadata']
+    expected_nfe = 10 if sampler == 'euler' else 5 if dense else 2
+    assert actual['sampler_metadata']['nfe'] == expected_nfe
+    assert actual['execution_metadata']['velocity_graph']['replays'] == expected_nfe
+    assert actual['execution_metadata']['cuda_graph'] is True
+    assert graphed.model._denoise_action_with_video_cache is original
+    assert graphed.model.prefills == graphed.model.encodes == 1
+    condition = graphed.pipeline.prepare_condition(_obs(torch))
+    raw = graphed.pipeline.evaluate_velocity(noise, 1., condition)
+    assert torch.equal(raw, torch.ones_like(noise))
+    assert graphed.pipeline._velocity_graph.snapshot()['replays'] == expected_nfe
+    saved = actual['actions'].copy()
+    graphed.infer(_obs(torch), torch.ones_like(noise))
+    np.testing.assert_array_equal(actual['actions'], saved)
+    graphed.close(); graphed.close(); assert released == [True]
+
+
+def test_pipeline_graph_refreshes_changed_context_and_ends_scope_after_bad_input(torch):
+    model = _tiny_model(torch)
+    model._denoise_action_with_video_cache = lambda **kw: torch.ones_like(kw['latents_action']) * kw['context'].mean()
+    frontend = FastWAMTorchFrontend(model=model, sigma_shift=1, action_horizon=2, num_inference_steps=2)
+    _attach_cpu_graph(frontend, torch)
+    obs = _obs(torch); noise = torch.zeros(1, 2, 2)
+    first = frontend.infer(obs, noise)
+    obs['context'].fill_(3)
+    second = frontend.infer(obs, noise)
+    np.testing.assert_array_equal(first['actions'], np.zeros((1, 2, 2)))
+    np.testing.assert_array_equal(second['actions'], np.full((1, 2, 2), -3))
+    assert second['execution_metadata']['velocity_graph']['condition_refreshes'] == 1
+    assert model.prefills == 2
+    with pytest.raises(ValueError, match='finite'):
+        frontend.infer(obs, torch.full_like(noise, float('nan')))
+    frontend.infer(obs, noise)  # admission failure did not leave an active request
+
+
+def test_direct_frontend_close_retries_graph_reset_before_dropping_model(torch):
+    frontend = FastWAMTorchFrontend(model=_tiny_model(torch), sigma_shift=1, action_horizon=2)
+    model = frontend.model; events = []
+    class Graph:
+        def close(self):
+            events.append('reset')
+            if len(events) == 1: raise RuntimeError('reset failed')
+    frontend.pipeline._velocity_graph = Graph()
+    with pytest.raises(RuntimeError, match='reset failed'): frontend.close()
+    assert frontend.model is model and frontend.pipeline.model is model
+    with pytest.raises(RuntimeError, match='clos'): frontend.infer(_obs(torch))
+    frontend.close(); frontend.close()
+    assert events == ['reset', 'reset'] and frontend.model is frontend.pipeline.model is None
+    assert model.eval() is model  # externally owned model was not destroyed
+
+
+def test_pipeline_orders_all_public_operations_on_owned_stream(torch, monkeypatch):
+    frontend = FastWAMTorchFrontend(model=_tiny_model(torch), sigma_shift=1, action_horizon=2, num_inference_steps=2)
+    pipe = frontend.pipeline; events = []
+    class Stream:
+        def __init__(self, name): self.name = name
+        def wait_stream(self, other): events.append((self.name, 'wait', other.name))
+        def synchronize(self): events.append((self.name, 'sync'))
+    caller, owned = Stream('caller'), Stream('owned')
+    from contextlib import contextmanager
+    @contextmanager
+    def scope(stream):
+        events.append(('enter', stream.name)); yield; events.append(('exit', stream.name))
+    monkeypatch.setattr(torch.cuda, 'current_stream', lambda device: caller)
+    monkeypatch.setattr(torch.cuda, 'stream', scope)
+    monkeypatch.setattr(torch.cuda, 'device', lambda device: nullcontext())
+    pipe._execution_stream = owned
+    condition = pipe.prepare_condition(_obs(torch))
+    pipe.evaluate_velocity(torch.zeros(1, 2, 2), 1., condition)
+    pipe.infer(_obs(torch))
+    assert events == [('owned', 'wait', 'caller'), ('enter', 'owned'), ('exit', 'owned'),
+                      ('caller', 'wait', 'owned')]*3
+    frontend.close()
+    assert events[-1] == ('owned', 'sync')
+
+
+def test_graph_stream_waits_for_construction_stream_before_cross_stream_first_infer(torch, monkeypatch):
+    from flash_rt.models.fastwam.pipeline import FastWAMActionPipeline
+    events = []
+    origin = SimpleNamespace(name='load-stream')
+    owned = SimpleNamespace(wait_stream=lambda source: events.append(source.name))
+    monkeypatch.setattr(FastWAMActionPipeline, '_validate_model', lambda self: None)
+    monkeypatch.setattr(FastWAMActionPipeline, '_build_time_bank', lambda self: None)
+    monkeypatch.setattr(torch.cuda, 'device', lambda device: nullcontext())
+    monkeypatch.setattr(torch.cuda, 'Stream', lambda device: owned)
+    monkeypatch.setattr(torch.cuda, 'current_stream', lambda device: origin)
+    model = SimpleNamespace(eval=lambda: None, _denoise_action_with_video_cache=lambda **kw: None)
+    pipe = FastWAMActionPipeline(model, action_horizon=2, sigma_shift=1, sampler='euler',
+        num_inference_steps=2, probeflow_config=None, native_linear=False,
+        device=torch.device('cuda:0'), dtype=torch.bfloat16, use_cuda_graph=True)
+    assert pipe._execution_stream is owned and events == ['load-stream']
+
+
+def test_graph_replay_failure_ends_request_and_rejects_next_prefill(torch):
+    model = _tiny_model(torch)
+    def fail(**kwargs): raise RuntimeError('head failed')
+    model._denoise_action_with_video_cache = fail
+    frontend = FastWAMTorchFrontend(model=model, sigma_shift=1, action_horizon=2)
+    _attach_cpu_graph(frontend, torch)
+    with pytest.raises(RuntimeError, match='head failed'): frontend.infer(_obs(torch))
+    assert not frontend.pipeline._velocity_graph._active
+    with pytest.raises(RuntimeError, match='failed'): frontend.infer(_obs(torch))
+    assert model.prefills == 1
+    frontend.close()
 
 
 def test_euler_preserves_original_shift_five_grid(torch):

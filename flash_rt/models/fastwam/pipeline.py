@@ -9,6 +9,7 @@ the released configs; the FM update delta is sigma_next-sigma, not dt*1000.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 import math
 from numbers import Integral
@@ -31,9 +32,9 @@ class FastWAMCondition:
 
 
 class FastWAMActionPipeline:
-    """Eager action-only orchestration, with per-observation cache reuse.
+    """Action-only orchestration, with per-observation cache reuse.
 
-    No CUDA graphs, global backend flags or sampling decisions are captured.
+    Optional graphs capture the raw field only, never sampling decisions.
     Caches live only for one infer call; changing an image/prompt/proprio cannot
     accidentally reuse a previous observation's video KV. Concurrent calls on
     one frontend are serialized, including the native runner's workspace.
@@ -41,7 +42,11 @@ class FastWAMActionPipeline:
 
     def __init__(self, model, *, action_horizon, sigma_shift, sampler,
                  num_inference_steps, probeflow_config, native_linear, device, dtype,
-                 native_linear_backend="legacy"):
+                  native_linear_backend="legacy", use_cuda_graph=False):
+        if not isinstance(use_cuda_graph, bool):
+            raise TypeError("use_cuda_graph must be bool")
+        if use_cuda_graph and (device.type != "cuda" or (native_linear and native_linear_backend != "cached")):
+            raise ValueError("FastWAM CUDA graphs require CUDA and Torch or cached native Linear")
         if native_linear_backend not in ("legacy", "cached"):
             raise ValueError("native_linear_backend must be 'legacy' or 'cached'")
         if native_linear_backend == "cached" and not native_linear:
@@ -54,6 +59,8 @@ class FastWAMActionPipeline:
         self.sampler, self.num_inference_steps = sampler, num_inference_steps
         self.probeflow_config = probeflow_config
         self._lock = threading.RLock()
+        self._closing = self._closed = False
+        self._execution_stream = self._velocity_graph = None
         self._native_modules, self._native_skipped = {}, ()
         self._native_runner = None
         self._validate_model()
@@ -67,6 +74,48 @@ class FastWAMActionPipeline:
             self._native_runner = next(iter(self._native_modules.values()))._runner
             if any(module._runner is not self._native_runner for module in self._native_modules.values()):
                 raise ValueError("FastWAM native Linear modules must share one owned runner")
+        if use_cuda_graph:
+            from flash_rt.models.fastwam.velocity_graph import FastWAMVelocityGraph
+            with torch.cuda.device(self.device):
+                self._execution_stream = torch.cuda.Stream(device=self.device)
+                self._execution_stream.wait_stream(torch.cuda.current_stream(self.device))
+            self._velocity_graph = FastWAMVelocityGraph(model._denoise_action_with_video_cache)
+
+    @staticmethod
+    def _record_stream(value, stream):
+        if isinstance(value, torch.Tensor):
+            if value.device.type == 'cuda':
+                value.record_stream(stream)
+        elif isinstance(value, FastWAMCondition):
+            for item in vars(value).values():
+                FastWAMActionPipeline._record_stream(item, stream)
+        elif isinstance(value, Mapping):
+            for item in value.values():
+                FastWAMActionPipeline._record_stream(item, stream)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                FastWAMActionPipeline._record_stream(item, stream)
+
+    @contextmanager
+    def _execution_scope(self, *inputs):
+        with self._lock:
+            if self._closing or self._closed:
+                raise RuntimeError('FastWAM pipeline is closed or closing')
+            if self._velocity_graph is not None:
+                self._velocity_graph._check_live()
+            stream = self._execution_stream
+            if stream is None:
+                yield
+                return
+            with torch.cuda.device(self.device):
+                caller = torch.cuda.current_stream(self.device)
+                stream.wait_stream(caller)
+                self._record_stream(inputs, stream)
+                try:
+                    with torch.cuda.stream(stream):
+                        yield
+                finally:
+                    caller.wait_stream(stream)
 
     def _validate_model(self):
         for name in ("_encode_input_image_latents_tensor", "_append_proprio_to_context",
@@ -174,7 +223,8 @@ class FastWAMActionPipeline:
             "native_linear_skipped": self._native_skipped,
             "native_linear_backend": self.native_linear_backend if self._native_modules else None,
             "upstream_operations": ("VAE", "patch_conv3d", "attention_sdpa", "norm", "RoPE", "activations", "modulation"),
-            "cuda_graph": False,
+            "cuda_graph": self._velocity_graph is not None,
+            "native_counter_semantics": "Python Linear forwards / successful CPU GEMM enqueues, not graph GPU work",
             "device": str(self.device),
             "image_spatial_multiple": self.image_multiple,
         }
@@ -276,6 +326,13 @@ class FastWAMActionPipeline:
 
     @torch.inference_mode()
     def prepare_condition(self, obs):
+        with self._execution_scope(obs):
+            result = self._prepare_condition(obs)
+        if self._execution_stream is not None:
+            self._record_stream(result, torch.cuda.current_stream(self.device))
+        return result
+
+    def _prepare_condition(self, obs):
         image, context, mask, proprio = self._observation_tensors(obs)
         if proprio is not None:
             context, mask = self.model._append_proprio_to_context(context, mask, proprio)
@@ -306,10 +363,11 @@ class FastWAMActionPipeline:
         )
         return FastWAMCondition(context, mask, cache_k, cache_v, attention_mask[seq_len:, :])
 
-    def _evaluate_at_timestep(self, state, timestep, condition):
+    def _evaluate_at_timestep(self, state, timestep, condition, *, graph=False):
         if timestep.shape != (1,) or timestep.device != state.device or timestep.dtype != state.dtype:
             raise ValueError("FastWAM banked timestep must match state device/dtype and have shape [1]")
-        raw = self.model._denoise_action_with_video_cache(
+        evaluator = self._velocity_graph if graph and self._velocity_graph is not None else self.model._denoise_action_with_video_cache
+        raw = evaluator(
             latents_action=state, timestep_action=timestep,
             context=condition.context, context_mask=condition.context_mask,
             video_cache_k=condition.video_cache_k, video_cache_v=condition.video_cache_v,
@@ -324,7 +382,7 @@ class FastWAMActionPipeline:
             timestep = self._time_rows[clock]
         except KeyError as exc:
             raise ValueError("Clock is outside the precomputed FastWAM schedule union") from exc
-        return self._evaluate_at_timestep(state, timestep, condition)
+        return self._evaluate_at_timestep(state, timestep, condition, graph=True)
 
     @torch.inference_mode()
     def evaluate_velocity(self, state, sigma, condition):
@@ -333,13 +391,17 @@ class FastWAMActionPipeline:
         Arbitrary off-grid evaluations require rebuilding the sampler config;
         inference never creates a variable timestep allocation in the hot path.
         """
-        if not math.isfinite(sigma) or not 0 < sigma <= 1:
-            raise ValueError("FastWAM velocity sigma must lie in (0,1]")
-        try:
-            timestep = self._sigma_rows[sigma]
-        except KeyError as exc:
-            raise ValueError("Sigma is outside the precomputed FastWAM schedule union") from exc
-        return self._evaluate_at_timestep(state, timestep, condition)
+        with self._execution_scope(state, condition):
+            if not math.isfinite(sigma) or not 0 < sigma <= 1:
+                raise ValueError("FastWAM velocity sigma must lie in (0,1]")
+            try:
+                timestep = self._sigma_rows[sigma]
+            except KeyError as exc:
+                raise ValueError("Sigma is outside the precomputed FastWAM schedule union") from exc
+            result = self._evaluate_at_timestep(state, timestep, condition)
+        if self._execution_stream is not None:
+            self._record_stream(result, torch.cuda.current_stream(self.device))
+        return result
 
     def _euler(self, state, condition):
         scheduler = self.model.infer_action_scheduler
@@ -356,24 +418,30 @@ class FastWAMActionPipeline:
 
     @torch.inference_mode()
     def infer(self, obs, noise=None):
-        with self._lock:
+        with self._execution_scope(obs, noise):
             before = {name: module.calls for name, module in self._native_modules.items()}
             plans_before = self._native_plan_snapshot()
             state = self._initial_state(noise)
-            condition = self.prepare_condition(obs)
-            if self.sampler == "probeflow":
-                # Callback keys are logical u, whereas both the model and the
-                # shared integrator use mapped physical sigma. No Jacobian or
-                # 1000 multiplier is applied to the raw velocity or sigma delta.
-                metadata = sample_probeflow_torch_(
-                    state, lambda clock: -self._evaluate_clock_velocity(state, clock, condition),
-                    self.probeflow_config, time_map=self.schedule,
-                )
-                metadata["model_timesteps"] = [
-                    self._model_time_by_clock[t] for t in metadata["timesteps"]
-                ]
-            else:
-                state, metadata = self._euler(state, condition)
+            condition = self._prepare_condition(obs)
+            graph = self._velocity_graph
+            if graph is not None:
+                graph.begin_request()
+            try:
+                if self.sampler == "probeflow":
+                    # Callback keys are logical u; model/integration use sigma.
+                    # Neither a Jacobian nor time_scale multiplies the raw field.
+                    metadata = sample_probeflow_torch_(
+                        state, lambda clock: -self._evaluate_clock_velocity(state, clock, condition),
+                        self.probeflow_config, time_map=self.schedule,
+                    )
+                    metadata["model_timesteps"] = [
+                        self._model_time_by_clock[t] for t in metadata["timesteps"]
+                    ]
+                else:
+                    state, metadata = self._euler(state, condition)
+            finally:
+                if graph is not None:
+                    graph.end_request()
             if not torch.isfinite(state).all().item():
                 raise ValueError("FastWAM integration produced nonfinite actions")
             metadata.update(sigma_shift=self.sigma_shift, model_time_scale=self.time_scale,
@@ -381,6 +449,8 @@ class FastWAMActionPipeline:
             if self.sampler == "probeflow" and self.sigma_shift != 1.0:
                 metadata["adaptation"] = "shifted_sigma_grid_not_original_paper_validation"
             coverage = self.execution_metadata()
+            if graph is not None:
+                coverage['velocity_graph'] = graph.snapshot()
             coverage["native_linear_calls"] = {
                 name: module.calls - before[name] for name, module in self._native_modules.items()
             }
@@ -392,3 +462,22 @@ class FastWAMActionPipeline:
             return {"actions": state.detach().to(device="cpu", dtype=torch.float32).numpy(),
                     "sampler_metadata": metadata, "execution_metadata": coverage,
                     "actions_normalized": True}
+
+    def close(self):
+        """Stop admission, drain own work, reset own graph, then drop owners."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closing = True
+            if self._execution_stream is not None:
+                self._execution_stream.synchronize()
+            if self._velocity_graph is not None:
+                self._velocity_graph.close()
+            self._velocity_graph = self._execution_stream = None
+            self._native_modules.clear()
+            self._native_runner = self.model = None
+            self._time_rows.clear()
+            self._sigma_rows.clear()
+            self._time_bank = self._delta_bank = None
+            self._delta_rows = ()
+            self._closed = True
