@@ -146,6 +146,59 @@ The graph pilot remains fixed-geometry/Euler2 experimental code. It is not a
 registered production option or new default; adaptive PF, ordinary step counts,
 other geometries/hardware and broader quality need validation before integration.
 
+### Opt-in library-owned raw-field graph
+
+Job309097 later exercised the **new library integration**, frozen at `a5140aac`,
+not the pilot's upstream method override. Default eager behavior was unchanged.
+One A800 allocation ran fresh serial processes, three additional whole-request
+warmups after the separately measured first call, and ten formal samples/point:
+
+| Point | Actual NFE | Median ms | P95 ms |
+|---|---:|---:|---:|
+| Independent direct-upstream Euler10 | 10 | 411.4261 | 412.9479 |
+| Common Torch pipeline Euler10 eager | 10 | 389.6625 | 392.2531 |
+| **Common Torch pipeline Euler10 graph** | **10** | **146.6673** | **147.4356** |
+| Partial-native cached Euler10 eager | 10 | 515.0250 | 515.6989 |
+| Partial-native cached Euler10 graph | 10 | 158.2449 | 159.1946 |
+| Torch PF max10,eps=.008 eager | 2 | 114.5456 | 115.4969 |
+| Torch PF max10,eps=.008 graph | 2 | 66.0323 | 66.3118 |
+| Cached PF max10,eps=.008 eager | 2 | 147.6405 | 148.5308 |
+| Cached PF max10,eps=.008 graph | 2 | 77.0178 | 79.1293 |
+| Torch Euler10 eager bookend | 10 | 388.8984 | 390.8952 |
+
+Independent CPU rereads verified actual input arrays, checkpoint path/stat and
+resolved model configuration identity across all ten points. All four same-engine
+graph/eager formal action arrays and sampler metadata were exact. Each graph
+also passed six same-weight graph/eager original/noise/proprio/image/context/mask
+pairs; every changed control affected the output. Each request had one video
+prefill. Owned cleanup succeeded in every library point.
+
+Torch Euler10 graph was also bitwise equal to the independent direct-upstream
+Euler10 original-input output. Cached Euler10 eager/graph retained the same
+cross-engine difference, relativeL2=.00594835 and maxabs=.0078125; that is not
+graph error or an official-parity guarantee. Torch eager bookend drift was
+-.1961%. Graph reduced its own Torch Euler10 median62.36% and cached Euler10
+median69.27%; Torch+graph remained faster than partial-native+graph.
+
+Cached Euler10 steady metadata recorded305CPU native enqueues (prefill), but
+ten raw graph replays each encoded307native Linear calls:3070logical native
+Linear calls in the action field, **not zero GPU work or a kernel-count claim**.
+Steady plan builds/heuristic queries were zero. The first capture's three eager
+head warmups and one encoded body were recorded separately from sampler NFE.
+
+Two additional **real-CUDA** regressions passed in this allocation: raw capture/
+refresh/cleanup without device/host global cache flushing, and eager standalone
+velocity completion before close released internal timestep storage. This
+followed RED->GREEN fixes for both findings from independent static review.
+
+The PF configuration above was adaptive, but **all six tested requests routed
+to2NFE**. It does not validate dense restart. Its original-input output differed
+from same-engine Euler10 by26.36%relativeL2 (Torch) or25.93%(cached). No robot
+quality or FastWAM sampler-approximation acceptance gate was defined, so the
+66ms point must not be selected as a quality-qualified policy merely by speed.
+Dense PF, default20steps, other geometries/hardware and robot success remain
+unqualified by this run. The option is still disabled by default.
+
 ## Hy: keep mechanical checks and official acceptance separate
 
 Semantic BF16 execution, fixed-noise replay and Euler2/PF2/graph-eager mechanics

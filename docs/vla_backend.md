@@ -263,9 +263,12 @@ is borrowed scratch internally; returned complete CPU action arrays are retained
 independently. No global CUDA cache flush or second weight copy is introduced.
 
 The library integration is opt-in engineering functionality. The earlier A800
-Euler2 **example pilot** is not evidence of Euler10/adaptive-PF qualification for
-this new ownership/stream implementation. Consult per-run measurements before
-making that claim; other geometry/hardware and robot success remain unqualified.
+Euler2 **example pilot** is not evidence for this new ownership/stream
+implementation. Later job309097 at `a5140aac` separately verified actual Euler10
+and adaptive PF's selected2NFE branch, including six changed-input controls per
+engine and real CUDA resource regressions. That run did not exercise PF dense
+restart or the default20-step budget. See the measured iteration notes; other
+geometry/hardware and robot success remain unqualified, and eager is still default.
 
 ## Explicit numerical and kernel profiles
 
