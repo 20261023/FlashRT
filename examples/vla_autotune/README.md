@@ -253,3 +253,49 @@ default or a new action-acceptance threshold. Torch's Flash backend is not assum
 to be the external FA2 binary or bitwise-equivalent to it.
 Mirrored GPU `record_function` annotations are counted separately, never as
 kernel names. An annotation-only trace still has unverified kernel identity.
+
+### Isolated camera-PROJ1 ablation prototype
+
+`hy_trace/proj1_camera_ablation.py` is a process-exclusive **example override**,
+not a registered backend option. It keeps `official_local_fp32`, Euler10,
+attention and every merger operation after PROJ1 unchanged. Only that first
+Linear uses camera `i:i+1` calls on the existing weights; pooler/predictor/proj2
+remain batched. It never patches global `F.linear`, casts input differently, or
+adds `.contiguous()`.
+
+First run `--arm preflight` in its own allocated process with `--checkpoint`,
+`--official-trace`, `--native-report`, historical `--profile-qkv`, the frozen Git
+`--source-revision`, and fresh `--output`. It rebuilds native B3 values/layout,
+checks just the current checkpoint's two PROJ1 tensors against the accepted
+frozen weights, then requires the **actual native B1 slices** to reproduce the
+saved official projection exactly. Their singleton leading stride stays225792,
+not an assumed official196. No full policy is constructed. It also requires real
+CUDA activity for the separately filtered name-only profiler confirmation.
+
+Full-model arms consume that same-job/source/checkpoint `--preflight-report`.
+Run `--arm baseline` on all seven original fixtures first, adding `--prior` for
+the corresponding old validation **directory**; every current baseline must
+match saved inputs/oracles/actions/config/runtime/checkpoint/fixture exactly.
+Changed source path/stat provenance is reported, not forged equal. Only then
+run `--arm camera_proj1` on those fixtures with `--check-graph-eager`.
+Forward the ordinary validator's `--fixture`, `--sampler euler --num-steps 10`,
+`--numerical-profile official_local_fp32 --use-graph --warmup 1 --repeats 2
+--require-oracle`, plus explicit checkpoint/output/source revision. Final parsed
+checkpoint/output and actual factory checkpoint are checked against admission;
+validator argument abbreviations cannot redirect them.
+
+Binding precedes any prepare/capture. Cleanup drains work, resets owned ViT,
+prefix and per-time graphs before restoring the instance method and closing the
+backend. Failed cleanup retains owners and prevents successful publication.
+Experimental/source/precondition/cleanup metadata is attached to the **first**
+result write and printed record. This exclusive-process factory override is not
+a thread-safe serving integration.
+
+Use `classify_exit` to continue only completed mechanical checks with exit0 gate
+pass or verified exit3 original-oracle mismatch. `aggregate` requires complete,
+distinct seven-fixture records per arm, matching baseline/candidate identities
+and one admitted experiment; a missing/wrong/duplicated fixture cannot become
+7/7. Any candidate failure keeps aggregate exit nonzero. Acceptance remains the
+original **padded40x32** elementwise/cosine gate; public40x20 is separately
+reported, never silently substituted. No old failed job is relabeled or default
+promoted, even if this new prototype eventually passes its recorded gate.
