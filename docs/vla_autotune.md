@@ -6,6 +6,10 @@ See [measured iteration notes](vla_autotune_experiments.md) for scoped outcomes,
 including failed candidates, and [source-checkout examples](../examples/vla_autotune/README.md)
 for validation and explicitly experimental graph/diagnostic runners.
 
+For the consolidated Chinese report covering all four models, measured outcomes,
+rejected candidates and acceptance limits, see
+[中文阶段报告](reports/2026-11-09-vla-autotune-report.zh-CN.md).
+
 ```text
 Candidate + workload + dataflow hypothesis + source/patch reference
  -> SQLite controller ledger + explicit submission intent
