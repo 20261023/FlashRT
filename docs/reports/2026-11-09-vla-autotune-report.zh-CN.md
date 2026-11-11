@@ -432,3 +432,19 @@ baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有�
 因此“两处原有差异被恢复”和“两处原已相同的控制不变”应分开描述，不能把四处都叫新增修复。实验没有粘贴 Gold block 输出、改 GU／attention，或在输入变化时套用旧 variance；只读取22个唯一 BF16 权重张量（44次读取事件），没有构造完整模型或替换生产 norm。
 
 范围仍是四个 teacher-input／Gold KV block，不是32层传播、全部 step、native vision KV、free-running 策略或机器人资格。下一步核查实际 runtime 的归约源码／安装头文件，再决定最小 dispatch 观测；不据四个点盲写兼容 mean。历史6/7失败和原阈值／生产默认保持不变。详细证据见[实测记录71406637](https://github.com/20261023/FlashRT/blob/71406637/docs/vla_autotune_experiments.md)。
+
+### 11.10 Hy：实际 mean launch 相同，不等于内部加法树相同
+
+精确版本源码与实际安装头文件均发现：CUDA warp 内 shuffle 加法顺序从升序 offset 改为降序，128宽输入的向量化门槛从 `>128` 改为 `>=128`；FP32 `MeanOps` 仍为 FP32 求和后乘 factor，新版16位输入的8元素向量化分支不适用于这里的 FP32 平方张量。这是机制证据，不是库 bug 或实际内部分支证明。
+
+首轮 `315596` 因解析器把同名 CPU 范围与 GPU 投影重复计数而 FAILED；仅留下首个 trace，没有 final raw/report，native 进程未运行。失败及原快照保留。实际格式回归 RED→GREEN 后，新 round 的 `315622` 完成，全部37文件、32个完整 trace、128个数组独立审计通过：profile 前后 mean 精确复现各自历史值，FP32转换／平方 EXACT旧值。
+
+| 实际 mean 输入 | 平方张量 live stride | 两 runtime 的 grid／block |
+|---|---|---|
+| [1,41,1024] | [41984,1024,1] | [3,1,1]／[32,16,1] |
+| Q [1,16,41,128] | [2048,128,2048,1] | [41,1,1]／[32,16,1] |
+| K [1,4,41,128] | [512,128,512,1] | [11,1,1]／[32,16,1] |
+
+32个窗口的平方输入均为 FP32、storage offset0、16字节对齐；两版实际 kernel 完整符号也相同，为 FP32 `reduce_kernel<512,1,…,4,4>`。这确认了直接输入／布局／launch 预测，**没有证明 runtime `ReduceConfig` 的向量化字段或编译后的 shuffle 路径相同**，更不否定此前已测得的不同 mean 数组。
+
+下一步只测试从实际输入计算的显式 FP32 加法树，不能把保存的旧 variance 当答案；没有启用生产兼容归约或将 profiler 时长当作候选延迟。完整策略、机器人及历史6/7失败边界不变。详细证据见[launch 实测f04a95e3](https://github.com/20261023/FlashRT/blob/f04a95e3/docs/vla_autotune_experiments.md)。
