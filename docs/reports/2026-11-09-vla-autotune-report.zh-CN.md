@@ -409,3 +409,11 @@ baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有�
 唯一 BF16 端点差异是 baseline `(step2,layer0)` postnorm：输入／residual 仍 EXACT，17个 variance 值不同，5个 cast-back 值不同，最终4个 weighted BF16 值不同，maxabs `.0078125`。这在 FFN 之前直接锚定了归一化输出差异，不能把后续 FFN 差异都归到 GU 融合。另一处 own postnorm 输入已受上游 residual 影响；fixed-old 臂排除了这个输入混杂。
 
 **首个分歧不等于因果充分性。** 尚未证明相同 variance 下 `rsqrt`／下游算术全部一致，也没有量化其对全部32层或最终策略残差的解释份额。下一步只交接旧中间量，先复现已有2.11基线，再检查下游；没有更换生产归约、精度、runtime 或阈值。历史6/7失败不变。详细证据固定在[实测记录52e03612](https://github.com/20261023/FlashRT/blob/52e03612/docs/vla_autotune_experiments.md)。
+
+### 11.8 Hy：旧 variance 对受测局部 RMS 下游已具充分性
+
+`315323` 复用上述16组固定旧输入，先要求144个2.11基线数组逐位复现 `315256`，再分别交接旧 variance、variance＋epsilon、inverse、scaled 和 cast-back。交接使用**当前 native 中间量布局**；旧中间量 live strides 没有记录，不伪造旧布局一致性。
+
+完整784张量独立审计通过：144个历史基线、320个自值交接控制 EXACT；320项旧值交接阶段比较全部 EXACT。五种交接各16/16恢复旧 weighted 端点，且每种交接的**整个受测下游 suffix**均 EXACT。因此在这16组输入／当前布局下，旧 variance 已足以消除局部 RMS 差异，不只是让 BF16 末端恰好舍入相同。
+
+这轮没有执行 live block，也未读取 checkpoint 张量或运行新旧模型；不能据局部充分性宣称完整 Expert／策略已经修复。后续四个实际 block 的干预会先核对每次实际 norm 输入、权重与布局 EXACT，任何不匹配都停止该 probe，不能偷偷使用无关旧 variance。历史6/7失败、生产数学／精度／runtime／默认及原门槛均不变。详细证据见[实测记录df83cb94](https://github.com/20261023/FlashRT/blob/df83cb94/docs/vla_autotune_experiments.md)。
