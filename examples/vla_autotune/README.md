@@ -662,6 +662,9 @@ grid/block is retained, not filtered to a predicted implementation. Two warm
 calls precede each window, and profiling does not measure candidate latency.
 Shape/stack/memory/flops tracing stays off. Missing CPUmean, kernel or launch
 metadata rejects final publication; all raw Chrome traces stay private.
+The unique label is the CPU `user_annotation`; a same-named
+`gpu_user_annotation` projection is retained but is not a second CPU range.
+Two actual CPU labels or a GPU-only label still fail admission.
 
 Actual launch observations can test conditional source-based predictions, but
 equal symbols and launch dimensions still do not reveal runtime `ReduceConfig`

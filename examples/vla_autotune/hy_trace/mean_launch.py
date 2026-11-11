@@ -18,8 +18,8 @@ handoff=_sibling('expert_rms_handoff');rms=handoff.rms
 
 def summarize_trace(trace,label):
     events=trace.get('traceEvents',[])
-    if not isinstance(events,list) or sum(e.get('name')==label and e.get('ph')=='X' for e in events)!=1:
-        raise ValueError('Isolated mean trace requires one exact label')
+    if not isinstance(events,list) or sum(e.get('cat')=='user_annotation' and e.get('name')==label and e.get('ph')=='X' for e in events)!=1:
+        raise ValueError('Isolated mean trace requires one exact CPU label')
     means=[e for e in events if e.get('cat')=='cpu_op' and e.get('name')=='aten::mean' and e.get('ph')=='X']
     kernels=[]
     for e in events:

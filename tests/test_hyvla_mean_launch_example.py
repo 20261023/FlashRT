@@ -33,6 +33,14 @@ def test_trace_preserves_all_full_kernel_names_and_launches(launch):
     assert r['kernels'][1]['name']=='second full kernel' and r['runtime_reduce_config_observed'] is False
 
 
+def test_actual_chrome_gpu_projection_does_not_duplicate_the_cpu_range(launch):
+    # Actual2.7 export315596 has one CPU range and its same-named GPU projection.
+    t=trace_fixture();t['traceEvents'].append({'cat':'gpu_user_annotation','name':'mean.probe.n0','ph':'X','args':{'External id':1}})
+    result=launch.summarize_trace(t,'mean.probe.n0')
+    assert result['cpu_mean_events']==1 and result['kernel_count']==1
+    assert result['kernels'][0]['grid']==[3,1,1]
+
+
 @pytest.mark.parametrize('bad',['label','cpu','kernel','grid','block','duplicate_label','empty'])
 def test_incomplete_trace_is_not_a_successful_launch_observation(launch,bad):
     t=trace_fixture()
