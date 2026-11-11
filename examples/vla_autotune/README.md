@@ -646,3 +646,25 @@ partial mismatch reports have an explicit smaller role set. Only22unique layer
 weights are read(44events), no model/extension constructed or production norm
 changed. This does not test propagated32layers, full policy, native vision KV,
 free-running trajectories or robot success; historical6/7FAILED remains intact.
+
+### Isolated FP32 mean launch observations
+
+`hy_trace/mean_launch.py` observes the same16fixed-old norm inputs without a
+block/model/weight read. Both runtimes first admit315256's fullold184/native328
+roles, source/checkpoint stats and exact runtime/Git/flags. FP32 conversion and
+square must be EXACT old; mean before and during profiling must be EXACT the
+historical same-runtime variance. Each runtime saves64raw arrays and16isolated
+CPU+CUDA trace windows, with manual live float/square shape/stride/offset and
+pointer-mod16 metadata. Full pointer values are not added to the report.
+
+Each window contains one labeled mean call; every full CUDA kernel name and
+grid/block is retained, not filtered to a predicted implementation. Two warm
+calls precede each window, and profiling does not measure candidate latency.
+Shape/stack/memory/flops tracing stays off. Missing CPUmean, kernel or launch
+metadata rejects final publication; all raw Chrome traces stay private.
+
+Actual launch observations can test conditional source-based predictions, but
+equal symbols and launch dimensions still do not reveal runtime `ReduceConfig`
+vectorization or warp-shuffle branches. This is not a compatible mean, an error
+fraction, a library-bug claim or a policy gate; historical6/7FAILED and production
+math/dtype/runtime/defaults/thresholds remain unchanged.
