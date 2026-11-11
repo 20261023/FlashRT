@@ -685,6 +685,39 @@ same admitted boundaries, retaining the unchanged1300tensor replay as a hard
 control before interpreting it. No new full-policy/robot gate was performed;
 historical6/7 remainsFAILED, with all default and tolerance constraints intact.
 
+The QKV-only intervention completed as314589 (`round024/eddf597d`). All18raw
+files were retrieved without rerunning the model; a first SCP tool timeout was
+resolved by bounded compressed transport, not by dropping large tensors.
+Independent raw audit confirmed all1300fused tensors/case/runtime EXACT314485,
+all20native-fused velocities EXACT313766, and all40fixed-Gold head negative
+controls unchanged. Both runtimes completed the split arm only after the fused
+controls. Every original Gold comparison and split-vs-fused effect was recomputed.
+
+With only Expert QKV GEMM geometry changed, propagated raw-velocity relativeL2
+against Gold remained:
+
+| Runtime / case | Fused QKV | Separate Q/K/V |
+|---|---:|---:|
+| 2.7 / baseline | .00333524–.00546292 | .00299707–.00529732 |
+| 2.7 / state | .00318833–.00562335 | .00297147–.00517791 |
+| 2.11 / baseline | .00329106–.00537082 | .00327744–.00533305 |
+| 2.11 / state | .00313123–.00510265 | .00315046–.00503325 |
+
+No split step became velocity-exact and no local layer output was exact at all
+ten steps. Separate projection improved L2 at8/10and9/10old-runtime steps, but
+only6/10and7/10native steps; it also worsened some steps. It is therefore not a
+sufficient repair or a basis for policy/default promotion. The small change in
+worst residual must not be called a new seven-fixture pass. Split cross-runtime
+exact tensor counts were471/1300baseline and512/1300state, not universal runtime
+equivalence.
+
+The remaining interaction can be tested by restoring prefix order **within the
+already split projection condition**, first reproducing its complete sorted
+baseline. That would isolate a new variable relative to this arm; the fact that
+either change alone was insufficient does not establish that their combined
+effect is zero. No combined-order result, sampler free-run or robot quality is
+claimed here; current6/7FAILED and original thresholds remain unchanged.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
