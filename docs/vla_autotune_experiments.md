@@ -633,6 +633,24 @@ robot success were tested. The previous6/7 failure remains unchanged; next
 localization needs another recorded operator boundary rather than a production
 order/precision patch.
 
+The next recorded Expert0 MLP diagnostic completed as314364 on
+`round022/179218ec`. The actual original producer retained exact historical
+inputs/actions/trajectories/query boundaries and captured ten ordered
+input/gate/up/activation/output events per case. Old API replay and every
+separate intermediate matched those real BF16 records exactly. Independently
+reading all outputs confirmed each case's90consumer tensors were bitwise equal
+across2.7and2.11. At every recorded step, separate versus fused GU gate, up,
+activation and down output were also EXACT (zero unequal values/maxabs/L2).
+
+This is a negative result for GU fusion as the discrepancy at **Expert0 on
+these20observed normalized inputs**. It does not prove all32layers, arbitrary
+hidden inputs or full-policy fusion equivalence. No production splitting,
+precision change or new seven-fixture pass follows. With the local MLP boundary
+now measured rather than guessed, further localization should observe layer
+inputs/residuals/outputs across the Expert and distinguish same-input local
+operator error from propagated hidden-state differences. The historical6/7
+policy failure remains unchanged.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
