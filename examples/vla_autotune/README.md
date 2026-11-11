@@ -590,3 +590,27 @@ No alternative normalization, FP64 arithmetic, primitive replacement or relaxed
 threshold is installed. First-stage differences are measurements, not an assumed
 `mean`/`rsqrt` bug or an all-layer explained-error fraction. Scope stays at these
 four probes and the prior6/7 policy failure remains unchanged.
+
+### Standalone RMS intermediate handoffs
+
+`hy_trace/expert_rms_handoff.py` consumes the retained old184/native328 arrays
+from315256, not a new model run. It first admits complete historical roles,
+actual RMS endpoints, live input/weight metadata, job/source identity, source/
+checkpoint stats and native runtime. All144recomputed native fixed-old arrays
+must exactly reproduce that historical baseline before any cut is interpreted.
+
+On the same16norms, five independent cuts inject old values at `variance`,
+`variance_plus_epsilon`, `inverse_rsqrt`, `scaled` and `cast_back`. Only each
+cut's unchanged downstream suffix runs. Injection uses the **current native
+intermediate layout**, because old intermediate live strides were not recorded;
+this does not claim old-layout equivalence. A same-native-value reinjection
+control must reproduce every baseline suffix exactly. The784raw arrays include
+144baseline,320control and320old-cut tensors; endpoint exactness and remaining
+stage differences are measured outcomes, never assumed success criteria.
+
+Use explicit `--history-root`, historical job/revision, current source revision
+and a fresh output under one allocated native2.11 A800 process. No checkpoint
+tensor is read, block/model constructed, FP64 alternative installed or policy
+normalization replaced. Conditional local sufficiency, if observed, is not an
+all-layer/full-policy/native-vision/free-running/robot qualification; historical
+6/7FAILED and production defaults remain unchanged.
