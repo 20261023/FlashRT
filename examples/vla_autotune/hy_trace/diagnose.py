@@ -135,6 +135,8 @@ def admitted_frozen_evaluation(reference, native, data, report, variant, evaluat
 def validate_trace_options(args):
     folded = getattr(args, 'folded_proj1', False)
     capture_attention = getattr(args, 'capture_eager_attention', False)
+    if getattr(args,'capture_expert_mlp',False) and not capture_attention:
+        raise ValueError('Expert MLP observation requires admitted official eager attention capture')
     probe_order=getattr(args,'probe_suffix_key_order',False)
     order_options=('order_preflight_report','order_baseline','order_baseline_job')
     if probe_order and (not folded or args.engine!='native' or any(getattr(args,key,None) is None for key in order_options)):
@@ -269,6 +271,11 @@ def run_official(args, torch):
                             ('prepared.tokens', tokens), ('prepared.token_mask', token_mask)):
             _rec(tensors, meta, name, value)
         with observe(policy, tensors), observe_step_metadata(policy.model, meta), ExitStack() as stack:
+            if getattr(args,'capture_expert_mlp',False):
+                mlp=policy.model.dual_tower.expert.model.layers[0].mlp_v
+                if policy.model.dual_tower.expert.config.hidden_act!='silu':
+                    raise ValueError('Expert MLP controls require the recorded SiLU activation')
+                mlp_state=stack.enter_context(_sibling('expert_mlp').observe_mlp(mlp,tensors,meta,num_steps=int(policy.model.config.num_steps)))
             if capture_attention:
                 capture_state = stack.enter_context(capture.observe_eager_attention(policy.model.dual_tower,tensors,meta,
                     num_layers=int(policy.model.dual_tower.vlm.config.num_hidden_layers),num_steps=int(policy.model.config.num_steps)))
@@ -318,6 +325,9 @@ def run_official(args, torch):
                 official_attention_source={'path':str(source),'bytes':stat.st_size,'mtime_ns':stat.st_mtime_ns},
                 checkpoint=_sibling('proj1_camera_ablation')._checkpoint_stat(args.checkpoint),
                 capture_scope='Observed official eager layer0 inputs/output/probabilities; no native policy qualification')
+            if getattr(args,'capture_expert_mlp',False):
+                report['expert_mlp_capture']={**mlp_state,'module':'expert.model.layers.0.mlp_v',
+                    'source':_sibling('expert_mlp')._file_record(inspect.getfile(type(mlp))),'activation':'silu'}
             torch.cuda.synchronize()
         _save(folder, tensors, report,atomic_report=capture_attention)
         print(json.dumps({'variant': variant, 'oracle_exact': same['exact'], 'invariant': invariant}), flush=True)
@@ -569,6 +579,7 @@ def main(argv=None):
     parser.add_argument('--prior', type=Path)
     parser.add_argument('--folded-proj1', action='store_true', help='Explicit HWD candidate eager diagnosis, never a policy/default change')
     parser.add_argument('--capture-eager-attention',action='store_true',help='Observe actual official eager layer0 calls, with historical exact admission')
+    parser.add_argument('--capture-expert-mlp',action='store_true',help='Also observe actual Expert0 MLP intermediates, only with admitted official attention capture')
     parser.add_argument('--probe-suffix-key-order',action='store_true',help='Folded eager frozen-trajectory prefix-order intervention only')
     parser.add_argument('--order-preflight-report',type=Path)
     parser.add_argument('--order-baseline',type=Path)

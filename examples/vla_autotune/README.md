@@ -440,3 +440,27 @@ neither sampler NFE nor CUDA kernel count.
 This remains a conditional full-Expert diagnostic, **not** a free-running policy
 ablation or a new seven-fixture qualification. The historical6/7 failure stays
 binding. No graph support, recapture/fallback or production option is introduced.
+
+### Recorded Expert0 MLP / GU controls
+
+Official eager capture can explicitly add `--capture-expert-mlp` to observe the
+real `expert.model.layers[0].mlp_v`, without replacing mathematical operations.
+The observer checks ten ordered suffix calls and records actual2D BF16 input,
+gate/up outputs, down-projection input (SiLU-times-up) and final MLP output.
+Gate/up must consume the same input; biases, shapes or event-order changes reject.
+Module hooks are removed on both success and failure. Existing historical
+actions/trajectories and attention admission remain mandatory.
+
+`hy_trace/expert_mlp.py` then runs serially in the original2.7 and native2.11
+runtime using the fresh same-job capture and only **three** selected gate/up/down
+weights. Pass `--engine`, `--reference`, `--checkpoint`, revision-bound
+`--official-mlp-source`, current `--source-revision` and new `--output`. Only the
+original MLP forward body is extracted, after source/job/checkpoint admission;
+no full policy, native extension or old FA2 library is imported in the consumer.
+
+Separate Linears and native concatenated-GU GEMM share the observed normalized
+input, BF16 weights, SiLU/multiplication and down projection. Original2.7 API
+output and all separate gate/up/activation/output values must reproduce actual
+records exactly. Fusion differences and runtime differences are saved, not
+promoted as a whole-Expert cause or a new robot-quality gate. Scope is Expert0
+on ten observed suffix inputs; the prior6/7 failure remains unchanged.
