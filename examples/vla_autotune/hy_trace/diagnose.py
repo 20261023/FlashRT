@@ -137,6 +137,9 @@ def validate_trace_options(args):
     capture_attention = getattr(args, 'capture_eager_attention', False)
     if getattr(args,'capture_expert_mlp',False) and not capture_attention:
         raise ValueError('Expert MLP observation requires admitted official eager attention capture')
+    capture_layers=getattr(args,'capture_expert_layers',False)
+    if capture_layers and not capture_attention:
+        raise ValueError('Expert layer observation requires admitted official eager attention capture')
     probe_order=getattr(args,'probe_suffix_key_order',False)
     order_options=('order_preflight_report','order_baseline','order_baseline_job')
     if probe_order and (not folded or args.engine!='native' or any(getattr(args,key,None) is None for key in order_options)):
@@ -159,6 +162,8 @@ def validate_trace_options(args):
         raise ValueError('Invalid or repeated diagnostic variant')
     if probe_order and any(value not in ('baseline','state') for value in variants):
         raise ValueError('Suffix order probe variants are limited to admitted baseline/state')
+    if capture_layers and any(value not in ('baseline','state') for value in variants):
+        raise ValueError('Expert layer capture variants are limited to baseline/state')
     return tuple(variants)
 
 
@@ -271,6 +276,11 @@ def run_official(args, torch):
                             ('prepared.tokens', tokens), ('prepared.token_mask', token_mask)):
             _rec(tensors, meta, name, value)
         with observe(policy, tensors), observe_step_metadata(policy.model, meta), ExitStack() as stack:
+            if getattr(args,'capture_expert_layers',False):
+                layers_capture=_sibling('expert_layers_capture')
+                expert_model=policy.model.dual_tower.expert.model
+                layers_state=stack.enter_context(layers_capture.observe_expert_layers(expert_model,tensors,meta,
+                    num_layers=32,num_steps=int(policy.model.config.num_steps),rows=41,hidden=1024))
             if getattr(args,'capture_expert_mlp',False):
                 mlp=policy.model.dual_tower.expert.model.layers[0].mlp_v
                 if policy.model.dual_tower.expert.config.hidden_act!='silu':
@@ -328,6 +338,10 @@ def run_official(args, torch):
             if getattr(args,'capture_expert_mlp',False):
                 report['expert_mlp_capture']={**mlp_state,'module':'expert.model.layers.0.mlp_v',
                     'source':_sibling('expert_mlp')._file_record(inspect.getfile(type(mlp))),'activation':'silu'}
+            if getattr(args,'capture_expert_layers',False):
+                chain=layers_capture.verify_boundary_chain(tensors,first_suffix=tensors['suffix.embeddings'])
+                report['expert_layer_capture']={**layers_state,'module':'expert.model','chain':chain,
+                    'source':_sibling('expert_mlp')._file_record(inspect.getfile(type(expert_model.layers[0])))}
             torch.cuda.synchronize()
         _save(folder, tensors, report,atomic_report=capture_attention)
         print(json.dumps({'variant': variant, 'oracle_exact': same['exact'], 'invariant': invariant}), flush=True)
@@ -580,6 +594,7 @@ def main(argv=None):
     parser.add_argument('--folded-proj1', action='store_true', help='Explicit HWD candidate eager diagnosis, never a policy/default change')
     parser.add_argument('--capture-eager-attention',action='store_true',help='Observe actual official eager layer0 calls, with historical exact admission')
     parser.add_argument('--capture-expert-mlp',action='store_true',help='Also observe actual Expert0 MLP intermediates, only with admitted official attention capture')
+    parser.add_argument('--capture-expert-layers',action='store_true',help='Observe all32 actual Expert hidden/residual boundaries, only with admitted official attention capture')
     parser.add_argument('--probe-suffix-key-order',action='store_true',help='Folded eager frozen-trajectory prefix-order intervention only')
     parser.add_argument('--order-preflight-report',type=Path)
     parser.add_argument('--order-baseline',type=Path)

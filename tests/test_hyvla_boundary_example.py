@@ -181,6 +181,17 @@ def test_expert_mlp_capture_requires_the_admitted_official_attention_path(diag):
     with pytest.raises(ValueError,match='MLP|attention'):diag.validate_trace_options(args)
 
 
+def test_expert_layer_capture_is_official_only_and_requires_admitted_attention(diag):
+    args=SimpleNamespace(engine='official',folded_proj1=False,capture_eager_attention=True,capture_expert_layers=True,
+        variants=None,source_revision='a'*40,reference=Path('/reference'),reference_job='308690',
+        preflight_report=None,prior_job=None)
+    assert diag.validate_trace_options(args)==('baseline','state')
+    args.capture_eager_attention=False
+    with pytest.raises(ValueError,match='layer|attention'):diag.validate_trace_options(args)
+    args.capture_eager_attention=True;args.variants=['noise']
+    with pytest.raises(ValueError,match='layer|variant'):diag.validate_trace_options(args)
+
+
 def test_suffix_order_cli_requires_folded_native_proofs_and_an_unchanged_sorted_baseline(diag):
     args=SimpleNamespace(engine='native',folded_proj1=True,variants=None,preflight_report=Path('/proj1'),
         source_revision='a'*40,prior_job='309681',reference_job='308690',reference=Path('/reference'),prior=Path('/prior'),
