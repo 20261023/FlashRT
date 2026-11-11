@@ -559,3 +559,34 @@ Preflight raw and full replay raw precede atomic final JSON. Original-order
 effects and fixed-Gold head negatives are retained even when there is no
 improvement. No new full-policy, native-vision KV, sampler free-run or robot gate
 is implied; historical6/7 remainsFAILED and production defaults are unchanged.
+
+### Fixed-input RMS runtime stages
+
+`hy_trace/expert_rms_stages.py` predeclares four probes: baseline/state at
+`(step0,layer1)` and `(step2,layer0)`. It replays the actual separate-QKV,
+original-order block and first requires exact residual/output reproduction of
+the corresponding historical315024same-runtime teacher records. Only22unique
+layer weights are read (44read events); no model or native extension is loaded.
+
+An instance observer calls the real `_rms_norm` once and records its four input,
+weight and output boundaries without replacing the returned math. Standalone
+diagnostic stages then record FP32 input, square, variance, variance+epsilon,
+`rsqrt`, scaling, cast-back and weighted output. That final output must exactly
+replay the actual same-runtime RMS on the restored live input layout.
+
+Run old2.7 then native2.11 serially with explicit `--history-inputs` pointing to
+the historical order manifest, `--history-job`/`--history-source-revision`, current
+`--source-revision`, fresh `--output` and engine label. Native additionally needs
+the **current-job** old-runtime `--reference-rms`. It measures both its own block
+inputs and the identical captured old inputs/weights, separating upstream input
+changes from same-input runtime arithmetic. Historical IDs are never forged as
+current producers. Raw files precede atomic final JSON.
+Before the native owner is compiled, the old reference must contain the exact
+184role keys with finite shape/dtype/layout metadata, and all16weighted stage
+endpoints must exactly equal the actual observed RMS outputs. The final summary
+computes whether any stage differs; an all-exact negative result stays negative.
+
+No alternative normalization, FP64 arithmetic, primitive replacement or relaxed
+threshold is installed. First-stage differences are measurements, not an assumed
+`mean`/`rsqrt` bug or an all-layer explained-error fraction. Scope stays at these
+four probes and the prior6/7 policy failure remains unchanged.
