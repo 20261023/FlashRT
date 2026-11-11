@@ -718,6 +718,50 @@ either change alone was insufficient does not establish that their combined
 effect is zero. No combined-order result, sampler free-run or robot quality is
 claimed here; current6/7FAILED and original thresholds remain unchanged.
 
+Job315024 (`round025/5248e14b`) then changed only attention key order while QKV
+was fixed separate. Source staging used the immutable round024 base plus the
+five exact Git files, without editing that base; a persistent submission receipt
+prevented duplicate submission after transport timeouts. After the user-requested
+pause/resume, exact accounting confirmedCOMPLETED0:0 and all27raw files were
+retrieved. Independent audit verified all1300sorted-control tensors/case/runtime
+EXACT314589, all80zero-weight preflight contexts EXACTGold, unchanged40Gold-head
+negative controls, code/input records and every reported contrast.
+
+The interaction was decisive in2.7 but did not transfer to2.11:
+
+| Runtime / case | Separate + sorted raw-velocity relativeL2 | Separate + original |
+|---|---:|---:|
+| 2.7 / baseline | .00299707–.00529732 | **0 (10/10EXACT)** |
+| 2.7 / state | .00297147–.00517791 | **0 (10/10EXACT)** |
+| 2.11 / baseline | .00327744–.00533305 | .00307602–.00494808 |
+| 2.11 / state | .00315046–.00503325 | .00316721–.00527045 |
+
+In2.7, every recorded residual AND output of all32layers, both input modes,
+both cases and ten steps was bitwise equal to Gold; all20propagated raw velocities
+were exact too. This is conditional Expert equivalence under Gold KV/external
+trajectories, not a native-vision/full-policy/robot qualification. It also shows
+why two individually insufficient interventions cannot be dismissed as having
+zero joint effect.
+
+Actual native query layouts were observed as FP32[1,16,41,128] with strides
+[2048,128,2048,1] in all arms/runtimes. Equal layouts do not by themselves explain
+the runtime difference, nor prove arbitrary layout changes harmless. The2.11
+remaining error is not universally present at layer0: step0baseline first differs
+at local layer1(residual1BF16value,maxabs.00048828125); step0state first residual
+differs at layer3 and first output at layer4. Some other steps have exact residual
+but differing FFN output earlier, so normalization stages need direct observation
+rather than blame from the final error alone.
+
+The next smallest diagnostic fixes captured normalization inputs and weights and
+records square/variance/epsilon/rsqrt/scaling/cast/output stages, with unchanged
+block replay as a precondition. PyTorch's version-matched numerical-accuracy
+notes ([2.7](https://docs.pytorch.org/docs/2.7/notes/numerical_accuracy.html),
+[2.11](https://docs.pytorch.org/docs/2.11/notes/numerical_accuracy.html)) explicitly
+do not guarantee bitwise results across releases; this is a
+compatibility/localization finding, not automatically a library bug. No dtype,
+primitive, runtime-default or tolerance change was promoted, and historical6/7
+policyFAILED remains unchanged.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
