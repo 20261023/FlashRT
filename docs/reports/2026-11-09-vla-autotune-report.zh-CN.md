@@ -376,3 +376,20 @@ Job `313766` 精确复现 HWD candidate 的 baseline/state 动作、逐步 raw v
 baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有一步变为速度 EXACT，也没有任一 local layer output 在十步上全部 EXACT。因此，这不是七 fixture 通过或默认配置改进。旧2.7对照同样保留非零残差，完整数值见[实测记录e4103fe1](https://github.com/20261023/FlashRT/blob/e4103fe1/docs/vla_autotune_experiments.md)。
 
 后续若检验顺序与投影的交互，应在已拆分投影条件下先精确复现全部1300个 sorted 基线，再只恢复 prefix 顺序；尚无该组合结果。当前 Hy 仍为历史6/7失败，没有改容差、生产数学或默认值。
+
+### 11.6 Hy：旧 runtime 的投影＋顺序联合条件精确，新 runtime 仍有差异
+
+`315024` 已完成，并在暂停／恢复后取回全部27文件独立审计：四组 sorted 控制各1300个张量 EXACT，80个零权重 Gold context 前置门及40个固定-Gold head 负对照均保持 EXACT。separate QKV 固定后，只恢复 prefix K/V/mask 原序，得到：
+
+| runtime／case | separate＋sorted raw-velocity relative L2 | separate＋original |
+|---|---:|---:|
+| 2.7／baseline | .00299707–.00529732 | **0，10/10 EXACT** |
+| 2.7／state | .00297147–.00517791 | **0，10/10 EXACT** |
+| 2.11／baseline | .00327744–.00533305 | .00307602–.00494808 |
+| 2.11／state | .00315046–.00503325 | .00316721–.00527045 |
+
+2.7下不只是最终速度：全部32层、两种 hidden 输入条件、两例十步的每个 residual 与 output 都逐位 EXACT Gold。这定位了真实联合效应，不能再用“两项单独都不够”推断组合效应为零。但它仍是**官方 KV／固定外部轨迹下的 Expert 条件等价**，没有原生 vision KV、free-running 策略或机器人质量验收。
+
+实际 Q 布局在所有 runtime／arm 相同，不能仅靠“布局不同”解释版本差异；也不能因此保证任意布局无影响。2.11 的最早分歧因 step／layer 而异，部分位置 residual EXACT、FFN output 不同，后续将固定捕获的 RMS 输入和权重，拆查阶段首个差异，不直接改 cast、归约或 `rsqrt`。
+
+详细证据见[联合条件实测记录1d4345b9](https://github.com/20261023/FlashRT/blob/1d4345b9/docs/vla_autotune_experiments.md)。[PyTorch2.7](https://docs.pytorch.org/docs/2.7/notes/numerical_accuracy.html)及[2.11官方数值说明](https://docs.pytorch.org/docs/2.11/notes/numerical_accuracy.html)均不承诺跨版本逐位一致；当前不把该兼容性差异直接叫作库 bug。生产 runtime／默认未更换，历史6/7失败及原门槛保持不变。
