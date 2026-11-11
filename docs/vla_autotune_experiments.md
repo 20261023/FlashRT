@@ -794,6 +794,39 @@ other intermediates separately) fixed and test current downstream arithmetic;
 that is still standalone localization, not a production primitive repair or a
 new seven-fixture qualification. Historical6/7FAILED remains unchanged.
 
+Job315323 (`round027/af8e74df`) tested that next causal cut, consuming the retained
+315256old184/native328 arrays with no checkpoint tensor read, block/model run or
+new old-runtime process. It first reproduced all144native fixed-old arrays
+EXACT. On the same16norm inputs, each of five independent old-value cuts used
+the CURRENT native intermediate layout; old intermediate live strides were not
+recorded and were not invented. All320same-native-value suffix controls EXACT.
+
+| Injected old intermediate | Weighted endpoints EXACT old | Remaining differing suffix stages |
+|---|---:|---:|
+| variance | 16/16 | 0 |
+| variance+epsilon | 16/16 | 0 |
+| inverse rsqrt | 16/16 | 0 |
+| scaled | 16/16 | 0 |
+| cast-back | 16/16 | 0 |
+
+Accounting confirmedCOMPLETED0:0/errors0. Full784raw tensors were independently
+audited:144historical baselines,320native controls and320old-cut contrasts,
+injected values/layout descriptors, every reported metric and outcome count.
+Thus old variance was sufficient to recover the ENTIRE measured downstream RMS
+suffix in all16fixed-input cases, not merely round its final BF16 endpoint to
+the same value. This excludes a residual same-intermediate downstream arithmetic
+gap within these probes/layouts; it does not establish arbitrary layout safety.
+
+No live block used that intervention yet, so neither complete Expert nor
+full-policy/native-vision/free-running/robot equivalence follows. The next
+smallest check is actual selected-block replay with old-variance handoff only
+when each norm's actual input and weight match the captured old input/weight;
+an input mismatch must be reported, never silently handed an unrelated variance.
+Production math/dtype/runtime/reduction flags/defaults/tolerances stay unchanged,
+and historical6/7FAILED remains. Review found noCritical/Important; one deferred
+Minor test-fixture descriptor alias weakens isolation of a negative layout test,
+not the production pairing check or the actual raw baseline/control gates.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
