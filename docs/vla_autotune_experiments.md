@@ -604,6 +604,35 @@ policy. Native own-trajectory replay remains outside the intervention. This is
 conditional localization, not a new free-running policy or seven-fixture pass;
 the prior6/7 failure and all production defaults/tolerances remain unchanged.
 
+The full-Expert order diagnostic subsequently completed as314305 on
+`round021/50b86d7f`. Both fresh exact proofs passed, including all20actual
+original-order attention contexts and their historical sorted controls. Both
+cases reproduced the complete native trace and all50sorted frozen tensors from
+313766 exactly. Native raw replay remained outside the intervention; original
+mask eligibility, independent scratch, read-only conditions and cleanup passed.
+Each intervened case executed640eager attention calls (20raw evaluations x32
+layers), not640sampler NFE or a measured GPU-kernel count.
+
+Independent raw audit found the following raw-velocity relativeL2 ranges against
+the SAME official latent/time trajectories:
+
+| Case / prefix KV | Sorted attention order | Restored original attention order |
+|---|---:|---:|
+| baseline / native | .00422149–.00696753 | .00406991–.00700935 |
+| baseline / official | .00329106–.00537082 | .00340313–.00548461 |
+| state / native | .00399431–.00657527 | .00406906–.00669422 |
+| state / official | .00313123–.00510265 | .00325715–.00515597 |
+
+No condition became exact, and restoring order did not consistently improve
+the residual. This is a negative result for order restoration as a sufficient
+repair, despite the real local order effect in314150. The adapter itself does
+not alter Q, but earlier layer changes may propagate into later hidden states
+and queries; this is the conditional total effect through the Expert, not a
+fixed-Q32layer experiment. No new free-running actions, seven-fixture gate or
+robot success were tested. The previous6/7 failure remains unchanged; next
+localization needs another recorded operator boundary rather than a production
+order/precision patch.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
