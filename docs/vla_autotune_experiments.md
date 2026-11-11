@@ -827,6 +827,40 @@ and historical6/7FAILED remains. Review found noCritical/Important; one deferred
 Minor test-fixture descriptor alias weakens isolation of a negative layout test,
 not the production pairing check or the actual raw baseline/control gates.
 
+Job315395 (`round028/0aeea139`) then composed the variance handoff through the
+same four actual native blocks. Before owner creation/checkpoint tensor reads,
+the historical315024input reports were bound to315256's retained report stats,
+and mandatory manifest/Gold-trace/native-trace records bound to the exact paths
+opened. A mismatch plus unexpected synchronization failure now aborts at the
+probe boundary; dtype-only negative outcomes remain distinguishable in audit.
+These review fixes had observed failing counterexamples before their green run.
+
+Independent audit read all144raw tensors:56native baseline roles EXACT315256,
+all16intervention norm inputs/weights/live layouts EXACTold, all16unmodified
+native observations EXACTthe prior fixed-old native endpoints, all16injected
+variances andreturned norms EXACTold. No input-mismatch or cleanup failure.
+
+| Probe | Baseline residual unequal | Baseline output unequal | Handoff residual / output |
+|---|---:|---:|---|
+| baseline.s0.l1 | 1 | 2 | **EXACT / EXACT** |
+| baseline.s2.l0 | 0 | 102 | **EXACT / EXACT** |
+| state.s0.l1 | 0 | 0 | EXACT / EXACT (unchanged control) |
+| state.s2.l0 | 0 | 0 | EXACT / EXACT (unchanged control) |
+
+COMPLETED0:0/errors0. Thus the guarded variance-only intervention was sufficient
+to recover these actual block residuals/outputs, not just standalone norms;
+two previously different baseline probes recovered and two already-exact state
+controls stayed exact. It did not paste Gold block outputs, replace GU/attention,
+or apply an unrelated variance to changed inputs. Only22unique BF16weight keys
+were read(44events), no full model/extension built or production norm changed.
+
+This is still four teacher-input/GoldKV block probes, not propagated32layers,
+all steps, native vision KV, free-running full policy or robot success. Do not
+generalize four local causal recoveries into a whole-policy error fraction.
+The next investigation checks the actual runtime versions and installed/source
+reduction implementations before choosing any compatible mean prototype; no
+precision/tolerance/runtime/default or historical6/7FAILED change follows here.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
