@@ -393,3 +393,19 @@ baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有�
 实际 Q 布局在所有 runtime／arm 相同，不能仅靠“布局不同”解释版本差异；也不能因此保证任意布局无影响。2.11 的最早分歧因 step／layer 而异，部分位置 residual EXACT、FFN output 不同，后续将固定捕获的 RMS 输入和权重，拆查阶段首个差异，不直接改 cast、归约或 `rsqrt`。
 
 详细证据见[联合条件实测记录1d4345b9](https://github.com/20261023/FlashRT/blob/1d4345b9/docs/vla_autotune_experiments.md)。[PyTorch2.7](https://docs.pytorch.org/docs/2.7/notes/numerical_accuracy.html)及[2.11官方数值说明](https://docs.pytorch.org/docs/2.11/notes/numerical_accuracy.html)均不承诺跨版本逐位一致；当前不把该兼容性差异直接叫作库 bug。生产 runtime／默认未更换，历史6/7失败及原门槛保持不变。
+
+### 11.7 Hy：固定相同输入后，RMS 首个分歧在 FP32 mean
+
+`315256` 已完成且完整原始数组独立审计。预先固定 baseline/state 各 `(step0,layer1)`、`(step2,layer0)`，两 runtime 的8次 block 执行都精确复现各自 `315024` residual/output oracle。32个 own RMS 端点和16个 fixed-old native 端点也逐位重放实际 RMS，并非只核对阶段实现的自回放。
+
+| 固定旧输入下的观测 | 独立审计结果 |
+|---|---|
+| FP32 转换、平方 | 16/16 EXACT |
+| 首个分歧阶段 | 16/16 为 `square.mean(-1, keepdim=True)` |
+| 128项跨 runtime 阶段比较 | 82项不同、46项 EXACT |
+| FP32 Q/K weighted 端点 | 8/8 不同 |
+| BF16 weighted 端点 | 7/8 EXACT，1项不同 |
+
+唯一 BF16 端点差异是 baseline `(step2,layer0)` postnorm：输入／residual 仍 EXACT，17个 variance 值不同，5个 cast-back 值不同，最终4个 weighted BF16 值不同，maxabs `.0078125`。这在 FFN 之前直接锚定了归一化输出差异，不能把后续 FFN 差异都归到 GU 融合。另一处 own postnorm 输入已受上游 residual 影响；fixed-old 臂排除了这个输入混杂。
+
+**首个分歧不等于因果充分性。** 尚未证明相同 variance 下 `rsqrt`／下游算术全部一致，也没有量化其对全部32层或最终策略残差的解释份额。下一步只交接旧中间量，先复现已有2.11基线，再检查下游；没有更换生产归约、精度、runtime 或阈值。历史6/7失败不变。详细证据固定在[实测记录52e03612](https://github.com/20261023/FlashRT/blob/52e03612/docs/vla_autotune_experiments.md)。
