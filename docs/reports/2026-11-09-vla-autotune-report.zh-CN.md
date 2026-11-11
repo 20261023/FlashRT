@@ -363,3 +363,16 @@ Job `313766` 精确复现 HWD candidate 的 baseline/state 动作、逐步 raw v
 局部 residual／output 差异从第0层已经出现，不能只归因于某个晚层；传播后的误差更大，但这些 hidden 范数不是动作容差，也不能相加成“解释误差百分比”。固定官方 H32 的输出头对照在旧 runtime 为20/20 EXACT，在2.11为19/20：state step9仅两个 BF16 velocity 值不同，maxabs `.001220703125`、relative L2 `.0000340360`，该微差仍保留在结果中。
 
 本项未改变历史6/7失败。详细证据见[逐层实测记录159f7368](https://github.com/20261023/FlashRT/blob/159f7368/docs/vla_autotune_experiments.md)。下一步仅干预 QKV 投影几何，并先要求不变 fused 对照的全部1300个张量精确复现；尚不把该待测干预当成修复或生产默认。
+
+### 11.5 Hy：QKV 投影几何单独改变仍不是充分修复
+
+`314589` 完成四个零模型消费者后，完整18文件已回传并独立复核：四组 fused 对照各1300个张量 EXACT，native-fused 的20个速度 EXACT 复现已有基线，40个固定-Gold输出头负对照不变。只将 Expert QKV 改为分开的三个 GEMM，其他运算保持固定，2.11的结果仍为：
+
+| case | fused raw-velocity relative L2 | separate Q/K/V |
+|---|---:|---:|
+| baseline | .00329106–.00537082 | .00327744–.00533305 |
+| state | .00313123–.00510265 | .00315046–.00503325 |
+
+baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有一步变为速度 EXACT，也没有任一 local layer output 在十步上全部 EXACT。因此，这不是七 fixture 通过或默认配置改进。旧2.7对照同样保留非零残差，完整数值见[实测记录e4103fe1](https://github.com/20261023/FlashRT/blob/e4103fe1/docs/vla_autotune_experiments.md)。
+
+后续若检验顺序与投影的交互，应在已拆分投影条件下先精确复现全部1300个 sorted 基线，再只恢复 prefix 顺序；尚无该组合结果。当前 Hy 仍为历史6/7失败，没有改容差、生产数学或默认值。
