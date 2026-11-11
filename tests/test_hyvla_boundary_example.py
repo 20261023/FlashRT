@@ -172,6 +172,17 @@ def test_official_attention_capture_cli_is_optin_and_binds_historical_reference(
     with pytest.raises(ValueError,match='reference|capture'):diag.validate_trace_options(args)
 
 
+def test_suffix_order_cli_requires_folded_native_proofs_and_an_unchanged_sorted_baseline(diag):
+    args=SimpleNamespace(engine='native',folded_proj1=True,variants=None,preflight_report=Path('/proj1'),
+        source_revision='a'*40,prior_job='309681',reference_job='308690',reference=Path('/reference'),prior=Path('/prior'),
+        probe_suffix_key_order=True,order_preflight_report=Path('/order'),order_baseline=Path('/sorted'),order_baseline_job='313766')
+    assert diag.validate_trace_options(args)==('baseline','state')
+    args.order_preflight_report=None
+    with pytest.raises(ValueError,match='order|proof'):diag.validate_trace_options(args)
+    args.order_preflight_report=Path('/order');args.variants=['noise']
+    with pytest.raises(ValueError,match='order|variant'):diag.validate_trace_options(args)
+
+
 def folded_publication(tmp_path):
     import torch
     folder=tmp_path/'state';folder.mkdir()

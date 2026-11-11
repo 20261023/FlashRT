@@ -186,3 +186,23 @@ def test_final_trace_publication_requires_successful_eager_cleanup(controls):
     assert published[0]['diagnostic_cleanup']['passed'] is True
     assert published[0]['execution_mode']=='diagnostic_eager'
     assert published[0]['performance_measurement'] is False
+
+
+def test_new_intervention_context_never_changes_native_replay_admission(controls):
+    from contextlib import contextmanager
+    snapshot=controls.snapshot_velocity_inputs(live_args());snapshot['perm']=np.array([0])
+    active=False;calls=[]
+    @contextmanager
+    def intervention():
+        nonlocal active
+        active=True
+        try:yield
+        finally:active=False
+    def evaluate(x,*args):
+        calls.append(active)
+        return torch.full_like(x,4. if active else 2.,dtype=torch.bfloat16)
+    front=SimpleNamespace(device=torch.device('cpu'),n_heads=1,_sinusoidal_time=lambda t:torch.tensor([[t]],dtype=torch.bfloat16))
+    outputs,rows,evidence=controls.evaluate_controls(front,SimpleNamespace(evaluate_velocity=evaluate),
+        reference(),native_trace(),snapshot,common=common(),num_steps=2,frozen_context=intervention)
+    assert calls==[False,False,True,True,True,True] and evidence['native_replay_exact']
+    assert active is False

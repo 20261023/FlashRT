@@ -409,3 +409,34 @@ Qnorm differences are deliberately excluded by freezing official values. These
 controls isolate conditional implementation/layout/order contributions, not
 robot quality or free-running policy error. All inputs stay read-only; outputs,
 contrasts and layouts are retained, with raw files before atomic final JSON.
+
+### Full-Expert frozen prefix-order intervention
+
+`hy_trace/suffix_key_order.py` is a zero-weight native-runtime precondition:
+from explicitly historical actual attention captures, it sorts K/V/mask into
+native cache order, applies the same inverse-prefix adapter intended for Expert
+evaluation, and requires exact recorded contexts plus exact old sorted-control
+reproduction at all20baseline/state steps. Use explicit `--reference`,
+`--reference-ops`, `--reference-job`, `--reference-source-revision`,
+`--official-attention-source`, current `--source-revision` and fresh `--output`.
+
+After both this and the usual HWD precondition pass, folded native `diagnose.py`
+can opt into `--probe-suffix-key-order --order-preflight-report ...` with explicit
+historical `--order-baseline`/`--order-baseline-job`. It accepts eager only, empty
+graph caches, fixed suffix geometry and the local-FP32 profile. The unchanged
+sorted counterfactual tensors must exactly reproduce that historical baseline,
+and restoring its suffix mask must preserve official attention eligibility.
+
+Native trajectory replay remains outside the intervention. Only then do the
+same official latents/time embeddings run with two KV conditions and two orders;
+extra tensors use an `original_order.` namespace and comparison rows explicitly
+tag `suffix_key_order`. The adapter only gathers prefix K/V/mask columns; it does
+not modify its Q argument, suffix order, weights, casts or integration. Earlier
+layer changes can nevertheless propagate to later hidden states and Q values:
+Q is not numerically fixed across both full-Expert runs. It drains before binding
+restore and retains owners on cleanup failure. Its eager attention-call count is
+neither sampler NFE nor CUDA kernel count.
+
+This remains a conditional full-Expert diagnostic, **not** a free-running policy
+ablation or a new seven-fixture qualification. The historical6/7 failure stays
+binding. No graph support, recapture/fallback or production option is introduced.

@@ -98,7 +98,7 @@ def snapshot_velocity_inputs(args):
     return result
 
 
-def evaluate_controls(frontend, pipe, reference, native_trace, snapshot, *, common, num_steps=10):
+def evaluate_controls(frontend, pipe, reference, native_trace, snapshot, *, common, num_steps=10,frozen_context=None):
     """Own-trajectory replay then two KV conditions on the SAME official inputs."""
     import torch
     verify_reference_integration(reference, num_steps=num_steps)
@@ -141,19 +141,21 @@ def evaluate_controls(frontend, pipe, reference, native_trace, snapshot, *, comm
             raise ValueError('Official KV expansion does not match the admitted native geometry')
         official.append(item)
     conditions['official_kv_sorted'] = tuple(official)
-    for step in range(num_steps):
-        latent = reference[f'step{step}.latent_before'].to(frontend.device)
-        embedding = frontend._sinusoidal_time(float(reference[f'step{step}.time'].reshape(-1)[0])).to(
-            device=frontend.device, dtype=torch.bfloat16)
-        output[f'frozen_inputs.step{step}.latent'] = latent.detach().cpu().clone()
-        output[f'frozen_inputs.step{step}.time_embedding'] = embedding.detach().cpu().clone()
-        for condition, pair in conditions.items():
-            result = call(latent, embedding, pair)
-            output[f'{condition}.step{step}.velocity'] = result.detach().cpu().clone()
-            rows.append({'step': step, 'condition': condition,
-                **common.difference(common._array(result), common._array(reference[f'step{step}.velocity']))})
-        rows.append({'step': step, 'condition': 'kv_effect_native_vs_official',
-            **common.difference(common._array(output[f'native_kv.step{step}.velocity']),
-                                common._array(output[f'official_kv_sorted.step{step}.velocity']))})
+    from contextlib import nullcontext
+    with frozen_context() if frozen_context is not None else nullcontext():
+        for step in range(num_steps):
+            latent = reference[f'step{step}.latent_before'].to(frontend.device)
+            embedding = frontend._sinusoidal_time(float(reference[f'step{step}.time'].reshape(-1)[0])).to(
+                device=frontend.device, dtype=torch.bfloat16)
+            output[f'frozen_inputs.step{step}.latent'] = latent.detach().cpu().clone()
+            output[f'frozen_inputs.step{step}.time_embedding'] = embedding.detach().cpu().clone()
+            for condition, pair in conditions.items():
+                result = call(latent, embedding, pair)
+                output[f'{condition}.step{step}.velocity'] = result.detach().cpu().clone()
+                rows.append({'step': step, 'condition': condition,
+                    **common.difference(common._array(result), common._array(reference[f'step{step}.velocity']))})
+            rows.append({'step': step, 'condition': 'kv_effect_native_vs_official',
+                **common.difference(common._array(output[f'native_kv.step{step}.velocity']),
+                                    common._array(output[f'official_kv_sorted.step{step}.velocity']))})
     return output, rows, {'native_replay_exact': True, 'prefix_preserved': True,
         'independent_scratch': True, 'interpretation': 'teacher-forced official trajectory, conditional KV intervention only'}

@@ -135,6 +135,12 @@ def admitted_frozen_evaluation(reference, native, data, report, variant, evaluat
 def validate_trace_options(args):
     folded = getattr(args, 'folded_proj1', False)
     capture_attention = getattr(args, 'capture_eager_attention', False)
+    probe_order=getattr(args,'probe_suffix_key_order',False)
+    order_options=('order_preflight_report','order_baseline','order_baseline_job')
+    if probe_order and (not folded or args.engine!='native' or any(getattr(args,key,None) is None for key in order_options)):
+        raise ValueError('Suffix order probe requires folded native mode, current order proof and historical sorted baseline')
+    if not probe_order and any(getattr(args,key,None) is not None for key in order_options):
+        raise ValueError('Suffix order options cannot silently affect a non-intervention trace')
     if capture_attention and (folded or args.engine != 'official' or any(getattr(args,key,None) is None
             for key in ('source_revision','reference','reference_job'))):
         raise ValueError('Official eager attention capture requires explicit historical reference/source identity')
@@ -149,6 +155,8 @@ def validate_trace_options(args):
     variants = getattr(args, 'variants', None) or (('baseline', 'state') if folded or capture_attention else VARIANTS)
     if len(variants) != len(set(variants)) or any(value not in VARIANTS for value in variants):
         raise ValueError('Invalid or repeated diagnostic variant')
+    if probe_order and any(value not in ('baseline','state') for value in variants):
+        raise ValueError('Suffix order probe variants are limited to admitted baseline/state')
     return tuple(variants)
 
 
@@ -322,6 +330,7 @@ def run_native(args, torch):
     from flash_rt.vla import BackendConfig, load_backend
     baseline = None
     folded = getattr(args, 'folded_proj1', False)
+    probe_order=getattr(args,'probe_suffix_key_order',False)
     variants = getattr(args, 'variants', None) or VARIANTS
     config = BackendConfig(model='hyvla', checkpoint=str(args.checkpoint), hardware='cuda_sm80', precision='bf16',
         sampler='euler', num_steps=10, options={'use_cuda_graph': False, 'numerical_profile': 'official_local_fp32'})
@@ -332,6 +341,11 @@ def run_native(args, torch):
         proof = json.loads(args.preflight_report.read_text())
         ablation.validate_precondition(proof, job_id=os.environ['SLURM_JOB_ID'],
             source_revision=args.source_revision, checkpoint=args.checkpoint, fold_spatial=True)
+        if probe_order:
+            order=_sibling('suffix_key_order')
+            order_proof=json.loads(args.order_preflight_report.read_text())
+            order.validate_order_proof(order_proof,job_id=os.environ['SLURM_JOB_ID'],source_revision=args.source_revision,
+                native_source=Path(__file__).resolve().parents[3]/'flash_rt/models/hyvla/pipeline_thor.py')
         validator_spec = importlib.util.spec_from_file_location('hy_trace_validator', Path(__file__).parents[1]/'validate_hyvla.py')
         validator = importlib.util.module_from_spec(validator_spec)
         validator_spec.loader.exec_module(validator)
@@ -350,6 +364,10 @@ def run_native(args, torch):
             admitted[variant] = controls.admit_candidate_prior(prior_report, prior_arrays, prior_input,
                 variant=variant, expected_job=args.prior_job, checkpoint=checkpoint_record, runtime=runtime,
                 fixture=validator.fixture_record(args.fixtures/f'{variant}.npz'))
+            if probe_order:
+                baseline_report=json.loads((args.order_baseline/variant/'result.json').read_text())
+                order.admit_sorted_baseline_report(baseline_report,job_id=args.order_baseline_job,
+                    reference_job=args.reference_job,checkpoint=checkpoint_record,runtime=runtime)
         from flash_rt.frontends.torch.hyvla_probeflow import HyVLAFlowFrontend
         scope_state = {}
         backend_context = ablation.scoped_backend(load_backend, config, arm='camera_proj1', preflight=proof,
@@ -470,9 +488,36 @@ def run_native(args, torch):
                 raise RuntimeError('Native eager/prior-graph or prefix-invariance prerequisite failed; inspect trace before counterfactuals')
             def frozen_controls():
                 if folded:
+                    common=SimpleNamespace(expand_official_kv=expand_official_kv,_array=_array,difference=difference)
                     frozen, rows, evidence = controls.evaluate_controls(frontend, pipe, reference, tensors,
-                        hold['snapshot'], common=SimpleNamespace(expand_official_kv=expand_official_kv,
-                            _array=_array, difference=difference))
+                        hold['snapshot'],common=common)
+                    if probe_order:
+                        from safetensors import safe_open
+                        with safe_open(str(args.order_baseline/variant/'frozen_velocities.safetensors'),framework='pt',device='cpu') as saved:
+                            baseline_tensors={name:saved.get_tensor(name) for name in saved.keys()}
+                        baseline_check=order.admit_sorted_baseline(frozen,baseline_tensors)
+                        mask_check=order.admit_original_mask(hold['snapshot']['smask'],reference['suffix.attention_mask'],hold['snapshot']['perm'])
+                        order_state={}
+                        context=lambda:order.suffix_original_order(frontend,hold['snapshot']['perm'],state=order_state)
+                        changed,changed_rows,changed_evidence=controls.evaluate_controls(frontend,pipe,reference,tensors,
+                            hold['snapshot'],common=common,frozen_context=context)
+                        contrasts=[]
+                        for step in range(10):
+                            if not torch.equal(frozen[f'native_replay.step{step}.velocity'],changed[f'native_replay.step{step}.velocity']):
+                                raise ValueError('Native replay changed before suffix-order intervention')
+                            for condition in ('native_kv','official_kv_sorted'):
+                                key=f'{condition}.step{step}.velocity'
+                                contrasts.append({'step':step,'condition':condition,
+                                    **difference(_array(changed[key]),_array(frozen[key]))})
+                        for row in rows:row['suffix_key_order']='sorted_prefix'
+                        for row in changed_rows:row['suffix_key_order']='original_prefix'
+                        rows.extend(changed_rows)
+                        frozen.update({'original_order.'+name:value for name,value in changed.items()})
+                        report['suffix_order_control']={'proof':order_proof,'intervention':order_state,
+                            'original_mask_admission':mask_check,
+                            'sorted_baseline':{'path':str((args.order_baseline/variant).resolve()),'job_id':args.order_baseline_job,**baseline_check},
+                            'original_order_evidence':changed_evidence,'order_contrasts':contrasts,
+                            'scope':'Frozen official trajectory only; native replay outside intervention; unchanged prior policy gate'}
                     report['frozen_control_evidence'] = evidence
                     return frozen, rows
                 args_live = list(hold['args'])
@@ -524,6 +569,10 @@ def main(argv=None):
     parser.add_argument('--prior', type=Path)
     parser.add_argument('--folded-proj1', action='store_true', help='Explicit HWD candidate eager diagnosis, never a policy/default change')
     parser.add_argument('--capture-eager-attention',action='store_true',help='Observe actual official eager layer0 calls, with historical exact admission')
+    parser.add_argument('--probe-suffix-key-order',action='store_true',help='Folded eager frozen-trajectory prefix-order intervention only')
+    parser.add_argument('--order-preflight-report',type=Path)
+    parser.add_argument('--order-baseline',type=Path)
+    parser.add_argument('--order-baseline-job')
     parser.add_argument('--preflight-report', type=Path)
     parser.add_argument('--source-revision')
     parser.add_argument('--prior-job')
