@@ -572,6 +572,38 @@ promoted from this local observation. The next diagnostic records actual
 original eager attention inputs/output/probabilities before controlled replay,
 rather than substituting another unverified reconstruction for its oracle.
 
+That actual capture/replay completed as314150 on `round020/78208988`. The new
+old-runtime producer exactly reproduced historical inputs/actions, all ten
+latent/time/velocity records, query-norm boundaries, prefix KV and masks. Its
+32calls/phase and10suffix phases were checked. Both original API output and
+probabilities replayed exactly; each case's51consumer tensors were bitwise equal
+across2.7and2.11 in independent raw checks.
+
+Holding observed official Q/K/V fixed, both the native matching-layout arm and
+contiguous-KV **original-order** arm reproduced the actual recorded context
+exactly at all ten steps in both cases. Only the prefix-order intervention
+(matching K/V/mask permutation, unchanged suffix and Q) introduced differences:
+
+| Case | BF16 output differences per step after sorting | Maxabs | RelativeL2 range |
+|---|---:|---:|---:|
+| baseline | 2–20 | .000244140625 | 3.04072e-8–6.82992e-6 |
+| state | 3–71 | .0009765625 | 5.68060e-8–2.67927e-5 |
+
+Thus this recorded layer0 matrix isolates a prefix-order contribution, not a
+contiguous-cache or runtime-version contribution under its fixed inputs. It
+does **not** show that arbitrary layouts are harmless, eliminate native Q/K/V
+projection/Qnorm differences, or quantify how much final action error order
+explains across32layers. Those local context norms cannot be divided into the
+later raw-velocity norm and called an explained-error fraction.
+
+The next minimal diagnostic will reverse only the prefix key/value/mask order
+inside explicitly eager Expert evaluations, on the SAME official latent/time
+trajectory and with both native and official KV conditions. A fresh zero-weight
+adapter precondition must reproduce all recorded contexts before constructing a
+policy. Native own-trajectory replay remains outside the intervention. This is
+conditional localization, not a new free-running policy or seven-fixture pass;
+the prior6/7 failure and all production defaults/tolerances remain unchanged.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
