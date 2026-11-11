@@ -524,3 +524,38 @@ not required to equal the unmodified historical velocity. This non-required
 comparison is not a quality pass or a weakened gate for the fused reference.
 All raw files precede atomic final JSON. No full model or production option is
 introduced; original6/7 qualification is unchanged.
+
+### Order interaction with QKV already separate
+
+`expert_layers.replay_core` shares the unchanged numeric loop with the older
+layer CLI. Each call creates fresh propagated state and streams the same363keys;
+the default remains sorted. The old fused/separate gates and raw keys stay intact.
+
+`hy_trace/expert_order_replay.py` is a dedicated manifest-based driver fixed to
+**separate QKV**. Its explicit history chain checks314589fused against314485,
+the native fused velocities against313766, and the actual split/fused head
+negative controls. Every history raw bundle must contain the full1300finite
+BF16 tensors with exact shapes and the full selected-key set. Historical source
+records remain historical, not falsely equated to current snapshot paths.
+
+Pass `--engine`, `--arm sorted|original`, the fixed `--inputs` manifest, current
+`--source-revision` and fresh `--output`. The provided batch requires both runtime
+sorted arms to exactly reproduce all1300historical split-sorted tensors before
+either original arm. A standalone driver checks its own runtime; it is not the
+cross-runtime barrier.
+Current source/runtime/case/checkpoint and input-file path/stat records must match,
+and raw control arrays are rechecked before alternate owner compilation. The
+historical/current split controls and historical fused reference have distinct
+report fields; no historical result is relabeled as a current producer.
+
+The pure adapter inversely gathers prefix K/V and mask columns only, while cache
+storage remains sorted. A fresh zero-weight20-context Gold preflight must be exact.
+The scope drains and restores `_attn`, retaining owners and primary exceptions on
+cleanup failure. Actual Q layouts are passively recorded; Q is not materialized
+or reordered. Propagated Q values can nevertheless change after earlier layers.
+Its640attention calls per case are neither sampler NFE nor GPU-kernel counts.
+
+Preflight raw and full replay raw precede atomic final JSON. Original-order
+effects and fixed-Gold head negatives are retained even when there is no
+improvement. No new full-policy, native-vision KV, sampler free-run or robot gate
+is implied; historical6/7 remainsFAILED and production defaults are unchanged.
