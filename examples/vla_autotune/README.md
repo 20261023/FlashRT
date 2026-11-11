@@ -376,3 +376,36 @@ serially in one allocation, with explicit `--checkpoint`, `--official`/`--offici
 historical producers retain their IDs; current operator execution has its own job
 ID. No old FA2 binary, full-policy import, model rewrite or new default is used.
 Atomic result publication follows successful raw tensor saving.
+
+### Recorded eager-attention layout/order controls
+
+The official `hy_trace/diagnose.py` mode accepts opt-in
+`--capture-eager-attention`, with historical `--reference`/`--reference-job` and
+the current frozen `--source-revision`. An instance-only observer counts exactly
+32 eager calls per prefix/suffix phase and10suffix steps, recording layer0 actual
+Q/K/V/mask/output/probabilities with live layouts. It preserves mathematics and
+restores bindings on failure. Actions, inputs, every latent/time/velocity, the
+query-norm boundaries and original prefix/masks must exactly match the historical
+accepted trace before an atomic completed record is published.
+
+After that full original producer exits, `hy_trace/frozen_eager_attention.py`
+uses the **fresh same-job** capture, loading no model or parameters. Run it
+serially in recorded Torch2.7.1 and2.11 with `--engine`, `--reference`, explicit
+`--official-attention-source`, frozen `--source-revision` and fresh `--output`.
+Only the selected attention method bodies are extracted from revision-bound
+sources; module-level code and model imports are never executed.
+
+Four arms hold observed official Q/K/V fixed: original API at restored live
+layouts; native local-FP32 attention with matching expanded official layouts;
+native contiguous preexpanded KV in original order; and the same contiguous KV
+with the observed modality-prefix permutation and matching mask-column order.
+Suffix columns/query order remain unchanged. Original2.7 output **and**
+probabilities must reproduce the actual captured oracle exactly. New-runtime
+differences are measurements, not a reason to loosen that reference precondition.
+
+The contiguous controls model the observed native KV-cache layout, not an
+unobserved native Q layout or complete native policy. Native QKV projection and
+Qnorm differences are deliberately excluded by freezing official values. These
+controls isolate conditional implementation/layout/order contributions, not
+robot quality or free-running policy error. All inputs stay read-only; outputs,
+contrasts and layouts are retained, with raw files before atomic final JSON.

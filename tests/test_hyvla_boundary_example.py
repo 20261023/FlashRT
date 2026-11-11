@@ -161,6 +161,17 @@ def test_folded_cli_requires_historical_source_and_prior_identity_before_loading
     with pytest.raises(ValueError,match='native|folded'):diag.validate_trace_options(args)
 
 
+def test_official_attention_capture_cli_is_optin_and_binds_historical_reference(diag):
+    args=SimpleNamespace(engine='official',folded_proj1=False,capture_eager_attention=True,
+        variants=None,source_revision='0'*40,reference=Path('/official'),reference_job='308690',
+        preflight_report=None,prior_job=None)
+    assert diag.validate_trace_options(args)==('baseline','state')
+    args.engine='native'
+    with pytest.raises(ValueError,match='official|capture'):diag.validate_trace_options(args)
+    args.engine='official';args.reference_job=None
+    with pytest.raises(ValueError,match='reference|capture'):diag.validate_trace_options(args)
+
+
 def folded_publication(tmp_path):
     import torch
     folder=tmp_path/'state';folder.mkdir()

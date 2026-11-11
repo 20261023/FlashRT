@@ -5,6 +5,7 @@ import argparse
 import ast
 from contextlib import ExitStack, contextmanager
 import importlib.util
+import inspect
 import json
 import os
 from pathlib import Path
@@ -133,13 +134,19 @@ def admitted_frozen_evaluation(reference, native, data, report, variant, evaluat
 
 def validate_trace_options(args):
     folded = getattr(args, 'folded_proj1', False)
+    capture_attention = getattr(args, 'capture_eager_attention', False)
+    if capture_attention and (folded or args.engine != 'official' or any(getattr(args,key,None) is None
+            for key in ('source_revision','reference','reference_job'))):
+        raise ValueError('Official eager attention capture requires explicit historical reference/source identity')
     if folded and (args.engine != 'native' or any(getattr(args, key, None) is None for key in
             ('preflight_report', 'source_revision', 'prior_job', 'reference_job', 'reference', 'prior'))):
         raise ValueError('Folded native trace requires current proof and historical prior/reference identity')
-    if not folded and any(getattr(args, key, None) is not None for key in
+    if not folded and not capture_attention and any(getattr(args, key, None) is not None for key in
                          ('preflight_report', 'source_revision', 'prior_job', 'reference_job')):
         raise ValueError('Folded trace identity options cannot silently affect a legacy trace')
-    variants = getattr(args, 'variants', None) or (('baseline', 'state') if folded else VARIANTS)
+    if capture_attention and any(getattr(args,key,None) is not None for key in ('preflight_report','prior_job')):
+        raise ValueError('Folded candidate proof options cannot affect official attention capture')
+    variants = getattr(args, 'variants', None) or (('baseline', 'state') if folded or capture_attention else VARIANTS)
     if len(variants) != len(set(variants)) or any(value not in VARIANTS for value in variants):
         raise ValueError('Invalid or repeated diagnostic variant')
     return tuple(variants)
@@ -229,6 +236,10 @@ def run_official(args, torch):
     if not torch.__version__.startswith('2.7.1'):
         raise RuntimeError('Use the recorded official Torch2.7.1 environment, not the native overlay')
     validate_load, observe = observer_functions(args.observer_source)
+    capture_attention = getattr(args,'capture_eager_attention',False)
+    if capture_attention:
+        capture = _sibling('eager_attention_capture')
+        controls = _sibling('native_controls')
     policy = HyVLA(HyVLAConfig.from_pretrained(str(args.checkpoint), local_files_only=True))
     load_report = validate_load(*load_model(policy, str(args.checkpoint / 'model.safetensors'), strict=False, device='cpu'))
     policy.eval().to(device='cuda', dtype=torch.bfloat16)
@@ -250,6 +261,9 @@ def run_official(args, torch):
                             ('prepared.tokens', tokens), ('prepared.token_mask', token_mask)):
             _rec(tensors, meta, name, value)
         with observe(policy, tensors), observe_step_metadata(policy.model, meta), ExitStack() as stack:
+            if capture_attention:
+                capture_state = stack.enter_context(capture.observe_eager_attention(policy.model.dual_tower,tensors,meta,
+                    num_layers=int(policy.model.dual_tower.vlm.config.num_hidden_layers),num_steps=int(policy.model.config.num_steps)))
             def tower_observer(original):
                 def call(*a, **kw):
                     result = original(*a, **kw)
@@ -277,7 +291,27 @@ def run_official(args, torch):
         report = {'engine': 'official', 'variant': variant, 'oracle': same, 'prefix_invariance': invariant,
                   'load_report': load_report, 'torch': torch.__version__, 'hy_vla_source': sys.modules['hy_vla'].__file__,
                   'job_id': os.environ['SLURM_JOB_ID'], 'tensor_metadata': meta, 'performance_measurement': False}
-        _save(folder, tensors, report)
+        if capture_attention:
+            from safetensors import safe_open
+            historical_report = json.loads((args.reference/variant/'result.json').read_text())
+            controls.admit_historical_reference(historical_report,expected_job=args.reference_job,variant=variant)
+            names = (*capture.IDENTITY_KEYS,'prefix.attention_mask','suffix.attention_mask',
+                     *(f'query_norm.layer0.{index}' for index in range(1+policy.model.config.num_steps)),
+                     *(f'step{index}.{field}' for index in range(policy.model.config.num_steps)
+                       for field in ('latent_before','time','velocity')))
+            with safe_open(str(args.reference/variant/'trace.safetensors'),framework='pt',device='cpu') as saved:
+                historical = {name:saved.get_tensor(name) for name in names}
+            admission = capture.admit_recorded_attention(tensors,historical,num_steps=int(policy.model.config.num_steps))
+            source = Path(inspect.getfile(type(policy.model.dual_tower))).resolve()
+            stat = source.stat()
+            report.update(artifact_complete=True,status='recorded_oracle_reproduced' if same['exact'] and all(invariant.values()) else 'reference_reproduction_failed',
+                source_revision=args.source_revision,eager_attention_capture=capture_state,historical_attention_admission=admission,
+                historical_official_reference={'job_id':args.reference_job,'path':str((args.reference/variant).resolve())},
+                official_attention_source={'path':str(source),'bytes':stat.st_size,'mtime_ns':stat.st_mtime_ns},
+                checkpoint=_sibling('proj1_camera_ablation')._checkpoint_stat(args.checkpoint),
+                capture_scope='Observed official eager layer0 inputs/output/probabilities; no native policy qualification')
+            torch.cuda.synchronize()
+        _save(folder, tensors, report,atomic_report=capture_attention)
         print(json.dumps({'variant': variant, 'oracle_exact': same['exact'], 'invariant': invariant}), flush=True)
         if not same['exact'] or not all(invariant.values()):
             raise RuntimeError('Official trace prerequisites failed; do not interpret a mismatched reference as the recorded oracle')
@@ -489,6 +523,7 @@ def main(argv=None):
     parser.add_argument('--reference', type=Path)
     parser.add_argument('--prior', type=Path)
     parser.add_argument('--folded-proj1', action='store_true', help='Explicit HWD candidate eager diagnosis, never a policy/default change')
+    parser.add_argument('--capture-eager-attention',action='store_true',help='Observe actual official eager layer0 calls, with historical exact admission')
     parser.add_argument('--preflight-report', type=Path)
     parser.add_argument('--source-revision')
     parser.add_argument('--prior-job')
