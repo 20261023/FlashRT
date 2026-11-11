@@ -417,3 +417,18 @@ baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有�
 完整784张量独立审计通过：144个历史基线、320个自值交接控制 EXACT；320项旧值交接阶段比较全部 EXACT。五种交接各16/16恢复旧 weighted 端点，且每种交接的**整个受测下游 suffix**均 EXACT。因此在这16组输入／当前布局下，旧 variance 已足以消除局部 RMS 差异，不只是让 BF16 末端恰好舍入相同。
 
 这轮没有执行 live block，也未读取 checkpoint 张量或运行新旧模型；不能据局部充分性宣称完整 Expert／策略已经修复。后续四个实际 block 的干预会先核对每次实际 norm 输入、权重与布局 EXACT，任何不匹配都停止该 probe，不能偷偷使用无关旧 variance。历史6/7失败、生产数学／精度／runtime／默认及原门槛均不变。详细证据见[实测记录df83cb94](https://github.com/20261023/FlashRT/blob/df83cb94/docs/vla_autotune_experiments.md)。
+
+### 11.9 Hy：受保护的旧 variance 交接恢复四个真实 block
+
+`315395` 完成后，全部144个原始张量独立审计通过：56个 native 基线角色 EXACT 复现 `315256`；干预路径16次 norm 的实际输入、权重及 live layout 全部匹配旧捕获，零输入拒绝；16个未干预 native 观测端点复现已有 fixed-old native 结果。仅将旧 variance 交给原下游算术后，四个真实 block 的 residual 和 output 均 EXACT 旧 oracle。
+
+| Probe | 原生 residual／output 不同元素数 | 交接后 |
+|---|---:|---|
+| baseline.s0.l1 | 1／2 | 全部 EXACT |
+| baseline.s2.l0 | 0／102 | 全部 EXACT |
+| state.s0.l1 | 0／0 | 保持 EXACT |
+| state.s2.l0 | 0／0 | 保持 EXACT |
+
+因此“两处原有差异被恢复”和“两处原已相同的控制不变”应分开描述，不能把四处都叫新增修复。实验没有粘贴 Gold block 输出、改 GU／attention，或在输入变化时套用旧 variance；只读取22个唯一 BF16 权重张量（44次读取事件），没有构造完整模型或替换生产 norm。
+
+范围仍是四个 teacher-input／Gold KV block，不是32层传播、全部 step、native vision KV、free-running 策略或机器人资格。下一步核查实际 runtime 的归约源码／安装头文件，再决定最小 dispatch 观测；不据四个点盲写兼容 mean。历史6/7失败和原阈值／生产默认保持不变。详细证据见[实测记录71406637](https://github.com/20261023/FlashRT/blob/71406637/docs/vla_autotune_experiments.md)。
