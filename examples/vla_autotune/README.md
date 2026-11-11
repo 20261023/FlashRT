@@ -614,3 +614,35 @@ tensor is read, block/model constructed, FP64 alternative installed or policy
 normalization replaced. Conditional local sufficiency, if observed, is not an
 all-layer/full-policy/native-vision/free-running/robot qualification; historical
 6/7FAILED and production defaults remain unchanged.
+
+### Guarded variance handoff in actual selected blocks
+
+`hy_trace/expert_rms_block_handoff.py` asks whether the standalone RMS cut
+composes through the same four actual separate-QKV/original-order Expert blocks.
+It admits the old184/native328 history, selected checkpoint/source/runtime and
+KV/mask/RoPE records, then requires each native block's residual/output and all
+12actual norm boundary tensors to reproduce315256EXACT before intervention.
+The two historical input reports must first match the report stats retained by
+315256, and their manifest/Gold-trace/native-trace records must bind to the exact
+paths actually opened. Empty records or valid records for other files cannot
+reach owner creation or checkpoint tensor reads.
+
+The intervention is scoped only to that standalone owner's `_rms_norm`. Each
+actual input and weight, including live layout, must exactly match the old
+captured role **before** an old variance can be used. It observes the original
+native RMS once, injects old variance in the current variance layout, and runs
+the unchanged suffix. A nonmatching input/weight/layout stops that probe with
+`input_mismatch`, retains the failed boundary, and never falls back to applying
+an unrelated old variance. Other probes still run; unexpected failures prevent
+final publication. Bindings and counts are checked and restored.
+A mismatch accompanied by synchronization/cleanup failure is an unexpected
+failure and aborts at that probe boundary, rather than continuing other probes.
+
+Complete probes compare actual residual/output to the conditional old block
+oracle; exactness is a measured outcome, not a diagnostic acceptance criterion.
+All native boundaries and intervention inputs/native outputs/injected variances/
+returned outputs remain in raw arrays. Four complete probes contain144tensors;
+partial mismatch reports have an explicit smaller role set. Only22unique layer
+weights are read(44events), no model/extension constructed or production norm
+changed. This does not test propagated32layers, full policy, native vision KV,
+free-running trajectories or robot success; historical6/7FAILED remains intact.
