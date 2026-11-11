@@ -122,17 +122,20 @@ def _owned_graphs(frontend):
 
 @contextmanager
 def scoped_backend(real_factory, config, *, arm, preflight, state, synchronize,
-                   expected_frontend_type, fold_spatial=False):
+                   expected_frontend_type, fold_spatial=False, execution='graph'):
     if arm not in ('baseline', 'camera_proj1'):
         raise ValueError('Unknown ablation arm')
     if preflight.get('operator_exact') is not True:
         raise ValueError('Exact frozen projection precondition must pass before model construction')
     if type(fold_spatial) is not bool or preflight.get('fold_spatial', False) is not fold_spatial:
         raise ValueError('Projection precondition fold layout mode differs from requested mode')
+    if execution not in ('graph', 'diagnostic_eager'):
+        raise ValueError('Unknown ablation execution mode')
     if (config.model != 'hyvla' or config.sampler != 'euler' or config.num_steps != 10
             or config.options.get('numerical_profile') != 'official_local_fp32'
-            or config.options.get('use_cuda_graph') is not True):
-        raise ValueError('This ablation requires unchanged Hy official-local Euler10 graph execution')
+            or config.options.get('use_cuda_graph') is not (execution == 'graph')):
+        raise ValueError('This ablation requires unchanged Hy official-local Euler10 and the admitted graph/execution mode')
+    state['execution'] = execution
     state['cleanup'] = {'passed': False, 'status': 'loading'}
     backend = real_factory(config)
     frontend = pipe = None

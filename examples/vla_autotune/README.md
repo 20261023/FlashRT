@@ -318,3 +318,37 @@ but only6/7original full-policy fixtures, versus4/7for the exactly reproduced
 baseline. State still failed3public/padded elements; the aggregate stayed nonzero.
 Thus `--fold-spatial` is a partial diagnostic result, **not** a qualified product
 fix or a recommended default. Keep original tolerances and all failed records.
+
+### Folded candidate state-residual trace
+
+The existing `hy_trace/diagnose.py` has an opt-in `--folded-proj1` native mode;
+its original default diagnostic remains unchanged. This mode uses **eager**
+execution explicitly, binds the same HWD example before inference, and requires
+a fresh same-job/source/checkpoint `--preflight-report` plus `--source-revision`.
+Pass historical accepted official traces with `--reference`/`--reference-job`
+and completed folded candidate outputs with `--prior`/`--prior-job`. Variant
+directories under this candidate prior are direct names, not `euler10-*` names.
+It defaults to baseline/state, or accepts explicit `--variants`.
+
+The actual folded actions must exactly reproduce the saved candidate before
+interpretation. Reference admission checks images, state, tokens/masks, noise,
+oracle, dtype and historical producer identity. Actual time **embeddings** are
+recorded; reconstructed scalar schedule values are labeled, not called observed
+scalar inputs. The historical BF16 scalar-increment replay is characterized on
+CPU solely to validate trace integration, never installed as a new policy solver.
+
+Frozen evaluation first replays the native trajectory exactly using independent
+state/mask/RoPE/KV snapshots. Then each official latent and precise official time
+embedding is shared by two arms, changing only native versus sorted/expanded
+official prefix KV. Scratch is independent, read-only inputs and prefix rows must
+remain unchanged, and all raw results are saved. This measures a conditional KV
+effect on a fixed trajectory, not free-running policy quality or a new gate.
+
+Final traces are published only after scoped drain/reset/restore/close succeeds.
+Frozen tensors and the trace file must both finish before an atomic final JSON
+completion marker is published; disk/serialization failure cannot leave a final
+success marker or success print.
+The previous6/7 original-gate failure remains explicit even if this diagnostic
+completes; profiling/trace host copies are not latency benchmarks. It constructs
+one native policy and reuses historical official tensors, not a second model or
+an incompatible FA2 binary. No new package download or content hash is required.

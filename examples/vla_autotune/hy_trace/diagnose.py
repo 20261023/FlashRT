@@ -4,11 +4,13 @@ from __future__ import annotations
 import argparse
 import ast
 from contextlib import ExitStack, contextmanager
+import importlib.util
 import json
 import os
 from pathlib import Path
 import socket
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -114,10 +116,12 @@ def admitted_frozen_evaluation(reference, native, data, report, variant, evaluat
         raise ReferenceInputMismatch('Official reference label/oracle/prefix invariance admission failed')
     comparisons = [('actions', np.asarray(data['expected_actions32'])[None]),
                    ('step0.latent_before', np.asarray(data['noise'])[None])]
-    for key in ('prepared.state', 'prepared.tokens', 'prepared.token_mask',
+    for key in ('prepared.images', 'prepared.state', 'prepared.tokens', 'prepared.token_mask',
                 'prefix.pad_mask', 'prefix.modality_mask'):
         if key not in native:
             raise ReferenceInputMismatch(f'Missing native input identity: {key}')
+        if key not in reference or native[key].dtype != reference[key].dtype:
+            raise ReferenceInputMismatch(f'Official reference input dtype differs: {key}')
         comparisons.append((key, _array(native[key])))
     for key, expected in comparisons:
         if key not in reference or not np.array_equal(_array(reference[key]), expected):
@@ -127,10 +131,48 @@ def admitted_frozen_evaluation(reference, native, data, report, variant, evaluat
     return evaluate()
 
 
-def _save(folder, tensors, report):
+def validate_trace_options(args):
+    folded = getattr(args, 'folded_proj1', False)
+    if folded and (args.engine != 'native' or any(getattr(args, key, None) is None for key in
+            ('preflight_report', 'source_revision', 'prior_job', 'reference_job', 'reference', 'prior'))):
+        raise ValueError('Folded native trace requires current proof and historical prior/reference identity')
+    if not folded and any(getattr(args, key, None) is not None for key in
+                         ('preflight_report', 'source_revision', 'prior_job', 'reference_job')):
+        raise ValueError('Folded trace identity options cannot silently affect a legacy trace')
+    variants = getattr(args, 'variants', None) or (('baseline', 'state') if folded else VARIANTS)
+    if len(variants) != len(set(variants)) or any(value not in VARIANTS for value in variants):
+        raise ValueError('Invalid or repeated diagnostic variant')
+    return tuple(variants)
+
+
+def _sibling(name):
+    spec = importlib.util.spec_from_file_location('hy_trace_' + name, Path(__file__).with_name(name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _save(folder, tensors, report, *, atomic_report=False):
     from safetensors.torch import save_file
     save_file({name: value.contiguous() for name, value in tensors.items()}, str(folder / 'trace.safetensors'))
-    (folder / 'result.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
+    path = folder/'result.json'
+    text = json.dumps(report, indent=2, allow_nan=False) + '\n'
+    if atomic_report:
+        temporary = folder/'result.json.tmp'
+        temporary.write_text(text)
+        temporary.replace(path)
+    else:
+        path.write_text(text)
+
+
+def publish_folded_trace(item):
+    from safetensors.torch import save_file
+    save_file({name: value.contiguous() for name, value in item['frozen'].items()}, str(item['folder']/'frozen_velocities.safetensors'))
+    item['report']['artifact_complete'] = True
+    _save(item['folder'], item['tensors'], item['report'], atomic_report=True)
+    print(json.dumps({'variant': item['report']['variant'], 'folded_diagnostic': True,
+        'prior_graph_exact': True, 'cleanup_passed': True, 'boundaries': item['report']['reference_boundaries'],
+        'frozen_velocities': item['report']['frozen_velocity_comparisons']}), flush=True)
 
 
 def _rec(tensors, metadata, name, value):
@@ -191,7 +233,7 @@ def run_official(args, torch):
     load_report = validate_load(*load_model(policy, str(args.checkpoint / 'model.safetensors'), strict=False, device='cpu'))
     policy.eval().to(device='cuda', dtype=torch.bfloat16)
     baseline = None
-    for variant in VARIANTS:
+    for variant in getattr(args, 'variants', None) or VARIANTS:
         folder = args.output / variant
         folder.mkdir()
         with np.load(args.fixtures / f'{variant}.npz', allow_pickle=False) as archive:
@@ -245,17 +287,54 @@ def run_native(args, torch):
     from safetensors.torch import load_file
     from flash_rt.vla import BackendConfig, load_backend
     baseline = None
+    folded = getattr(args, 'folded_proj1', False)
+    variants = getattr(args, 'variants', None) or VARIANTS
     config = BackendConfig(model='hyvla', checkpoint=str(args.checkpoint), hardware='cuda_sm80', precision='bf16',
         sampler='euler', num_steps=10, options={'use_cuda_graph': False, 'numerical_profile': 'official_local_fp32'})
-    with load_backend(config) as backend:
+    pending, admitted = [], {}
+    if folded:
+        import platform
+        ablation, controls = _sibling('proj1_camera_ablation'), _sibling('native_controls')
+        proof = json.loads(args.preflight_report.read_text())
+        ablation.validate_precondition(proof, job_id=os.environ['SLURM_JOB_ID'],
+            source_revision=args.source_revision, checkpoint=args.checkpoint, fold_spatial=True)
+        validator_spec = importlib.util.spec_from_file_location('hy_trace_validator', Path(__file__).parents[1]/'validate_hyvla.py')
+        validator = importlib.util.module_from_spec(validator_spec)
+        validator_spec.loader.exec_module(validator)
+        _, checkpoint_record = validator.checkpoint_record(args.checkpoint)
+        runtime = {'python': platform.python_version(), 'executable': sys.executable,
+                   'torch': torch.__version__, 'cuda': torch.version.cuda, 'numpy': np.__version__}
+        for variant in variants:
+            prior_folder = args.prior/variant
+            prior_report = json.loads((prior_folder/'result.json').read_text())
+            prior_exit = json.loads((prior_folder/'child_exit.json').read_text())['returncode']
+            ablation.classify_exit(prior_exit, prior_report)  # state oracle mismatch stays a historical failure
+            with np.load(prior_folder/'actions.npz', allow_pickle=False) as archive:
+                prior_arrays = {name: archive[name].copy() for name in archive.files}
+            with np.load(args.fixtures/f'{variant}.npz', allow_pickle=False) as archive:
+                prior_input = {name: archive[name].copy() for name in archive.files}
+            admitted[variant] = controls.admit_candidate_prior(prior_report, prior_arrays, prior_input,
+                variant=variant, expected_job=args.prior_job, checkpoint=checkpoint_record, runtime=runtime,
+                fixture=validator.fixture_record(args.fixtures/f'{variant}.npz'))
+        from flash_rt.frontends.torch.hyvla_probeflow import HyVLAFlowFrontend
+        scope_state = {}
+        backend_context = ablation.scoped_backend(load_backend, config, arm='camera_proj1', preflight=proof,
+            state=scope_state, synchronize=torch.cuda.synchronize, expected_frontend_type=HyVLAFlowFrontend,
+            fold_spatial=True, execution='diagnostic_eager')
+    else:
+        backend_context = load_backend(config)
+    with backend_context as backend:
         frontend, pipe = backend.frontend, backend.frontend.pipe
-        for variant in VARIANTS:
+        for variant in variants:
             folder = args.output / variant
             folder.mkdir()
             reference = load_file(str(args.reference / variant / 'trace.safetensors'))
             official_report = json.loads((args.reference / variant / 'result.json').read_text())
             if not official_report['oracle']['exact']:
                 raise ValueError('Cannot use an unreproduced official oracle as a frozen trajectory')
+            if folded:
+                controls.admit_historical_reference(official_report, expected_job=args.reference_job, variant=variant)
+                controls.verify_reference_integration(reference)
             with np.load(args.fixtures / f'{variant}.npz', allow_pickle=False) as archive:
                 data = {name: archive[name].copy() for name in archive.files}
             keys = ('top_head', 'hand_left', 'hand_right')
@@ -294,6 +373,11 @@ def run_native(args, torch):
                         index = hold.get('step', 0)
                         _rec(tensors, meta, f'step{index}.latent_before', a[0])
                         _rec(tensors, meta, f'step{index}.time', torch.tensor([frontend._embedding_times[index]]))
+                        meta[f'step{index}.time']['source'] = 'frontend_schedule_reconstruction_not_observed_scalar'
+                        _rec(tensors, meta, f'step{index}.time_embedding', a[1])
+                        if folded and index == 0:
+                            hold['snapshot'] = controls.snapshot_velocity_inputs(a)
+                            hold['snapshot']['perm'] = hold['perm'].copy()
                         if index == 0:
                             for name, value in (('suffix.mask_sorted', a[3]), ('suffix.cos', a[4]), ('suffix.sin', a[5])):
                                 _rec(tensors, meta, name, value)
@@ -326,7 +410,8 @@ def run_native(args, torch):
             tensors['actions'] = torch.from_numpy(result['actions'][None].copy())
             if hold['step'] != 10:
                 raise RuntimeError('Trace did not observe exactly ten raw non-integrating velocity evaluations')
-            with np.load(args.prior / f'euler10-{variant}' / 'actions.npz', allow_pickle=False) as prior:
+            prior_folder = args.prior/variant if folded else args.prior/f'euler10-{variant}'
+            with np.load(prior_folder / 'actions.npz', allow_pickle=False) as prior:
                 prior_comparison = difference(result['actions'], prior['actions32'])
             baseline, invariant = _invariance(baseline, tensors)
             boundaries = {name: difference(_array(tensors[name]), _array(reference[name])) for name in
@@ -336,10 +421,26 @@ def run_native(args, torch):
                       'prefix_invariance': invariant, 'reference_boundaries': boundaries,
                       'job_id': os.environ['SLURM_JOB_ID'], 'torch': torch.__version__,
                       'tensor_metadata': meta, 'performance_measurement': False}
-            _save(folder, tensors, report)
+            if not folded:
+                _save(folder, tensors, report)
+            else:
+                report.update(experimental_projection={'fold_spatial': True, 'effective_projection': 'per_camera_hwd',
+                    'production_option': False, 'original_gate_changed': False, 'source_revision': args.source_revision,
+                    'precondition': proof, 'override_source': validator._file_record(Path(ablation.__file__))},
+                    historical_candidate_prior={**admitted[variant], 'path': str(prior_folder)},
+                    historical_official_reference={'job_id': args.reference_job, 'path': str(args.reference/variant)},
+                    config={'use_cuda_graph': False, 'sampler': 'euler', 'num_steps': 10, 'numerical_profile': 'official_local_fp32'},
+                    runtime=runtime, checkpoint=checkpoint_record, model_sources=validator.model_sources(backend),
+                    policy_qualification='unchanged_historical_failed_6_of_7_not_a_new_gate_result')
             if not prior_comparison['exact'] or not all(invariant.values()):
                 raise RuntimeError('Native eager/prior-graph or prefix-invariance prerequisite failed; inspect trace before counterfactuals')
             def frozen_controls():
+                if folded:
+                    frozen, rows, evidence = controls.evaluate_controls(frontend, pipe, reference, tensors,
+                        hold['snapshot'], common=SimpleNamespace(expand_official_kv=expand_official_kv,
+                            _array=_array, difference=difference))
+                    report['frozen_control_evidence'] = evidence
+                    return frozen, rows
                 args_live = list(hold['args'])
                 conditions = {'native_kv': (args_live[6], args_live[7])}
                 external = []
@@ -363,14 +464,21 @@ def run_native(args, torch):
                 frozen, rows = admitted_frozen_evaluation(reference, tensors, data, official_report, variant, frozen_controls)
             except ReferenceInputMismatch as error:
                 report['frozen_admission'] = {'status': 'rejected_reference_inputs', 'reason': str(error)}
-                (folder / 'result.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
+                if not folded:
+                    (folder / 'result.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
                 raise
             from safetensors.torch import save_file
-            save_file(frozen, str(folder / 'frozen_velocities.safetensors'))
+            if not folded:
+                save_file(frozen, str(folder / 'frozen_velocities.safetensors'))
             report.update(frozen_admission={'status': 'matched_exact_inputs'}, frozen_velocity_comparisons=rows, tensor_metadata=meta,
                           caveat='Official KV is permuted to native sorted reduction order; this does not eliminate attention-order differences')
-            (folder / 'result.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
-            print(json.dumps({'variant': variant, 'prior_graph_exact': True, 'boundaries': boundaries, 'frozen_velocities': rows}), flush=True)
+            if folded:
+                pending.append({'folder': folder, 'tensors': tensors, 'frozen': frozen, 'report': report})
+            else:
+                (folder / 'result.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
+                print(json.dumps({'variant': variant, 'prior_graph_exact': True, 'boundaries': boundaries, 'frozen_velocities': rows}), flush=True)
+    if folded:
+        controls.publish_after_cleanup(pending, scope_state, publish_folded_trace)
 
 
 def main(argv=None):
@@ -380,8 +488,15 @@ def main(argv=None):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--reference', type=Path)
     parser.add_argument('--prior', type=Path)
+    parser.add_argument('--folded-proj1', action='store_true', help='Explicit HWD candidate eager diagnosis, never a policy/default change')
+    parser.add_argument('--preflight-report', type=Path)
+    parser.add_argument('--source-revision')
+    parser.add_argument('--prior-job')
+    parser.add_argument('--reference-job')
+    parser.add_argument('--variants', nargs='+', choices=VARIANTS)
     args = parser.parse_args(argv)
     require_step()
+    args.variants = validate_trace_options(args)
     if args.engine == 'native' and (args.reference is None or args.prior is None):
         parser.error('native requires fresh --reference and --prior recorded graph outputs')
     args.output.mkdir(parents=True, exist_ok=False)

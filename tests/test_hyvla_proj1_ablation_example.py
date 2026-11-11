@@ -182,6 +182,21 @@ def config():
                            options={'numerical_profile':'official_local_fp32','use_cuda_graph':True})
 
 
+def test_diagnostic_eager_scope_is_explicit_not_a_fake_graph_configuration():
+    module=ablation();events=[];backend=FakeBackend(events);cfg=config();cfg.options['use_cuda_graph']=False
+    with pytest.raises(ValueError,match='graph|execution'):
+        with module.scoped_backend(lambda cfg:backend,cfg,arm='camera_proj1',fold_spatial=True,
+            preflight={'operator_exact':True,'fold_spatial':True},state={},synchronize=lambda:None,
+            expected_frontend_type=FakeFrontend):pass
+    state={}
+    with module.scoped_backend(lambda cfg:backend,cfg,arm='camera_proj1',fold_spatial=True,
+        preflight={'operator_exact':True,'fold_spatial':True},state=state,synchronize=lambda:None,
+        expected_frontend_type=FakeFrontend,execution='diagnostic_eager'):
+        assert backend.frontend.pipe._camera_proj1_fold_spatial is True
+    assert state['execution']=='diagnostic_eager' and state['cleanup']['passed']
+    assert 'merger_forward' not in backend.frontend.pipe.__dict__
+
+
 def test_failed_projection_precondition_never_constructs_full_backend():
     module=ablation();events=[]
     def forbidden(cfg): events.append('load');raise AssertionError('must not load')

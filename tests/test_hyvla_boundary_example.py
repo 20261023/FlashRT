@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -101,7 +102,8 @@ def test_cli_help_and_unallocated_guard_without_creating_outputs(tmp_path):
 
 def admission_inputs():
     import torch
-    native = {'prepared.state': torch.zeros(1, 4), 'prepared.tokens': torch.tensor([[1, 5, 8]]),
+    native = {'prepared.images':torch.zeros(3,2,3,2,2),
+              'prepared.state': torch.zeros(1, 4), 'prepared.tokens': torch.tensor([[1, 5, 8]]),
               'prepared.token_mask': torch.tensor([[True, True, False]]),
               'prefix.pad_mask': torch.tensor([[True, True, False]]),
               'prefix.modality_mask': torch.tensor([[True, False, True]])}
@@ -115,7 +117,7 @@ def admission_inputs():
     return reference, native, data, report
 
 
-@pytest.mark.parametrize('bad', ['actions', 'noise', 'prepared.state', 'prepared.tokens',
+@pytest.mark.parametrize('bad', ['actions', 'noise', 'prepared.images', 'prepared.state', 'prepared.tokens',
                                 'prepared.token_mask', 'prefix.pad_mask', 'prefix.modality_mask', 'invariance'])
 def test_mismatched_reference_never_calls_frozen_evaluator(diag, bad):
     import torch
@@ -138,6 +140,74 @@ def test_admission_allows_the_prefix_numeric_differences_being_investigated(diag
     reference['prefix.k'], native['prefix.k'] = torch.zeros(2), torch.ones(2)
     result = diag.admitted_frozen_evaluation(reference, native, data, report, 'baseline', lambda: 'evaluated')
     assert result == 'evaluated'
+
+
+def test_reference_input_dtype_changes_cannot_be_hidden_by_float_array_conversion(diag):
+    reference,native,data,report=admission_inputs()
+    reference['prepared.tokens']=reference['prepared.tokens'].double()
+    called=[]
+    with pytest.raises(ValueError,match='dtype|input'):
+        diag.admitted_frozen_evaluation(reference,native,data,report,'baseline',lambda:called.append(True))
+    assert called==[]
+
+
+def test_folded_cli_requires_historical_source_and_prior_identity_before_loading(diag):
+    args=SimpleNamespace(engine='native',folded_proj1=True,variants=None,preflight_report=Path('/proof'),
+        source_revision='0'*40,prior_job='309681',reference_job='308690',reference=Path('/official'),prior=Path('/prior'))
+    assert diag.validate_trace_options(args)==('baseline','state')
+    args.prior_job=None
+    with pytest.raises(ValueError,match='prior|identity'):diag.validate_trace_options(args)
+    args.prior_job='309681';args.engine='official'
+    with pytest.raises(ValueError,match='native|folded'):diag.validate_trace_options(args)
+
+
+def folded_publication(tmp_path):
+    import torch
+    folder=tmp_path/'state';folder.mkdir()
+    return {'folder':folder,'tensors':{'actions':torch.zeros(1,2,1)},
+        'frozen':{'velocity':torch.ones(1,2,1)},
+        'report':{'variant':'state','diagnostic_cleanup':{'passed':True},
+                  'reference_boundaries':{},'frozen_velocity_comparisons':[]}}
+
+
+def test_frozen_write_failure_never_publishes_completed_result_or_success_print(diag,tmp_path,monkeypatch,capsys):
+    import safetensors.torch
+    item=folded_publication(tmp_path)
+    real_save=safetensors.torch.save_file
+    def fail(tensors,path,*args,**kwargs):
+        if Path(path).name=='frozen_velocities.safetensors':raise OSError('injected frozen write failure')
+        return real_save(tensors,path,*args,**kwargs)
+    monkeypatch.setattr(safetensors.torch,'save_file',fail)
+    with pytest.raises(OSError,match='frozen write'):
+        diag.publish_folded_trace(item)
+    assert not (item['folder']/'result.json').exists() and capsys.readouterr().out==''
+
+
+def test_folded_raw_artifacts_precede_atomic_completion_marker(diag,tmp_path,monkeypatch,capsys):
+    import json
+    import safetensors.torch
+    item=folded_publication(tmp_path);events=[]
+    real_save=safetensors.torch.save_file;real_replace=Path.replace
+    def save(tensors,path,*args,**kwargs):
+        assert not (item['folder']/'result.json').exists()
+        real_save(tensors,path,*args,**kwargs);events.append(Path(path).name)
+    def replace(path,target):
+        assert (item['folder']/'frozen_velocities.safetensors').is_file()
+        assert (item['folder']/'trace.safetensors').is_file()
+        events.append(Path(target).name);return real_replace(path,target)
+    monkeypatch.setattr(safetensors.torch,'save_file',save);monkeypatch.setattr(Path,'replace',replace)
+    diag.publish_folded_trace(item)
+    assert events==['frozen_velocities.safetensors','trace.safetensors','result.json']
+    assert json.loads((item['folder']/'result.json').read_text())['artifact_complete'] is True
+    assert 'cleanup_passed' in capsys.readouterr().out
+
+
+def test_atomic_json_failure_has_no_success_marker_or_print(diag,tmp_path,monkeypatch,capsys):
+    item=folded_publication(tmp_path)
+    def fail(*args,**kwargs):raise OSError('injected publication failure')
+    monkeypatch.setattr(Path,'replace',fail)
+    with pytest.raises(OSError,match='publication failure'):diag.publish_folded_trace(item)
+    assert not (item['folder']/'result.json').exists() and capsys.readouterr().out==''
 
 
 def test_live_cache_and_expanded_time_strides_are_not_canonical_copy_strides(diag):
