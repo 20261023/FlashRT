@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ast
 import copy
+from contextlib import contextmanager
 import importlib.util
 import json
 import os
@@ -239,6 +240,127 @@ def publish(folder,tensors,report):
     temporary.replace(folder/'result.json')
 
 
+def suffix_keys():
+    return {name:'model.'+field for name,field in (
+        ('_state_w','state_proj.weight'),('_state_b','state_proj.bias'),('_ain_w','action_in_proj.weight'),('_ain_b','action_in_proj.bias'),
+        ('_atmlp_in_w','action_time_mlp_in.weight'),('_atmlp_in_b','action_time_mlp_in.bias'),
+        ('_atmlp_out_w','action_time_mlp_out.weight'),('_atmlp_out_b','action_time_mlp_out.bias'))}
+
+
+def head_keys():
+    return ('model.dual_tower.expert.model.norm.weight','model.action_out_proj.weight','model.action_out_proj.bias')
+
+
+def all_selected_keys(num_layers=32):
+    return [*suffix_keys().values(),*(key for i in range(num_layers) for key in layer_keys(i).values()),*head_keys()]
+
+
+@contextmanager
+def attention_order_scope(owner,perm,*,suffix_rows,order,device,state,synchronize=None):
+    import torch
+    if order not in ('sorted','original'):raise ValueError('Unknown attention order')
+    adapter=_sibling('suffix_key_order');device=torch.device(device)
+    columns=adapter.inverse_columns(perm,suffix_rows=suffix_rows,device=device)
+    original=owner._attn;state.update(attention_calls=0,query_layouts=[],cleanup={'passed':False})
+    synchronize=synchronize or (lambda:torch.cuda.synchronize(device) if device.type=='cuda' else None)
+    def call(q,k,v,mask):
+        layout={'shape':list(q.shape),'live_stride':list(q.stride()),'storage_offset':q.storage_offset(),'dtype':str(q.dtype)}
+        if layout not in state['query_layouts']:state['query_layouts'].append(layout)
+        state['attention_calls']+=1
+        if order=='sorted':return original(q,k,v,mask)
+        return adapter.attention_in_original_order(original,q,k,v,mask,columns=columns)
+    primary=None
+    try:
+        owner._attn=call
+        yield state
+    except BaseException as error:
+        primary=error;raise
+    finally:
+        errors=[]
+        try:synchronize()
+        except BaseException as error:errors.append(f'sync failed: {type(error).__name__}: {error}')
+        owner._attn=original
+        state['cleanup']={'passed':not errors,'errors':errors}
+        if errors:
+            state['_failed_owners']=(columns,owner,original)
+            if primary is not None:primary.add_note('; '.join(errors))
+            else:raise RuntimeError('; '.join(errors))
+
+
+def replay_core(owner,cases,load_weight,*,attention_order='sorted',num_layers=32,num_steps=10,device='cuda'):
+    """Only fixed-input arithmetic; admission and publication belong to callers."""
+    import torch
+    if not cases or any(type(n) is not int or n<1 for n in (num_layers,num_steps)):
+        raise ValueError('Replay core requires positive layers/steps and admitted cases')
+    common=_sibling('diagnose');suffix=_sibling('frozen_suffix');device=torch.device(device)
+    result={name:{**case,'outputs':{},'metrics':{},'propagated':{},'h0_exact':0,'order_contexts':[]} for name,case in cases.items()}
+    selected=[]
+    def load(key):
+        value=load_weight(key)
+        if value.dtype!=torch.bfloat16 or not torch.isfinite(value).all():raise ValueError('Selected checkpoint weight is not finite BF16')
+        selected.append(key);return value.to(device)
+    with torch.inference_mode(),torch.autocast(device_type=device.type,enabled=False):
+        sw=SimpleNamespace(**{name:load(key) for name,key in suffix_keys().items()})
+        for case in result.values():
+            gold,trace,prior=case['gold'],case['trace'],case['frozen']
+            for step in range(num_steps):
+                latent=prior[f'frozen_inputs.step{step}.latent'];embedding=prior[f'frozen_inputs.step{step}.time_embedding']
+                if latent.dtype!=gold[f'step{step}.latent_before'].dtype or not torch.equal(latent,gold[f'step{step}.latent_before']):
+                    raise ValueError('Frozen official latent differs from fresh recorded trajectory')
+                if embedding.dtype!=trace[f'step{step}.time_embedding'].dtype or not torch.equal(embedding,trace[f'step{step}.time_embedding']):
+                    raise ValueError('Frozen time embedding differs from admitted native schedule')
+                rebuilt=suffix.build_suffix(trace['prepared.state'].to(device),latent.to(device),embedding.to(device),sw)
+                admit_h0(rebuilt,gold[f'expert.step{step}.layer0.input'].to(device),trace['suffix.state_embedding'].to(device))
+                case['propagated'][step]=rebuilt['suffix'].clone();case['h0_exact']+=1
+            case['mask']=trace['suffix.mask_sorted'].to(device);case['cos']=trace['suffix.cos'].to(device);case['sin']=trace['suffix.sin'].to(device)
+        del sw
+        for layer in range(num_layers):
+            raw={name:load(key) for name,key in layer_keys(layer).items()}
+            weights,qk=fuse_layer_weights(raw);hidden=weights[0].shape[1];inter=raw['g'].shape[0]
+            shapes=((owner.q_dim+2*owner.kv_dim,hidden),(hidden,owner.q_dim),(2*inter,hidden),(hidden,inter),(hidden,),(hidden,))
+            if tuple(tuple(v.shape) for v in weights)!=shapes or any(q.shape!=(owner.head_dim,) for q in qk):
+                raise ValueError('Native Expert selected layer geometry differs from recorded contract')
+            for case in result.values():
+                gold=case['gold'];prefix=len(case['perm']);rows=gold[f'expert.step0.layer0.input'].shape[0]
+                cache=[]
+                for field,dtype in (('k',torch.float32),('v',torch.bfloat16)):
+                    source=gold['prefix.'+field][layer:layer+1]
+                    expanded=common.expand_official_kv(common._array(source),case['perm'],owner.n_heads,rows)[0]
+                    cache.append(torch.from_numpy(expanded).to(device=device,dtype=dtype))
+                context={}
+                with attention_order_scope(owner,case['perm'],suffix_rows=rows,order=attention_order,device=device,state=context):
+                    for step in range(num_steps):
+                        base=f'expert.step{step}.layer{layer}.'
+                        target_r=gold[base+'residual'][None]
+                        target_h=gold[f'expert.step{step}.layer{layer+1}.input'][None] if layer+1<num_layers else gold[f'expert.step{step}.final_input']
+                        inputs=layer_inputs(gold[base+'input'][None].to(device),case['propagated'][step])
+                        for mode,value in inputs.items():
+                            r,h=replay_block(owner,value,weights,qk,*cache,case['mask'],case['cos'],case['sin'],prefix_rows=prefix)
+                            if mode=='propagated':case['propagated'][step]=h
+                            for field,tensor,target in (('residual',r,target_r),('output',h,target_h)):
+                                key=f'{mode}.step{step}.layer{layer}.{field}'
+                                cpu=tensor.detach().cpu().contiguous().clone();case['outputs'][key]=cpu
+                                metric=common.difference(common._array(cpu),common._array(target));metric['unequal_elements']=int((cpu!=target).sum())
+                                case['metrics'][key]=metric
+                if context['attention_calls']!=2*num_steps:raise ValueError('Unexpected scoped attention call count')
+                case['order_contexts'].append({'layer':layer,**context})
+            del raw,weights,qk
+        head=[load(key) for key in head_keys()]
+        for case in result.values():
+            action_rows=case['propagated'][0].shape[1]-1
+            for step in range(num_steps):
+                velocity=final_velocity(owner,case['propagated'][step],*head,action_rows=action_rows)
+                cpu=velocity.detach().cpu().contiguous().clone();old=case['frozen'][f'official_kv_sorted.step{step}.velocity']
+                case['outputs'][f'propagated.step{step}.velocity']=cpu
+                case['metrics'][f'propagated.step{step}.velocity_vs_historical']=common.difference(common._array(cpu),common._array(old))
+                gold_head=final_velocity(owner,case['gold'][f'expert.step{step}.final_input'].to(device),*head,action_rows=action_rows)
+                gold_cpu=gold_head.detach().cpu().contiguous().clone();case['outputs'][f'gold_head.step{step}.velocity']=gold_cpu
+                case['metrics'][f'gold_head.step{step}.velocity_vs_recorded']=common.difference(common._array(gold_cpu),common._array(case['gold'][f'step{step}.velocity']))
+    outputs={name:{key:case[key] for key in ('outputs','metrics','h0_exact','order_contexts')} for name,case in result.items()}
+    for case in outputs.values():case['attention_calls']=sum(c['attention_calls'] for c in case['order_contexts'])
+    return {'cases':outputs,'selected_checkpoint_keys':selected,'attention_order':attention_order}
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
     parser.add_argument('--engine',choices=('official','native'),required=True)
@@ -312,73 +434,15 @@ def main(argv=None):
                 verify_replay_arrays(control_arrays,old_arrays)
                 cases[variant]['control_arrays']=control_arrays
     owner=load_native_owner(native_source,projection=args.projection)
-    suffix_keys={name:'model.'+field for name,field in (
-        ('_state_w','state_proj.weight'),('_state_b','state_proj.bias'),('_ain_w','action_in_proj.weight'),('_ain_b','action_in_proj.bias'),
-        ('_atmlp_in_w','action_time_mlp_in.weight'),('_atmlp_in_b','action_time_mlp_in.bias'),
-        ('_atmlp_out_w','action_time_mlp_out.weight'),('_atmlp_out_b','action_time_mlp_out.bias'))}
-    head_keys=('model.dual_tower.expert.model.norm.weight','model.action_out_proj.weight','model.action_out_proj.bias')
     args.output.mkdir(parents=True,exist_ok=False)
-    selected=[]
     with torch.inference_mode(),torch.autocast(device_type='cuda',enabled=False),safe_open(checkpoint['path'],framework='pt',device='cpu') as saved:
-        def load(key):
-            value=saved.get_tensor(key)
-            if value.dtype!=torch.bfloat16 or not torch.isfinite(value).all():raise ValueError('Selected checkpoint tensor is not finite BF16')
-            selected.append(key);return value.to('cuda')
-        sw=SimpleNamespace(**{name:load(key) for name,key in suffix_keys.items()})
-        for case in cases.values():
-            gold,trace,prior=case['gold'],case['trace'],case['frozen']
-            for step in range(10):
-                latent=prior[f'frozen_inputs.step{step}.latent'];embedding=prior[f'frozen_inputs.step{step}.time_embedding']
-                if latent.dtype!=gold[f'step{step}.latent_before'].dtype or not torch.equal(latent,gold[f'step{step}.latent_before']):
-                    raise ValueError('Frozen official latent differs from fresh recorded trajectory')
-                if embedding.dtype!=trace[f'step{step}.time_embedding'].dtype or not torch.equal(embedding,trace[f'step{step}.time_embedding']):
-                    raise ValueError('Frozen time embedding differs from admitted native schedule')
-                rebuilt=suffix.build_suffix(trace['prepared.state'].to('cuda'),latent.to('cuda'),embedding.to('cuda'),sw)
-                h0=gold[f'expert.step{step}.layer0.input'].to('cuda')
-                admit_h0(rebuilt,h0,trace['suffix.state_embedding'].to('cuda'))
-                case['propagated'][step]=rebuilt['suffix'].clone();case['h0_exact']+=1
-            case['mask']=trace['suffix.mask_sorted'].to('cuda');case['cos']=trace['suffix.cos'].to('cuda');case['sin']=trace['suffix.sin'].to('cuda')
-        del sw
-        for layer in range(32):
-            raw={name:load(key) for name,key in layer_keys(layer).items()}
-            weights,qk=fuse_layer_weights(raw)
-            shapes=((3072,1024),(1024,2048),(4096,1024),(1024,2048),(1024,),(1024,))
-            if tuple(tuple(v.shape) for v in weights)!=shapes or any(q.shape!=(128,) for q in qk):
-                raise ValueError('Native Expert selected layer geometry differs from recorded contract')
-            for case in cases.values():
-                gold=case['gold'];prefix=240
-                cache=[]
-                for field,dtype in (('k',torch.float32),('v',torch.bfloat16)):
-                    source=gold['prefix.'+field][layer:layer+1]
-                    expanded=common.expand_official_kv(common._array(source),case['perm'],16,41)[0]
-                    cache.append(torch.from_numpy(expanded).to(device='cuda',dtype=dtype))
-                for step in range(10):
-                    base=f'expert.step{step}.layer{layer}.'
-                    target_r=gold[base+'residual'][None]
-                    target_h=gold[f'expert.step{step}.layer{layer+1}.input'][None] if layer<31 else gold[f'expert.step{step}.final_input']
-                    inputs=layer_inputs(gold[base+'input'][None].to('cuda'),case['propagated'][step])
-                    for mode,hidden in inputs.items():
-                        r,h=replay_block(owner,hidden,weights,qk,*cache,case['mask'],case['cos'],case['sin'],prefix_rows=prefix)
-                        if mode=='propagated':case['propagated'][step]=h
-                        for field,value,target in (('residual',r,target_r),('output',h,target_h)):
-                            key=f'{mode}.step{step}.layer{layer}.{field}'
-                            cpu=value.detach().cpu().contiguous().clone();case['outputs'][key]=cpu
-                            metric=common.difference(common._array(cpu),common._array(target));metric['unequal_elements']=int((cpu!=target).sum())
-                            case['metrics'][key]=metric
-            del raw,weights,qk
-        head=[load(key) for key in head_keys]
+        replayed=replay_core(owner,cases,saved.get_tensor)
+        selected=replayed['selected_checkpoint_keys']
         all_passed=True
-        for variant,case in cases.items():
-            current,historical=[],[]
-            for step in range(10):
-                velocity=final_velocity(owner,case['propagated'][step],*head)
-                cpu=velocity.detach().cpu().contiguous().clone()
-                old=case['frozen'][f'official_kv_sorted.step{step}.velocity']
-                current.append(cpu);historical.append(old);case['outputs'][f'propagated.step{step}.velocity']=cpu
-                case['metrics'][f'propagated.step{step}.velocity_vs_historical']=common.difference(common._array(cpu),common._array(old))
-                gold_head=final_velocity(owner,case['gold'][f'expert.step{step}.final_input'].to('cuda'),*head)
-                gold_cpu=gold_head.detach().cpu().contiguous().clone();case['outputs'][f'gold_head.step{step}.velocity']=gold_cpu
-                case['metrics'][f'gold_head.step{step}.velocity_vs_recorded']=common.difference(common._array(gold_cpu),common._array(case['gold'][f'step{step}.velocity']))
+        for variant,computed in replayed['cases'].items():
+            case={**cases[variant],**computed}
+            current=[case['outputs'][f'propagated.step{step}.velocity'] for step in range(10)]
+            historical=[case['frozen'][f'official_kv_sorted.step{step}.velocity'] for step in range(10)]
             gate=baseline_gate(current,historical,engine=args.engine,required=False if args.projection=='separate' else None)
             layer_proof=None;effects=None
             if args.layer_baseline is not None and args.projection=='fused':
@@ -395,6 +459,7 @@ def main(argv=None):
                 'status':'diagnostic_complete' if passed else 'historical_baseline_reproduction_failed',
                 'engine':args.engine,'variant':variant,'job_id':os.environ['SLURM_JOB_ID'],'source_revision':args.source_revision,
                 'projection':args.projection,'historical_layer_baseline':layer_proof,
+                'attention_order':'sorted','attention_calls':case['attention_calls'],'attention_contexts':case['order_contexts'],
                 'projection_control':None if effects is None else {'job_id':os.environ['SLURM_JOB_ID'],
                     'source_revision':args.source_revision,'path':str((args.control_baseline/variant).resolve()),'fused1300exact':True},
                 'projection_effect_metrics':effects,
