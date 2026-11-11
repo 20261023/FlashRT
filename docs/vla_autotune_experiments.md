@@ -313,6 +313,37 @@ afterward; raw samples/NFE and the existing median objective stay explicit.
 This closes a finite controlled-proxy refinement, **not** a global optimum,
 held-out dataset result, robot-success claim or automatic policy-default change.
 
+Job313779 subsequently audited the prior choice with eight additional synthetic
+numeric requests, on the unchanged `round014/baef55ff` implementation. These were
+four new fixed noises, negative image brightness, normalized proprio, T5-context
+and mask perturbations, not representative robot or natural-language tasks. The
+three candidates (Euler13/14/16) were predeclared; no parameter refinement was
+performed after observing the results. Each point had8warmups/80total requests,
+ten per case, and the same L2<=.05/cos>=.999 limits in a new explicit scope:
+
+| Torch graph point | Median ms | P95 ms | Worst relativeL2 | Min cosine | New-scope result |
+|---|---:|---:|---:|---:|---|
+| Euler20 reference | 249.4247 | 250.8880 | 0 | ~1 | retain control |
+| Euler13 | 178.7498 | 180.1187 | .194629 | .980923 | reject |
+| Euler14 | 189.9475 | 191.0666 | .117659 | .993055 | reject |
+| Euler16 | 209.1321 | 209.9623 | .179380 | .983885 | reject |
+| Euler20 bookend | 249.9272 | 250.8169 | 0 | ~1 | pass |
+
+All three failures occurred on `context-minus0p0625`; the other seven cases
+passed. Directly perturbing prepared T5 vectors, including previously zero
+padding, is an off-distribution numerical stress test, not a new prompt sampled
+from a task dataset. It nevertheless falsifies a universal numerical-budget
+claim for Euler13 and shows that error need not decrease monotonically with
+step count. It does not establish failure on representative natural-language
+tasks. The earlier four-case result remains true only in its historical scope.
+
+Independent raw-array/candidate-instance-job/coverage/NFE/graph checks preceded
+strict ingestion:2validated/3rejected, reference bookend drift+.20146%. No
+accelerated candidate passed this larger scope; the controller retained Euler20.
+No tolerance change, automatic default promotion or further tuning on these
+eight cases followed. The graph-preservation qualification is separate and is
+not contradicted by a sampler-approximation quality failure.
+
 ## Hy: keep mechanical checks and official acceptance separate
 
 Semantic BF16 execution, fixed-noise replay and Euler2/PF2/graph-eager mechanics
