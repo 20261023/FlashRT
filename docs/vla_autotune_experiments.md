@@ -861,6 +861,39 @@ The next investigation checks the actual runtime versions and installed/source
 reduction implementations before choosing any compatible mean prototype; no
 precision/tolerance/runtime/default or historical6/7FAILED change follows here.
 
+Version-matched source inspection after315395 used the recorded Torch Git IDs:
+old `e2d141dbde55c2a4370fac5165b0561b6af4798b`, native
+`70d99e998b4955e0049d13a98d77ae1b14db1f45`. The actual installed `Reduce.cuh`
+headers also exhibit the same relevant changes; this is source evidence, not a
+new GPU result or proof of a particular compiled branch:
+
+- CUDA warp shuffle reduction changes ascending offsets1,2,4,8,16 to descending
+  16,8,4,2,1 (ROCM/FBCODE exceptions remain). See
+  [old block_x_reduce](https://github.com/pytorch/pytorch/blob/e2d141dbde55c2a4370fac5165b0561b6af4798b/aten/src/ATen/native/cuda/Reduce.cuh#L630-L661)
+  and [new block_x_reduce](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/cuda/Reduce.cuh#L634-L671).
+- Input vectorization changes from `dim0>128` to `dim0>=128`; at FP32 default
+  `vt0==input_vec_size==4`, the boundary change matters for128-wide rows. See
+  [old gate](https://github.com/pytorch/pytorch/blob/e2d141dbde55c2a4370fac5165b0561b6af4798b/aten/src/ATen/native/cuda/Reduce.cuh#L1059-L1072)
+  and [new gate](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/cuda/Reduce.cuh#L1097-L1108).
+- Both versions' CUDA FP32 `mean_kernel_impl<float>` use FP32 accumulation and
+  `MeanOps` addition followed by one final `a*factor`. The new8-element input
+  vector specialization is for16-bit scalar inputs, NOT these FP32 squared
+  inputs. There is no observed switch to BF16 accumulation or per-element mean
+  scaling: [old dispatch](https://github.com/pytorch/pytorch/blob/e2d141dbde55c2a4370fac5165b0561b6af4798b/aten/src/ATen/native/cuda/ReduceMomentKernel.cu#L39-L66),
+  [new dispatch](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/cuda/ReduceMomentKernel.cu#L39-L71),
+  [new MeanOps](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/SharedReduceOps.h#L164-L191).
+
+These changes supply concrete FP32 addition-tree mechanisms consistent with the
+local findings, not measured per-change ULP attribution. The x/y block reduction
+order also changed, but source-based shape predictions do not enable y reduction
+for these probes; do not attribute the measured error to that branch without
+dispatch evidence. Mean directly consumes the allocated square tensor, so the
+original Q/K stride cannot substitute for the square tensor's actual layout.
+The next bounded observation records that layout/alignment and isolated mean's
+full kernel symbols/grid/block in both runtimes. Equal launch names/dimensions
+would still not prove equal runtime `ReduceConfig` vectorization or shuffle paths.
+No compatibility mean, library-bug assertion or policy/default change is made.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
