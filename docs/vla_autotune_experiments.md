@@ -762,6 +762,38 @@ compatibility/localization finding, not automatically a library bug. No dtype,
 primitive, runtime-default or tolerance change was promoted, and historical6/7
 policyFAILED remains unchanged.
 
+Job315256 (`round026/b522e8fd`) measured four predeclared points: baseline/state
+at(step0,layer1) and(step2,layer0). The selected actual block residual/output
+oracles exactly reproduced315024in both runtimes. An unchanged observer captured
+four real RMS calls per block; standalone eight-stage reconstruction reproduced
+every same-runtime actual norm endpoint. The current old reference's complete
+184role set, dtype/shape/finite/live layouts and16observed endpoints were checked
+before native owner creation, not accepted from tensor count or header flags.
+
+Independent audit read184old/328native tensors, all8block executions,32own norm
+endpoints,16fixed-old native endpoints and128cross-runtime stage contrasts.
+For **all16identical old inputs**, FP32 conversion and squared values were EXACT;
+the first differing stage was `variance = square.mean(-1, keepdim=True)`.
+Variance differences propagated into epsilon/rsqrt/scaling; this observation
+does not establish whether later primitives would also differ with identical
+intermediate inputs, or what fraction of the complete policy error it explains.
+
+FP32 Q/K norm outputs differed in all8fixed-input calls. Seven of the8BF16norm
+endpoints still rounded to the same values, but baseline(step2,layer0) postnorm
+did not: input/residual was EXACT,17variance entries differed(maxabs1.5258789e-5),
+five cast-back values andfour weighted BF16output values differed(maxabs.0078125).
+This directly anchors a BF16 normalization change upstream of the measured FFN
+output difference, rather than blaming GU fusion on a changed input.
+
+One own-input postnorm already differed due to its upstream residual; the fixed
+old-input arm removed that confound. All128contrast metrics were recomputed;
+82stages differed and46were exact. The collector's outcome was calculated, not
+hardcoded. No new RMS implementation, dtype, reduction flag, runtime default or
+tolerance was installed. The next causal check can hold the old variance (then
+other intermediates separately) fixed and test current downstream arithmetic;
+that is still standalone localization, not a production primitive repair or a
+new seven-fixture qualification. Historical6/7FAILED remains unchanged.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
