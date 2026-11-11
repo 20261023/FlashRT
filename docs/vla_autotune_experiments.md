@@ -549,6 +549,29 @@ performed. The prior6/7 qualification failure remains unchanged. Final raw files
 preceded an atomic completion marker after cleanup; both cases were independently
 audited from saved tensors rather than accepted from scheduler exit alone.
 
+The step0-only frozen suffix/Expert0 probe then completed as313996 on
+`round019/c7e21b1b`, reading13selected tensors and constructing no policy.
+Baseline/state time/RoPE, the recorded suffix entry, and flat/batched input
+RMS admission were exact in both2.7.1and2.11. State/action/time-MLP embeddings,
+normalized suffix and both raw projection arms were exact across runtimes.
+
+Separate versus concatenated QKV differed at9BF16values in each case: Q0,
+K5(maxabs.015625),V4(maxabs.00390625). These are the same9action-token locations
+in baseline/state; the state-token projection did not produce these differences.
+Within each runtime, both projection arms yielded identical normalized queries.
+Torch2.7 reproduced the actual recorded query-norm boundary exactly, while2.11
+had15900/15910FP32values different(maxabs1.43051147e-6,relativeL2about4.6e-8).
+This tiny post-projection/runtime difference was not blamed on QKV fusion, nor
+assumed to explain the full policy residual.
+
+Thus step0 suffix generation and the Q side of the projection-fusion hypothesis
+were narrowed by real recorded-boundary evidence. K/V projection differences,
+attention layout/reduction order, later layers and other steps remain separate
+questions. No new precision patch, attention backend or full-policy gate was
+promoted from this local observation. The next diagnostic records actual
+original eager attention inputs/output/probabilities before controlled replay,
+rather than substituting another unverified reconstruction for its oracle.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
