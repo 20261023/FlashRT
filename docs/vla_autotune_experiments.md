@@ -912,6 +912,37 @@ kernel-name filter or qualification threshold. New frozen source/new round is
 required for a complete bounded observation; the partial trace alone supplies no
 independent tensor equality proof or internalReduceConfig branch conclusion.
 
+Job315622 (`round030/071ea364`) completed0:0/errors0 after the CPU-category-only
+schema correction. All37files/12615540bytes were retrieved; an independent audit
+checked all128raw arrays and32full Chrome windows. Every old/native profiled and
+unprofiled mean remained EXACTits own315256variance; FP32input andsquare remained
+EXACTold. CPUlabels, GPUprojections andALLkernel/launch records were retained.
+
+Both runtimes actually launched the same full FP32 mean symbol, abbreviated
+`reduce_kernel<512,1,ReduceOp<float,MeanOps<float,float,float,float>,...,4,4>>`,
+with block[32,16,1]. Direct live square metadata and launches were:
+
+| Role / direct square shape | Live stride | Grid | Windows per runtime |
+|---|---|---|---:|
+| input/postnorm [1,41,1024] | [41984,1024,1] | [3,1,1] | 8 |
+| Q [1,16,41,128] | [2048,128,2048,1] | [41,1,1] | 4 |
+| K [1,4,41,128] | [512,128,512,1] | [11,1,1] | 4 |
+
+All32square inputs were FP32, storage_offset0, pointermod16=0; the layouts and
+kernel symbols/launch dimensions matched across runtimes. This confirms the
+observed direct-input/layout/launch parts of the conditional source prediction,
+not equality of internal runtime vectorization or shuffle branches. It does not
+undo the different mean arrays already measured; same symbols/grid/block can
+contain different source-compiled instruction trees and runtimeconfig values.
+No durations are used as candidate-latency evidence, and no raw trace was made
+public. Historical315596remains FAILED with its originalsource/partialtrace.
+
+The next bounded candidate may reproduce the source's explicit old FP32 addition
+tree from actual inputs, then test all16means before considering any block or
+policy use. It must not read stored old variance as its answer, assume generic
+shapes/layouts safe, or promote default precision/runtime/tolerance changes.
+Historical6/7FAILED and full-policy/native-vision/free-running/robot limits stay.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
