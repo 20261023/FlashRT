@@ -894,6 +894,24 @@ full kernel symbols/grid/block in both runtimes. Equal launch names/dimensions
 would still not prove equal runtime `ReduceConfig` vectorization or shuffle paths.
 No compatibility mean, library-bug assertion or policy/default change is made.
 
+Job315596 (`round029/a9e3acfa`) FAILED1:0/errors0 at the FIRST old-runtime trace
+parser, not in mean arithmetic or CUDA launch. Its retained partial Chrome trace
+contains one CPU `user_annotation` and one same-named `gpu_user_annotation`
+projection. The parser incorrectly counted both as two labels; it therefore
+rejected an otherwise present CPUmean/CUDAkernel observation. No final JSON/raw
+array file was published and the native process did not run. This is NOT a
+32trace/128array qualified result, and the failed job will not be resubmitted.
+
+The actual partial trace was replayed on CPU: counting the unique CPU category
+instead of combining CPU/GPU ranges yields one CPUmean and one full mean kernel,
+grid[3,1,1]/block[32,16,1]. A reduced actual-schema regression and the independent
+auditor's CPU-range predicate were observed RED then GREEN; two real CPU ranges
+remain an error and GPU-only annotation cannot satisfy CPU-label admission.
+The correction changes trace interpretation only, not a reduction, tolerance,
+kernel-name filter or qualification threshold. New frozen source/new round is
+required for a complete bounded observation; the partial trace alone supplies no
+independent tensor equality proof or internalReduceConfig branch conclusion.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
