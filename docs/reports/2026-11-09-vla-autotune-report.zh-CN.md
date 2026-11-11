@@ -331,3 +331,20 @@ Job `313766` 精确复现 HWD candidate 的 baseline/state 动作、逐步 raw v
 这定位了下游仍有残差，而不是确定某个 Expert 算子就是根因。它没有执行新的七 fixture gate，也没有将历史6/7失败改成成功。继续工作将先冻结核查 suffix／首层 query 边界，不盲改 attention、cast 或容差。
 
 后续详细证据见[更新后的实测记录](https://github.com/20261023/FlashRT/blob/1c1a2fa9/docs/vla_autotune_experiments.md)。诊断实现 `2959bd87` 的所选回归及独立导出为651 passed、41 subtests passed、2个明确 module skip；裸全仓仍为20个收集错误／25 skipped，不是全仓绿色。
+
+### 11.3 Hy：存在局部顺序效应，但全 Expert 恢复原序不是充分修复
+
+- `313996`：step0 的 suffix、time／RoPE 和输入 RMSNorm 均 EXACT。分开／融合 QKV 仅9个 BF16 值不同（Q 0、K 5、V 4），两臂在同一 runtime 的 query-norm 相同；旧 runtime 精确复现记录，新 runtime 有 `1.43e-6` 量级 FP32 微差。没有据此改 cast 或 query 投影。
+- `314150`：真实官方 attention 输出及 probabilities 能精确重放；原生匹配布局和连续 KV 原顺序均 EXACT。只同步改变 prefix K/V/mask 顺序后，baseline 每步2–20个、state 每步3–71个 BF16 context 值不同。这证明局部顺序效应，不等于量化最终动作误差份额。
+- `314305`：两项新 EXACT 前置门、完整 native trace、每例全部50个旧 sorted frozen tensors、mask eligibility、自回放和 cleanup 均经原始数组复核。全32层 Expert 恢复原序后，固定官方轨迹上的残差没有一致改善：
+
+| case／prefix KV | sorted 顺序 raw-velocity relative L2 | 恢复原序 |
+|---|---:|---:|
+| baseline／native | .00422149–.00696753 | .00406991–.00700935 |
+| baseline／official | .00329106–.00537082 | .00340313–.00548461 |
+| state／native | .00399431–.00657527 | .00406906–.00669422 |
+| state／official | .00313123–.00510265 | .00325715–.00515597 |
+
+因此不能把局部 attention 顺序差异提升为已经找到主因或已经修复。adapter 本身不改变 Q 参数，但前层变化会传递到后层 hidden/Q；这不是32层都固定 Q 的实验。每例640次 eager attention 调用也不代表640 NFE 或640个 GPU kernel。
+
+本项没有产生新的 free-running 原序策略动作、七 fixture gate 或机器人成功率结果；Hy 仍为历史6/7失败。详细证据固定在[后续实测记录 a6543218](https://github.com/20261023/FlashRT/blob/a6543218/docs/vla_autotune_experiments.md)。后续转向记录实际 MLP 边界，而不是直接更改生产顺序或精度。
