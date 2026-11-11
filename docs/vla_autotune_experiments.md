@@ -489,6 +489,35 @@ separate known source; the next useful work is boundary localization of the stat
 residual, not another blind cast/backend/tolerance change. This is still recorded
 numerical testing, not representative robot task-success qualification.
 
+Job313766 (`round018/2959bd87`) continued localization with an explicitly eager
+folded candidate, not a new policy gate. A fresh exact projection precondition
+passed. Baseline/state actions exactly reproduced the corresponding309681
+candidate arrays; each ten-step native raw trajectory replayed exactly, and
+recorded increments/latents also matched the characterized BF16-scalar/BF16-
+velocity then FP32-add recipe. Actual time embeddings matched the embeddings
+recomputed at the precise historical official schedule. Inputs, masks and the
+state embedding were exact; prefix remained invariant between these two cases.
+
+Teacher-forced comparisons held each official latent/time fixed and changed only
+native versus sorted/expanded official prefix KV, with independent scratch and
+runtime prefix/read-only guards. Independent raw checks found:
+
+| Case | Native-KV raw-velocity relativeL2 range | Official-KV relativeL2 range |
+|---|---:|---:|
+| baseline | .00422149–.00696753 | .00329106–.00537082 |
+| state | .00399431–.00657527 | .00313123–.00510265 |
+
+Every official-KV velocity arm was also bitwise equal to its historical308690
+native injection counterpart. Thus fixing this projector did not eliminate the
+downstream residual at identical external KV. Current prefix embedding/K/V
+relativeL2 values were .01257736/.00915026/.01402888; the state embedding was
+exact. This is evidence against attributing all remaining error to vision/KV or
+the initial state projection, not proof of a particular Expert-layer cause.
+No free-running official-KV policy rollout or new seven-fixture acceptance was
+performed. The prior6/7 qualification failure remains unchanged. Final raw files
+preceded an atomic completion marker after cleanup; both cases were independently
+audited from saved tensors rather than accepted from scheduler exit alone.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
