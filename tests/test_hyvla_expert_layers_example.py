@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 torch=pytest.importorskip('torch')
@@ -170,3 +171,93 @@ def test_help_and_allocation_guard_before_inputs_or_output(tmp_path):
         '--baseline','/missing','--baseline-job','313766','--official-attention-source','/missing',
         '--source-revision','a'*40,'--output',str(out)],env=env,text=True,capture_output=True)
     assert result.returncode!=0 and 'allocated GPU srun' in result.stderr and not out.exists()
+
+
+def test_split_qkv_literal_values_and_projection_order(layers):
+    x=torch.tensor([[1.,2.]],dtype=torch.bfloat16)
+    w=torch.tensor([[1.,0.],[0.,1.],[1.,1.],[1.,-1.]],dtype=torch.bfloat16)
+    actual=layers.separate_qkv(x,w,2,1)
+    torch.testing.assert_close(actual,torch.tensor([[1.,2.,3.,-1.]],dtype=torch.bfloat16),atol=0,rtol=0)
+
+
+@pytest.mark.parametrize('projection',['fused','separate'])
+def test_actual_block_projection_geometry_changes_only_qkv_gemms(layers,projection):
+    owner=layers.load_native_owner(ROOT/'flash_rt/models/hyvla/pipeline_thor.py',n_heads=2,n_kv=1,head_dim=2,projection=projection)
+    x,k,v,mask,cos,sin=block_args()
+    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU],record_shapes=True,acc_events=True) as p:
+        r,out=layers.replay_block(owner,x,weights(),(torch.ones(2,dtype=torch.bfloat16),)*2,k,v,mask,cos,sin,prefix_rows=1)
+    shapes=[event.input_shapes[1] for event in p.events() if event.name=='aten::mm']
+    assert shapes==([[2,8],[4,2],[2,4],[2,2]] if projection=='fused' else [[2,4],[2,2],[2,2],[4,2],[2,4],[2,2]])
+    torch.testing.assert_close(r,x,atol=0,rtol=0)
+    torch.testing.assert_close(out,torch.full((1,2,2),1.734375,dtype=torch.bfloat16),atol=0,rtol=0)
+
+
+def test_split_rejects_source_expression_drift_instead_of_silent_fallback(layers,tmp_path):
+    original=(ROOT/'flash_rt/models/hyvla/pipeline_thor.py').read_text()
+    changed=original.replace('hs_n[0] @ w_vis[0].t()','hs_n[0] @ w_vis[0].transpose(0,1)',1)
+    assert changed!=original
+    path=tmp_path/'drift.py';path.write_text(changed)
+    with pytest.raises(ValueError,match='source|QKV|expression'):
+        layers.load_native_owner(path,projection='separate')
+
+
+def test_raw_replay_guard_rejects_changed_key_dtype_value_and_nonfinite(layers):
+    baseline={'x':torch.ones(2,dtype=torch.bfloat16)}
+    assert layers.verify_replay_arrays({'x':baseline['x'].clone()},baseline)['tensors']==1
+    for changed in ({'wrong':baseline['x']},{'x':baseline['x'].float()},{'x':baseline['x']+1}):
+        with pytest.raises(ValueError,match='replay|tensor|control'):layers.verify_replay_arrays(changed,baseline)
+    inf={'x':torch.full((2,),float('inf'),dtype=torch.bfloat16)}
+    with pytest.raises(ValueError,match='replay|finite|control'):layers.verify_replay_arrays(inf,inf)
+
+
+def replay_options():
+    return SimpleNamespace(projection='fused',reference_job='314485',reference_source_revision='b'*40,
+        layer_baseline=Path('/layers'),layer_baseline_job='314485',layer_baseline_source_revision='b'*40,
+        control_baseline=None)
+
+
+def test_historical_projection_options_require_all_explicit_identities_and_split_control(layers):
+    args=replay_options();layers.validate_replay_options(args)
+    args.projection='separate'
+    with pytest.raises(ValueError,match='control|split|projection'):layers.validate_replay_options(args)
+    args.control_baseline=Path('/current-fused');layers.validate_replay_options(args)
+    args.reference_source_revision=None
+    with pytest.raises(ValueError,match='reference|identity|historical'):layers.validate_replay_options(args)
+
+
+def test_current_fused_report_must_be_same_case_runtime_and_array_admitted(layers):
+    cp={'path':'/checkpoint/model.safetensors','bytes':1,'mtime_ns':2};runtime={'torch':'2.11'}
+    r={'kind':'recorded_Expert_layer_local_and_propagated_replay_not_policy_gate','engine':'native','variant':'state',
+        'job_id':'9','source_revision':'a'*40,'status':'diagnostic_complete','checkpoint':cp,'runtime':runtime,
+        'projection':'fused','weights_loaded':363,'selected_checkpoint_keys':[str(i) for i in range(363)],
+        'model_constructed':False,'gold_h0_exact_steps':10,
+        'historical_native_baseline':{'required':True,'passed':True,'exact_steps':10},
+        'historical_layer_baseline':{'exact':True,'tensors':1300}}
+    call=lambda:layers.admit_layer_replay_report(r,job_id='9',source_revision='a'*40,engine='native',variant='state',
+        checkpoint=cp,runtime=runtime,require_layer_proof=True)
+    assert call() is None
+    r['historical_layer_baseline']['exact']=False
+    with pytest.raises(ValueError,match='replay|control'):call()
+    r['historical_layer_baseline']['exact']=True;r['projection']='separate'
+    with pytest.raises(ValueError,match='projection|replay|control'):call()
+    r['projection']='fused';r['historical_layer_baseline']=None
+    with pytest.raises(ValueError,match='replay|control'):call()
+
+
+def test_changed_projection_does_not_weaken_required_native_fused_gate(layers):
+    actual=[torch.ones(1,2,1,dtype=torch.bfloat16)];old=[torch.zeros(1,2,1,dtype=torch.bfloat16)]
+    assert layers.baseline_gate(actual,old,engine='native')['passed'] is False
+    changed=layers.baseline_gate(actual,old,engine='native',required=False)
+    assert changed['required'] is False and changed['compared_exact'] is False
+
+
+def test_projection_effects_guard_fixed_gold_head_negative_control(layers):
+    common=layers._sibling('diagnose')
+    control={'propagated.step0.velocity':torch.zeros(1,dtype=torch.bfloat16),
+             'gold_head.step0.velocity':torch.ones(1,dtype=torch.bfloat16)}
+    changed={name:value.clone() for name,value in control.items()}
+    changed['propagated.step0.velocity'].add_(1)
+    metrics=layers.projection_effects(changed,control,common=common)
+    assert metrics['propagated.step0.velocity']['unequal_elements']==1 and metrics['gold_head.step0.velocity']['exact']
+    changed['gold_head.step0.velocity'].add_(1)
+    with pytest.raises(ValueError,match='Gold|head|negative'):layers.projection_effects(changed,control,common=common)

@@ -499,3 +499,28 @@ replay. Pass the usual `--engine`, `--reference`, `--checkpoint`,
 This fixes external official trajectories and Gold KV only: no native-vision KV
 claim, sampler free-run, new seven-fixture gate, robot-success result or changed
 production default follows. The historical6/7 failure remains binding.
+
+### Admitted Expert QKV projection geometry
+
+The layer consumer defaults to unchanged `--projection fused`. An explicit
+`--projection separate` changes only the unquantized Expert QKV matmul to three
+same-weight row-sliced Q/K/V GEMMs followed by concatenation. The selected source
+expression must match exactly; source drift rejects, with no fallback. GU,
+attention order, RMS, casts, layer-input conditions and output head stay fixed.
+
+For historical layer inputs, pass explicit `--reference-job` and
+`--reference-source-revision` plus the paired `--layer-baseline`,
+`--layer-baseline-job` and `--layer-baseline-source-revision`. The unchanged
+fused run must reproduce all1300same-runtime historical tensors exactly, in
+addition to the existing native2.11 velocity and all-step H0 gates. Both old/new
+fused processes precede any split process.
+
+The split process also requires `--control-baseline` from the **current job**
+and source. Its header/source/runtime/case and actual1300fused tensors are
+rechecked before alternate-body compilation. Split-versus-fused effects use the
+same raw keys; fixed-Gold output-head values must remain exact as a negative
+control. Split velocities are intended interventions, so they are explicitly
+not required to equal the unmodified historical velocity. This non-required
+comparison is not a quality pass or a weakened gate for the fused reference.
+All raw files precede atomic final JSON. No full model or production option is
+introduced; original6/7 qualification is unchanged.

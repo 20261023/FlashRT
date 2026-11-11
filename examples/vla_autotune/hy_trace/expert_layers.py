@@ -22,7 +22,15 @@ def _file_record(path):
     return {'path':str(path),'bytes':stat.st_size,'mtime_ns':stat.st_mtime_ns}
 
 
-def load_native_owner(path,*,n_heads=16,n_kv=4,head_dim=128):
+def separate_qkv(x,weight,q_dim,kv_dim):
+    import torch
+    if (x.ndim!=2 or weight.ndim!=2 or weight.shape!=(q_dim+2*kv_dim,x.shape[1])
+            or x.dtype!=torch.bfloat16 or weight.dtype!=torch.bfloat16):
+        raise ValueError('Separate Expert QKV requires admitted 2D BF16 geometry')
+    return torch.cat((x@weight[:q_dim].t(),x@weight[q_dim:q_dim+kv_dim].t(),x@weight[q_dim+kv_dim:].t()),dim=-1)
+
+
+def load_native_owner(path,*,n_heads=16,n_kv=4,head_dim=128,projection='fused'):
     import torch
     tree=ast.parse(Path(path).read_text())
     cls=[n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='HyVLAThorBF16Pipeline']
@@ -31,10 +39,24 @@ def load_native_owner(path,*,n_heads=16,n_kv=4,head_dim=128):
     methods=[n for c in cls for n in c.body if isinstance(n,ast.FunctionDef) and n.name in names]
     if len(cls)!=1 or len(rotate)!=1 or len(methods)!=3 or any(n.decorator_list for n in (*rotate,*methods)):
         raise ValueError('Native layer source must contain four undecorated selected definitions')
+    if projection not in ('fused','separate'):raise ValueError('Unsupported Expert projection control')
+    if projection=='separate':
+        block=next(n for n in methods if n.name=='_block')
+        branch=ast.dump(ast.parse('w_text is None',mode='eval').body)
+        targets=[a for node in block.body if isinstance(node,ast.If) and ast.dump(node.test)==branch
+                 for a in node.body if isinstance(a,ast.Assign) and len(a.targets)==1
+                 and isinstance(a.targets[0],ast.Name) and a.targets[0].id=='qkv']
+        expression=ast.dump(ast.parse('hs_n[0] @ w_vis[0].t()',mode='eval').body)
+        if (len(targets)!=1 or not isinstance(targets[0].value,ast.IfExp)
+                or ast.dump(targets[0].value.test)!=ast.dump(ast.Name(id='_fp8',ctx=ast.Load()))
+                or ast.dump(targets[0].value.orelse)!=expression):
+            raise ValueError('Native Expert QKV source expression drifted; no projection fallback')
+        targets[0].value.orelse=ast.parse('_separate_qkv(hs_n[0],w_vis[0],self.q_dim,self.kv_dim)',mode='eval').body
     if any(type(n) is not int or n<1 for n in (n_heads,n_kv,head_dim)) or n_heads%n_kv or head_dim%2:
         raise ValueError('Invalid native head geometry')
-    scope={'torch':torch,'F':torch.nn.functional}
-    exec(compile(ast.Module(body=copy.deepcopy([*rotate,*methods]),type_ignores=[]),str(path),'exec'),scope)
+    scope={'torch':torch,'F':torch.nn.functional,'_separate_qkv':separate_qkv}
+    selected=ast.fix_missing_locations(ast.Module(body=copy.deepcopy([*rotate,*methods]),type_ignores=[]))
+    exec(compile(selected,str(path),'exec'),scope)
     owner=SimpleNamespace(numerical_profile='official_local_fp32',n_heads=n_heads,n_kv=n_kv,head_dim=head_dim,
         q_dim=n_heads*head_dim,kv_dim=n_kv*head_dim,rms_eps=1e-5,
         _fp8=False,_fp4=False,_ffn_mega=False,_fused_attn=False)
@@ -116,15 +138,71 @@ def final_velocity(owner,hs,norm,weight,bias,*,action_rows=40):
     return F.linear(owner._rms_norm(hs,norm)[:,-action_rows:],weight,bias)
 
 
-def baseline_gate(current,historical,*,engine):
+def baseline_gate(current,historical,*,engine,required=None):
     import torch
     if engine not in ('official','native'):raise ValueError('Unknown native-body runtime label')
+    required=engine=='native' if required is None else required
+    if type(required) is not bool:raise ValueError('Baseline required flag must be bool')
     count=sum(a.dtype==b.dtype==torch.bfloat16 and a.shape==b.shape and torch.isfinite(a).all().item()
               and torch.equal(a,b) for a,b in zip(current,historical))
     exact=len(current)==len(historical) and count==len(current) and len(current)>0
-    return {'required':engine=='native','passed':bool(exact or engine!='native'),
+    return {'required':required,'passed':bool(exact or not required),
             'compared_exact':bool(exact),'exact_steps':int(count),'steps':len(current),
-            'scope':'Only native2.11 must reproduce historical313766; old2.7 measures same-body runtime effect'}
+            'scope':'Unchanged fused-native2.11 must reproduce313766; old runtime or explicitly controlled projection intervention is a non-required numerical comparison, not policy acceptance'}
+
+
+def validate_replay_options(args):
+    reference=(args.reference_job,args.reference_source_revision)
+    baseline=(args.layer_baseline,args.layer_baseline_job,args.layer_baseline_source_revision)
+    if any(v is not None for v in reference) and not all(v is not None for v in reference):
+        raise ValueError('Historical reference requires explicit job and source identity')
+    if any(v is not None for v in baseline) and not all(v is not None for v in baseline):
+        raise ValueError('Layer baseline requires explicit path/job/source identity')
+    if bool(all(v is not None for v in reference))!=bool(all(v is not None for v in baseline)):
+        raise ValueError('Historical reference and layer baseline identities must be bound together')
+    if args.projection not in ('fused','separate'):raise ValueError('Unknown projection control')
+    if args.projection=='separate' and (args.control_baseline is None or args.reference_job is None):
+        raise ValueError('Separate projection requires historical layer input and current fused control')
+    if args.projection=='fused' and args.control_baseline is not None:
+        raise ValueError('Fused replay cannot silently consume a changed projection control')
+
+
+def admit_layer_replay_report(report,*,job_id,source_revision,engine,variant,checkpoint,runtime,require_layer_proof=False):
+    proof=report.get('historical_layer_baseline') or {};gate=report.get('historical_native_baseline') or {}
+    keys=report.get('selected_checkpoint_keys',[])
+    if (report.get('kind')!='recorded_Expert_layer_local_and_propagated_replay_not_policy_gate'
+            or report.get('job_id')!=job_id or report.get('source_revision')!=source_revision
+            or report.get('engine')!=engine or report.get('variant')!=variant or report.get('checkpoint')!=checkpoint
+            or report.get('runtime')!=runtime or report.get('status')!='diagnostic_complete'
+            or report.get('projection','fused')!='fused' or report.get('model_constructed') is not False
+            or report.get('weights_loaded')!=363 or len(keys)!=363 or len(set(keys))!=363
+            or report.get('gold_h0_exact_steps')!=10 or gate.get('passed') is not True
+            or gate.get('required') is not (engine=='native')
+            or (engine=='native' and gate.get('exact_steps')!=10)
+            or (require_layer_proof and (report.get('projection')!='fused' or proof.get('exact') is not True or proof.get('tensors')!=1300))):
+        raise ValueError('Fused layer replay control/source/runtime/case admission failed')
+
+
+def verify_replay_arrays(current,historical):
+    import torch
+    if (not current or set(current)!=set(historical)
+            or any(current[k].dtype!=historical[k].dtype or current[k].shape!=historical[k].shape
+                   or not torch.isfinite(current[k]).all() or not torch.equal(current[k].cpu(),historical[k].cpu()) for k in current)):
+        raise ValueError('Fused replay control tensor set/dtype/finite/values differ')
+    return {'exact':True,'tensors':len(current)}
+
+
+def projection_effects(current,control,*,common):
+    if set(current)!=set(control) or any(current[k].dtype!=control[k].dtype or current[k].shape!=control[k].shape for k in current):
+        raise ValueError('Projection effect tensor set/dtype/shape differs from fused control')
+    effects={}
+    for name,value in current.items():
+        expected=control[name]
+        effects[name]=common.difference(common._array(value),common._array(expected))
+        effects[name]['unequal_elements']=int((value!=expected).sum())
+        if name.startswith('gold_head.') and not effects[name]['exact']:
+            raise ValueError('Projection changed the fixed-Gold head negative control')
+    return effects
 
 
 def admit_layer_capture(report,*,checkpoint,layer_source):
@@ -168,9 +246,17 @@ def main(argv=None):
         parser.add_argument('--'+name,type=Path,required=True)
     parser.add_argument('--baseline-job',required=True)
     parser.add_argument('--baseline-source-revision',default='2959bd8710038c7dcdebdd17ac645b7feed4333f')
+    parser.add_argument('--projection',choices=('fused','separate'),default='fused')
+    parser.add_argument('--reference-job')
+    parser.add_argument('--reference-source-revision')
+    parser.add_argument('--layer-baseline',type=Path)
+    parser.add_argument('--layer-baseline-job')
+    parser.add_argument('--layer-baseline-source-revision')
+    parser.add_argument('--control-baseline',type=Path)
     parser.add_argument('--source-revision',required=True)
     args=parser.parse_args(argv)
     common=_sibling('diagnose');common.require_step()
+    validate_replay_options(args)
     import platform
     import torch
     from safetensors.torch import load_file
@@ -186,9 +272,11 @@ def main(argv=None):
     frozen=_sibling('frozen_eager_attention');capture=_sibling('expert_layers_capture')
     suffix=_sibling('frozen_suffix');order=_sibling('suffix_key_order')
     cases={};layer_source=args.official_attention_source.resolve().parent/'hunyuan_vl_mot/modeling_hunyuan_vl_mot.py'
+    native_source=Path(__file__).resolve().parents[3]/'flash_rt/models/hyvla/pipeline_thor.py'
     for variant in ('baseline','state'):
         report=json.loads((args.reference/variant/'result.json').read_text())
-        frozen.admit_capture_report(report,job_id=os.environ['SLURM_JOB_ID'],source_revision=args.source_revision,
+        frozen.admit_capture_report(report,job_id=args.reference_job or os.environ['SLURM_JOB_ID'],
+            source_revision=args.reference_source_revision or args.source_revision,
             variant=variant,attention_source=args.official_attention_source)
         admit_layer_capture(report,checkpoint=checkpoint,layer_source=layer_source)
         prior=json.loads((args.baseline/variant/'result.json').read_text())
@@ -207,8 +295,23 @@ def main(argv=None):
         order.admit_original_mask(old_trace['suffix.mask_sorted'],gold['suffix.attention_mask'],perm)
         cases[variant]={'gold':gold,'trace':old_trace,'frozen':old_frozen,'perm':perm,
                         'outputs':{},'metrics':{},'propagated':{},'h0_exact':0}
-    native_source=Path(__file__).resolve().parents[3]/'flash_rt/models/hyvla/pipeline_thor.py'
-    owner=load_native_owner(native_source)
+        if args.layer_baseline is not None:
+            old_layer=json.loads((args.layer_baseline/variant/'result.json').read_text())
+            admit_layer_replay_report(old_layer,job_id=args.layer_baseline_job,source_revision=args.layer_baseline_source_revision,
+                engine=args.engine,variant=variant,checkpoint=checkpoint,runtime=runtime)
+            old_arrays=load_file(str(args.layer_baseline/variant/'operator_outputs.safetensors'))
+            if len(old_arrays)!=1300:raise ValueError('Historical layer baseline must contain all1300tensors')
+            cases[variant]['layer_arrays']=old_arrays
+            if args.projection=='separate':
+                control=json.loads((args.control_baseline/variant/'result.json').read_text())
+                admit_layer_replay_report(control,job_id=os.environ['SLURM_JOB_ID'],source_revision=args.source_revision,
+                    engine=args.engine,variant=variant,checkpoint=checkpoint,runtime=runtime,require_layer_proof=True)
+                if control['native_method_source']!=_file_record(native_source) or control['prototype_source']!=_file_record(__file__):
+                    raise ValueError('Current fused control method/prototype source identity differs')
+                control_arrays=load_file(str(args.control_baseline/variant/'operator_outputs.safetensors'))
+                verify_replay_arrays(control_arrays,old_arrays)
+                cases[variant]['control_arrays']=control_arrays
+    owner=load_native_owner(native_source,projection=args.projection)
     suffix_keys={name:'model.'+field for name,field in (
         ('_state_w','state_proj.weight'),('_state_b','state_proj.bias'),('_ain_w','action_in_proj.weight'),('_ain_b','action_in_proj.bias'),
         ('_atmlp_in_w','action_time_mlp_in.weight'),('_atmlp_in_b','action_time_mlp_in.bias'),
@@ -276,11 +379,27 @@ def main(argv=None):
                 gold_head=final_velocity(owner,case['gold'][f'expert.step{step}.final_input'].to('cuda'),*head)
                 gold_cpu=gold_head.detach().cpu().contiguous().clone();case['outputs'][f'gold_head.step{step}.velocity']=gold_cpu
                 case['metrics'][f'gold_head.step{step}.velocity_vs_recorded']=common.difference(common._array(gold_cpu),common._array(case['gold'][f'step{step}.velocity']))
-            gate=baseline_gate(current,historical,engine=args.engine);all_passed=all_passed and gate['passed']
+            gate=baseline_gate(current,historical,engine=args.engine,required=False if args.projection=='separate' else None)
+            layer_proof=None;effects=None
+            if args.layer_baseline is not None and args.projection=='fused':
+                try:layer_proof=verify_replay_arrays(case['outputs'],case['layer_arrays'])
+                except ValueError as error:layer_proof={'exact':False,'tensors':len(case['outputs']),'reason':str(error)}
+                layer_proof.update(job_id=args.layer_baseline_job,source_revision=args.layer_baseline_source_revision,
+                                   path=str((args.layer_baseline/variant).resolve()))
+            if args.projection=='separate':
+                effects=projection_effects(case['outputs'],case['control_arrays'],common=common)
+            passed=gate['passed'] and (layer_proof is None or layer_proof['exact'])
+            all_passed=all_passed and passed
             folder=args.output/variant;folder.mkdir()
             result={'kind':'recorded_Expert_layer_local_and_propagated_replay_not_policy_gate',
-                'status':'diagnostic_complete' if gate['passed'] else 'historical_native_baseline_reproduction_failed',
+                'status':'diagnostic_complete' if passed else 'historical_baseline_reproduction_failed',
                 'engine':args.engine,'variant':variant,'job_id':os.environ['SLURM_JOB_ID'],'source_revision':args.source_revision,
+                'projection':args.projection,'historical_layer_baseline':layer_proof,
+                'projection_control':None if effects is None else {'job_id':os.environ['SLURM_JOB_ID'],
+                    'source_revision':args.source_revision,'path':str((args.control_baseline/variant).resolve()),'fused1300exact':True},
+                'projection_effect_metrics':effects,
+                'reference_producer':{'job_id':args.reference_job or os.environ['SLURM_JOB_ID'],
+                    'source_revision':args.reference_source_revision or args.source_revision,'path':str((args.reference/variant).resolve())},
                 'runtime':runtime,'checkpoint':checkpoint,'native_method_source':_file_record(native_source),'prototype_source':_file_record(__file__),
                 'selected_checkpoint_keys':selected,'weights_loaded':len(selected),'model_constructed':False,'performance_measurement':False,
                 'gold_h0_exact_steps':case['h0_exact'],'historical_native_baseline':{'job_id':args.baseline_job,
