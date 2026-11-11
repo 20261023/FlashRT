@@ -352,3 +352,27 @@ The previous6/7 original-gate failure remains explicit even if this diagnostic
 completes; profiling/trace host copies are not latency benchmarks. It constructs
 one native policy and reuses historical official tensors, not a second model or
 an incompatible FA2 binary. No new package download or content hash is required.
+
+### Frozen suffix and first Expert query controls
+
+`hy_trace/frozen_suffix.py` loads only13selected checkpoint tensors and constructs
+no policy: state/action/time-MLP parameters, Expert layer0 input RMSNorm and Q/K/V
+weights, and the shared layer0 query-norm weight. Its old/new runtime processes
+consume explicitly historical accepted official and folded-native traces.
+
+For baseline/state at **step0 only**, reconstructed time/RoPE tables must match
+the observed native tables, the suffix must exactly match the recorded official
+suffix, and batched versus flattened input normalization must match. Only then
+does the runner compare separate Q/K/V calls with the native concatenated GEMM
+on identical normalized values. Both outputs are rotated and query-normalized
+against the actual recorded `query_norm.layer0.1` boundary (call0 is prefix).
+It saves raw values and differences, not latency samples. Input admission failure
+is nonzero; absence of a QKV arm matching the recorded query is a negative
+operator finding, never a changed policy gate or a reason to loosen tolerances.
+
+Use `--engine official` in the recorded2.7.1 runtime and `--engine native` in2.11,
+serially in one allocation, with explicit `--checkpoint`, `--official`/`--official-job`,
+`--native`/`--native-job`, frozen `--source-revision` and fresh `--output`. The
+historical producers retain their IDs; current operator execution has its own job
+ID. No old FA2 binary, full-policy import, model rewrite or new default is used.
+Atomic result publication follows successful raw tensor saving.
