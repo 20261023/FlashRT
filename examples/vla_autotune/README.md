@@ -464,3 +464,38 @@ output and all separate gate/up/activation/output values must reproduce actual
 records exactly. Fusion differences and runtime differences are saved, not
 promoted as a whole-Expert cause or a new robot-quality gate. Scope is Expert0
 on ten observed suffix inputs; the prior6/7 failure remains unchanged.
+
+### Recorded32-layer Expert boundaries
+
+`--capture-expert-layers` adds module hooks to admitted official eager capture,
+recording each Expert layer's actual input, first residual and MLP output, plus
+the final-norm input. It validates the ordered32layer/10suffix-step sequence and
+that each residual+MLP output exactly equals the **next observed** hidden input;
+the first entry must also match the saved step0 suffix. No math is replaced and
+all hooks are removed on failure. Raw boundary traces stay private scratch.
+
+`hy_trace/expert_layers.py` runs the selected actual native `_block`, RMS,
+attention and rotate bodies without importing the pipeline/native extension or
+constructing a model. It streams11checkpoint tensors per layer with the same
+QKV/GU fusion and shared VLM QK norms as the loader;8suffix and3final-head tensors
+bring the total to363selected keys. Quantization/fused kernels/graph stay off.
+
+Each block uses sorted **official prefix KV** with independent suffix scratch.
+Two conditions distinguish per-layer same-input error (official H_i each time)
+from propagated hidden error (native output feeds the next layer, reset at each
+official timestep). Both actual native residual and returned hidden are compared
+to recorded boundaries; native MLP deltas are not inferred by subtracting BF16
+residuals. These errors need not add and are not causal percentages.
+
+All20native suffix starts must exactly match the observed official H0, using
+the actual recorded native state/time/latent. The2.11 propagated velocities must
+then exactly reproduce explicit historical `--baseline`/`--baseline-job`/
+`--baseline-source-revision` official-KV frozen outputs. Failure is nonzero with
+an explicit unqualified status, not a relaxed tolerance. The2.7 consumer measures
+the same native body's runtime effect; it is not called a historical old-native
+replay. Pass the usual `--engine`, `--reference`, `--checkpoint`,
+`--official-attention-source`, current `--source-revision` and fresh `--output`.
+
+This fixes external official trajectories and Gold KV only: no native-vision KV
+claim, sampler free-run, new seven-fixture gate, robot-success result or changed
+production default follows. The historical6/7 failure remains binding.
