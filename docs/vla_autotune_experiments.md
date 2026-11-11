@@ -651,6 +651,40 @@ inputs/residuals/outputs across the Expert and distinguish same-input local
 operator error from propagated hidden-state differences. The historical6/7
 policy failure remains unchanged.
 
+Job314485 (`round023/fe66081a`) broadened the actual observation to all32Expert
+layers, ten suffix steps and both cases. Every970-event sequence and320actual
+residual-to-next-input chains per case passed; step0 entry was exact. All20native
+H0 reconstructions passed runtime exact admission. More importantly, independent
+raw-array checks confirmed all20native2.11 propagated velocities were bitwise
+equal to313766's official-KV frozen outputs. Thus the selected-body replay is
+bound to that measured native path, not merely a new plausible reconstruction.
+
+With official prefix KV held fixed, same-input local residual/output differences
+already appeared at layer0. Teacher-forced hidden inputs isolate local block
+error; layer-propagated mode additionally includes earlier hidden differences.
+For2.11, final-layer hidden-output relativeL2 ranges were:
+
+| Case | Teacher-forced layer31 | Layer-propagated layer31 |
+|---|---:|---:|
+| baseline | .0000517155–.0004999602 | .0023364851–.0035240699 |
+| state | 0–.0003188937 | .0024410601–.0035831674 |
+
+No layer was output-exact at all ten steps in either case. These are hidden
+boundary norms, not action tolerance or additive explained-error percentages.
+The Gold-H32-only output-head control was exact20/20 in2.7 and19/20 in2.11:
+state step9 differed at two BF16 velocity values (maxabs.001220703125,
+relativeL2.0000340360). This small local head runtime effect is retained, not
+silently declared exact or conflated with free-running action outliers.
+
+Across runtimes only523/1300baseline and498/1300state replay tensors were exact;
+the old consumer is the same native body on2.7, **not** an asserted historical
+old-native replay. Its propagated velocities were not exact to2.11's baseline.
+Both native local errors and propagated changes therefore remain measured
+questions. Next intervention can vary Expert QKV projection geometry on the
+same admitted boundaries, retaining the unchanged1300tensor replay as a hard
+control before interpreting it. No new full-policy/robot gate was performed;
+historical6/7 remainsFAILED, with all default and tolerance constraints intact.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
