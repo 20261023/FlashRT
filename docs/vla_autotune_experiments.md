@@ -943,6 +943,39 @@ policy use. It must not read stored old variance as its answer, assume generic
 shapes/layouts safe, or promote default precision/runtime/tolerance changes.
 Historical6/7FAILED and full-policy/native-vision/free-running/robot limits stay.
 
+Job316521 (`round031/19e87bcc`) tested input-derived FP32 source-tree models.
+Four predeclared scalar/vector4 grouping × ascending/descending shuffle arms
+executed on the same16direct squares, with no stored variance passed into the
+tree function and no native `sum`/`mean` fallback. Unchanged square/native mean
+baselines first reproduced315622EXACT. All96raw arrays were independently
+audited; all64GPU tree outputs also EXACTan independently source-indexed NumPy
+FP32 implementation with per-lane/per-component accumulation and final factor.
+All128old/native contrast metrics were recomputed, retaining the negative arms:
+
+| Explicit FP32 tree | Mean arrays EXACT old | Mean arrays EXACT native2.11 |
+|---|---:|---:|
+| scalar grouping + ascending | 8/16 | 0/16 |
+| scalar grouping + descending | 0/16 | 0/16 |
+| vector4 grouping + ascending | 8/16 | 0/16 |
+| vector4 grouping + descending | 0/16 | **16/16** |
+
+The source-old width-specific choice (scalar-ascending128, vector-ascending1024)
+reproduced **16/16old means** from actual input values, while vector-descending
+reproduced16/16native means. This advances beyond supplying a saved old variance:
+the specified arithmetic models now reproduce both observed endpoints locally.
+It is still not a direct observation of internal compiled runtimeconfig, a proof
+for arbitrary shapes/data/layouts, a production norm or a performance candidate.
+The prototype uses multiple eager FP32 additions, no FP64 alternative/JIT/build.
+
+COMPLETED0:0/errors0. Fullthree-file transfer and64independent CPU/GPU tree
+comparisons passed. Review's deferredMinor is weak later-group/nonuniform-row
+unit-fixture coverage; real nonuniform probe outputs were checked against the
+independent source-indexed auditor, not accepted from producer summary flags.
+Next use, if any, must compute RMS variance from its LIVEinput rather than read
+Gold variance, reproduce the unchanged full native baseline first and retain
+all-layer positive/negative outcomes. No full-policy/native-vision/free-running/
+robot qualification, default/tolerance/runtime change or6/7FAILED rewrite.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
