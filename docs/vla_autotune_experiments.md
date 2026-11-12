@@ -1,5 +1,9 @@
 # VLA autotune: measured iteration notes
 
+For the Chinese research narrative—observations, competing hypotheses,
+discriminating experiments, negative findings and subsequent revisions—see
+[the research-process record](reports/2026-11-12-vla-autotune-research-process.zh-CN.md).
+
 These are engineering observations from a bounded A800 iteration, **not** a
 blanket hardware qualification, a model leaderboard, or robot task-success
 results. Runnable validation, graph-pilot and profiling scripts are under
