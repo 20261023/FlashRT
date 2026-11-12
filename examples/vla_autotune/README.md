@@ -724,3 +724,41 @@ This intentionally multi-kernel prototype is not a latency candidate or a new
 production norm. GoldKV/fixed external trajectory excludes native vision KV,
 sampler integration/free-running, seven-fixture and robot qualification; original
 6/7FAILED, runtime defaults and quality thresholds remain unchanged.
+
+### Expert-phase-only native seven-fixture policy diagnostic
+
+`hy_trace/expert_policy_scope.py` observes each real prefix assembly and its
+actual permutation. It verifies sorted embeddings/masks, fresh request generation,
+native prefill/cache identity and read-only prefix KV. Only inside the actual
+nine-argument `evaluate_velocity` call does the candidate rebind a source-guarded
+separate-QKV block to the **real pipe**, invert prefix attention columns and use
+LIVEinput source-old RMS including the final head. Vision/VLM/prefill remain
+native, including their128-wide Q/K norms. No Gold KV, latent, norm or velocity
+is injected. Every NFE requires32block/32attention/129RMS calls; original RMS
+delegation is129for control and0for candidate. Graphs/quantized/fused/mega paths,
+stale permutations, input/prefix mutation and nested/reentrant execution reject.
+Class-descriptor absence as well as own bindings are restored on failure.
+
+`hy_trace/native_policy_tree.py` reuses the HWD scoped backend and existing
+Euler10/frontend/integrator, with fresh supplied noise and both graph caches
+empty. It admits the complete R32source support before constructing one model.
+All7historical HWD controls run twice and must reproduce old actions/6of7gate
+**before any candidate request**; then the candidate runs the same7cases twice.
+That is28requests/280NFE, without prepare, warmup, profiling or latency claims.
+
+Old seven-fixture `actions.npz` files do not contain step trajectories. Only
+baseline/state have separate historical313766step traces; those are compared.
+The other5traces are explicitly CURRENT control captures with exact two-replay
+checks, never relabelled as historical velocity evidence. Candidate native prefix,
+conditions and time embeddings must equal current control; latent trajectories
+are genuinely free-running. The original padded40x32 abs/cos gate is reused,
+public40x20 reported separately, and candidate failures remain valid outcomes.
+
+All raw request inputs/conditions/prefix KV/ten-step latents,time embeddings,BF16
+raw velocities and FP32actions are saved after request cleanup. Their sidecars
+say pending-backend-cleanup, not completed-policy success. The final report is
+atomic and only follows all28requests plus successful backend close/cleanup;
+failed controls stop the candidate and retain unqualified partial artifacts.
+Even7/7would mean only this existing synthetic numerical proxy, not robot,
+generalization, performance or production-default qualification. Historical6/7
+FAILED records and all thresholds remain unchanged.

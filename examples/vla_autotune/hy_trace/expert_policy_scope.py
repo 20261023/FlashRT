@@ -81,7 +81,8 @@ def expert_policy_request(frontend,*,enabled,request_id,separate_block,tensors,s
                     or mm.dtype!=torch.bool or pad.shape!=pe.shape[:2] or att.shape!=pad.shape or mm.shape!=pad.shape):raise ValueError('Invalid actual prefix assembly geometry')
             perm=torch.cat((mm[0].nonzero().flatten(),(~mm[0]).nonzero().flatten()))
             hold.update(assembly=1,perm=perm.clone(),P=pe.shape[1],pe=pe.clone(),pad=pad.clone(),att=att.clone(),mm=mm.clone(),idx=idx,full=full)
-            state.update(prefix_rows=pe.shape[1],n_vis=int(mm.sum()),generation=1)
+            state.update(prefix_rows=pe.shape[1],n_vis=int(mm.sum()),generation=1,
+                prefix_segments={'idx_ranges':[list(r) for r in idx],'full_ranges':[list(r) for r in full]})
             for name,v in (('prefix.embeddings',pe),('prefix.pad_mask',pad),('prefix.block_mask',att),('prefix.modality_mask',mm),('prefix.permutation',perm)):_record(tensors,state,name,v)
             return result
         return call
