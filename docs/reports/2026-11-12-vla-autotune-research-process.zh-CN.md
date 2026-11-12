@@ -425,6 +425,25 @@ M1／M2／M3并不互斥；不能把一次局部 EXACT写成对所有输入的�
 
 **下一问题：**将per-camera biased PROJ2放回examples-only完整HWD Merger，先验证真实完整端点，然后仅改变这一项重测native-policy。若它只恢复局部而state仍失败，继续保留该反例；不把R35算子端点等价跳写成七例／机器人通过。
 
+### 8.8 R36结果前追加：完整端点前置门与单一PROJ2策略实验
+
+R36目前尚未冻结／提交。只改变最后PROJ2的biased Linear：B3→三个B1，保持HWD PROJ1、原生Expert QKV／attention顺序／RMS、native vision/prefill、Euler10、noise和原质量门。**不混入R33三项Expert改动。**
+
+| 待验证命题 | 判别条件／如何接受反例 |
+|---|---|
+| R35的activation端点恢复能组合到真实完整Merger | 先固定R34两输入来源：原HWD与带观测control恢复native端点，带观测candidate恢复official端点；任一失败先停，不构造完整模型 |
+| instrumentation没有改变control算术 | 带观测与未观测完整Merger一致；完整策略七例control各两次必须精确复现旧actions及原6/7，再允许candidate |
+| 单独改变PROJ2能改善原七例数值代理 | 原padded40×32 abs/cos门不变，public20另报；改善、无变化、变差均保存，零效果不强行判错 |
+| 对最终策略的影响只经由PROJ2及其下游 | 每case实际Merger输入、PROJ2 activation及布局、非视觉prefix、mask／positions／suffix条件不变；视觉embedding／KV及后续轨迹允许变化且完整量化 |
+
+每请求将捕获真正的 `vision.merger_input`、`vision.proj2_activation`、`vision.proj2_output`、`vision.merged`，补上R33缺失当前vision输入的限制，不用阶段重建冒充实际激活。四个新增字段使每请求64个，总1792个；**仍未保存实际prepared.images，不能写成65字段或逐值重捕获图像证据**。
+
+独立完整前置门保存20数组，包括两臂分别捕获的activation和实际PROJ1子证明，不只靠“passed”摘要。原PROJ1子证明与新完整Merger证明保留不同kind，不冒称额外attention profiling。
+
+计划是单A800、20分钟、先零模型前置门再一次模型加载，七例两臂各双重放，共28请求／280NFE；无prepare、warmup、profiling或时延目标。每臂Expert都需观测129次original RMS／32 block／32 attention每NFE，保证本次没有悄悄开启R33候选。所有cleanup／raw／原门独立审计后才追加结果；局部成立不预告策略或机器人通过。
+
+独立复核还将利用**已经保留的R33作业316975七例control轨迹**核对旧60字段，这是明确命名的额外历史来源，不代表更早309681的NPZ突然有了velocity数据，也不增加GPU请求。完整入口链仍缺临时目录端到端CPU测试；该覆盖缺口保留，不用1088项所选回归替代本轮实际准入和完整原始审计。
+
 ## 9. 研究工具本身也要接受反例和修正
 
 | 问题 | 容易出现的错误解释 | 实际处理与影响 |

@@ -811,3 +811,40 @@ This tests the row-geometry/lowering hypothesis, not actual cuBLAS algorithm,
 epilogue implementation, GPU kernel duration or speed. No model, full Merger,
 native policy or robot run follows from these operator results. Original6/7FAILED,
 runtime/precision/defaults and quality thresholds remain unchanged.
+
+### Single-PROJ2 native-policy diagnostic
+
+`hy_trace/proj2_policy.py` changes only the last biased Linear in the existing
+HWD camera Merger: B3 becomes three B1 camera views. A guarded AST transform
+requires exactly the original signature/last assignment/return and proves an
+inverse transform changes nothing else. It binds to the real pipe, does not
+patch global linear, and restores instance-method presence and PROJ1 observation
+metadata on every exit. Actual inputs/weights are read-only; view storage/shape/
+offset evidence is recorded. No forced nonzero effect is required.
+
+The `preflight` arm uses only eight weights and both admitted R34 input origins.
+Unobserved original and observed-control whole Merger endpoints must EXACT R34
+native HWD; the observed candidate must EXACT R34 official. Twenty raw arrays
+retain separate actual control/candidate activations, outputs and a fresh HWD
+PROJ1 child check against captured Gold projection values. The complete proof
+has its own kind; its old-kind child is only the actual PROJ1 check, not an
+invented attention-profile or full-policy qualification. All raw, source,
+runtime, checkpoint, callback/view and cleanup checks precede model construction.
+
+The `policy` arm reuses bounded input/request helpers with original Expert in
+BOTH arms (`expert_enabled=False`, no separate template). It runs controls for
+all seven cases twice before any candidate, then the candidate twice:28requests/
+280NFE, no prepare/warmup/profile/timing. Actual Merger input and pre-PROJ2
+activation, non-image prefix, masks/permutation/RoPE, suffix conditions/noise/time
+embeddings must stay exact across arms. Image embeddings, all context-dependent
+prefix KV and later trajectories may change and are measured; prefix KV remains
+read-only inside each request. Actual modality masks, not a fixed prefix length,
+bind each arm's merged output to its own visual prefix rows.
+
+Every request saves64fields: the previous60 plus actual Merger input, actual
+PROJ2 activation/output and merged tokens. No `prepared.images` recapture is
+claimed. Full1792request tensors, twenty preflight arrays, two replays, original
+padded gate/public slice and close/cleanup must be independently audited. A
+candidate quality failure is retained as a completed diagnostic, never a reason
+to loosen the gate or combine the earlier Expert triple. No production default,
+runtime/precision, robot/generalization or unmeasured performance change follows.
