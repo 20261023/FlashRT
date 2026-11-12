@@ -377,6 +377,26 @@ M1／M2／M3并不互斥；不能把一次局部 EXACT写成对所有输入的�
 
 **仍未解决：**进入Merger之前的vision输入差异、PROJ2形式调整是否改善native-policy，以及机器人质量。R33的6/7失败和所有生产默认／数值门不变。后续记录应继续保留PROJ2局部发现与未解决上游问题，而不是改写成“找到最终原因”。
 
+### 8.6 R35结果前追加：只改变最后Linear，区分行几何与bias表达式
+
+R35尚未提交作业。依据R34提出下列可证伪问题：**同一activation／weight／bias，只改变最后Linear的调用组织，能否直接重现两个历史端点？显式在BF16 matmul后再加bias，是否又引入另一类差异？**
+
+预先固定七臂，不根据结果追加调参：
+
+| 臂 | 保持的输入值 | 只改变的因素／预测 |
+|---|---|---|
+| batched_bias | 同一三camera activation | 原B3调用；必须先恢复R34 nativeHWD端点 |
+| per_camera_b1_bias | 同一activation逐camera视图 | 原B1调用；必须恢复R34 official端点 |
+| per_camera_hwd_bias | 同一camera值、去singleton维 | 若仍flatten到49行且数值等价，应接近／匹配B1；这是待验证预测 |
+| per_camera_flat_bias | 同一camera值显式49行视图 | 区分外层维数与M49几何，不能先假设必然EXACT |
+| flat147_bias | 同一三camera值显式147行视图 | 区分外层维数与M147几何 |
+| batched_mm_add | 同一B3值与参数 | 无bias matmul先产出BF16，再加BF16 bias；与融合表达式有明确中间舍入区别 |
+| per_camera_mm_add | 同一camera值与参数 | 同样显式舍入，但每次49行，用于区别几何效应与bias表达式效应 |
+
+只读PROJ2两个权重张量，不跑完整Merger或policy；先准入R34两端完整120数组、来源／runtime／checkpoint及同值activation。每臂两次非profile控制，再做一次profile；计算在A800上执行，**仅记录CPU侧aten调用和input shapes，不采CUDA kernel／算法／时延作为证据**。所有profiled／unprofiled输出必须EXACT；两个历史form端点是硬门，其他臂是否匹配是结果，不强迫通过。
+
+预期保留30数组、14个CPU trace及28项对两个历史端点的比较。先做TDD／独立评审／回归，再冻结新round和一次提交回执。即使隔离算子能重现差异，也不能跳过仍未解决的上游vision与完整策略质量问题。
+
 ## 9. 研究工具本身也要接受反例和修正
 
 | 问题 | 容易出现的错误解释 | 实际处理与影响 |

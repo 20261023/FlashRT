@@ -789,3 +789,25 @@ observation of the old offset. R33 actual vision input was NOT captured; a
 historical input and current output bridge must not be relabelled as one capture.
 The original6/7 policy failure, precision/runtime/defaults and gates remain;
 this is not a policy fix, error-fraction, performance or robot qualification.
+
+### Frozen PROJ2 call-geometry controls
+
+`hy_trace/proj2_calls.py` isolates the last Linear on two R34 activations. It
+admits both complete R34 sixty-role captures, runtime/source/checkpoint identity,
+same-value form activations and historical endpoint anchors before reading only
+PROJ2 weight and bias. Seven predeclared arms compare B3, per-camera B1/HWD/flat49,
+flat147, and batched/per-camera explicit BF16 matmul-then-bias expressions.
+The explicit bias addition is a different rounding expression, not a claim of
+the same fused epilogue. No activation, weight or output is precision-promoted.
+
+Each arm makes two calls outside profiling, then one CPU-only profiler window
+with actual aten input shapes. It saves all fourteen Chrome CPU traces and
+thirty arrays (two activations, fourteen unprofiled and fourteen profiled outputs).
+Profiled outputs must EXACT their unprofiled controls. B3+bias and per-camera
+B1+bias must reproduce R34's respective historical endpoints; all other form
+matches or failures are measured outcomes against both references.
+
+This tests the row-geometry/lowering hypothesis, not actual cuBLAS algorithm,
+epilogue implementation, GPU kernel duration or speed. No model, full Merger,
+native policy or robot run follows from these operator results. Original6/7FAILED,
+runtime/precision/defaults and quality thresholds remain unchanged.
