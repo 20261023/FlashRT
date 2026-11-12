@@ -501,3 +501,13 @@ baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有�
 CPU 边界复核进一步发现：baseline/state 与 Gold 的266738个 prefix embedding 差异全部在 image tokens（relative L2 `.01257768617059049`、maxabs `.75`），非图像 tokens、pad／modality masks EXACT；K/V 从 layer0 已不同。历史 native Merger 输入在进入 Merger 前也已有476775个值不同（relative L2 `.006573505861752344`、maxabs `16`）。R33 image-token 输出 EXACT该历史 native `vision.merged`，但**没有捕获 R33 实际 vision 输入，输出桥接不能冒充同一次输入捕获**。
 
 因此下一轮先用相同 frozen 输入比较完整 Merger 的官方 per-camera API 和 native HWD 调用，并检查阶段端点，不直接归因于 VLM RMS、不扩大支持宽度或围绕失败 state 调参。历史失败、原阈值、生产默认／runtime／精度均保持，未形成机器人或加速资格。R33 实测与否定结论见[固定记录5f084d43](https://github.com/20261023/FlashRT/blob/5f084d43/docs/vla_autotune_experiments.md)。
+
+### 11.14 Hy：完整 frozen Merger 跨版本相同，调用形式差异首现在 PROJ2
+
+`317360`／`c990f271` 已完成，完整120个数组独立审计，8个阶段重建末端与各自实际API EXACT，旧runtime官方Gold锚点、新runtime native历史输出／R33输出桥均通过。只加载8个BF16权重，未构造模型、运行策略或测候选延迟。
+
+固定同origin／form后，两runtime的全部14阶段与实际端点都EXACT，60对BF16位型含signed zero也一致。因此本轮没有发现受测完整Merger的跨版本差异。固定相同输入／runtime、比较两种调用形式，则PROJ2之前所有阶段包括activation均EXACT，首差异在PROJ2：Gold输入254值不同，历史native输入287值不同，maxabs均`.015625`。
+
+这支持“最后Linear调用组织仍有局部数值影响”，而不是PROJ1局部EXACT就代表完整Merger等价。实际PROJ2输入为每camera `[1,7,7,2048]` 对native batched `[3,7,7,2048]`；源码预示flattened M49对M147，但具体GEMM算法／bias epilogue未观测。上游输入差异也仍在：同form换origin的merged relative L2约`.012578`，不能把PROJ2发现当作整个策略误差的解释比例。
+
+下一步先从已获准activation孤立最后Linear，验证两个原端点再判别调用组织；没有新增七例通过或生产默认变更，历史6/7失败保持。研究过程中的M1—M4预测及其支持／否定边界见[过程记录第8节](2026-11-12-vla-autotune-research-process.zh-CN.md#8-r34在结果前写下下一轮如何判别原因)。

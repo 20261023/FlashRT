@@ -1082,6 +1082,58 @@ that VLM RMS alone is responsible: the VLM receives differing vision embeddings.
 Next localize the vision/merger boundary with frozen identical inputs, rather
 than retune the failed state case or broaden RMS widths without evidence.
 
+Job317360 (`round034/c990f271`) separated frozen input origin, complete Merger
+call form and runtime. No model was constructed; each process read only eight
+BF16Merger weights. Official AST Tensor-forward/pooler ran per camera, while
+the unchanged native HWD control kept post-PROJ1 operations batched. Two input
+origins (accepted308690Gold and historical313766native) were each reconstructed
+in both recorded input-layout forms, with bounded zero storage offsets explicitly
+an assumption rather than an observed historical offset.
+
+COMPLETED0:0/errors0. Allsixfiles/227763005bytes were retrieved using existing
+zstd(137207959bytes;227778560byte tar), checking file set/sizes/source marker
+and both separately fetched headers, with no new hash/model rerun. Independent
+audit checked all120BF16arrays, all8own-API endpoint equalities, old-runtime
+officialGold andnew-runtime nativehistorical anchors, R33output bridge, fixed
+origin inputs/grouping/concat roles andevery reported within-runtime contrast.
+It separately recomputed all56cross-runtime stage contrasts. Each corresponding
+stage andactual endpoint was EXACTacross2.7/2.11 for allfourorigin/form pairs;
+an additional60paired BF16-as-int16 comparison, including signedzero, foundzero
+unequal bit patterns. This is not content hashing or arbitraryinput equivalence.
+
+Within EACH runtime, form differences on identical values first appeared at
+PROJ2. Input, PROJ1, grouping/mean, predictor/GELU, softmax/products/sum andthe
+pre-PROJ2 activation were EXACTbetween the official/native-HWD forms:
+
+| Fixed input origin / form contrast | First difference | Unequal merged values | Maxabs | RelativeL2 |
+|---|---|---:|---:|---:|
+| Gold / nativeHWD vs official | PROJ2 | 254 | .015625 | .00004932582823326906 |
+| historical native / nativeHWD vs official | PROJ2 | 287 | .015625 | .00007520447640456106 |
+
+Thus the previous PROJ1-only exact precondition was not a complete Merger
+equivalence proof. The observed final Linear inputs were contiguous BF16 with
+shape[1,7,7,2048] per official camera versus[3,7,7,2048] native batch; their
+reported strides were[100352,14336,2048,1],offset0. Matched Torch source predicts
+flattened biased addmm with M49 versusM147, but no particular cuBLAS algorithm,
+epilogue or accumulation tree was observed here. PROJ2 call geometry is the next
+specific hypothesis to isolate, not a proven compiled-kernel explanation.
+
+Changing input origin while fixing form still produced input-stage differences:
+476775input values,maxabs16,relativeL2.00657350586. The resulting merged origin
+contrasts were266736unequal/relativeL2.01257794642 forofficial form and266740/
+.01257768738 fornativeHWD,bothmaxabs.75. These FIXED-form contrasts are different
+comparisons from R33's mixed native-output/Gold-output266738unequal boundary;
+the counts must not be substituted or divided into an explained-policy fraction.
+
+Research hypotheses update: upstreaminput differences remain; an additional
+complete-Merger form effect is supported atPROJ2; no cross-runtime Merger gap was
+observed on these two frozen origins/forms. Eight own-API anchors also support
+the stage reconstruction on these calls. This does not establish otherinputs,
+the cause of the upstream ViT mismatch, a per-cameraPROJ2 policy repair or a new
+seven-fixture pass. Next isolate the final Linear from the admitted activation,
+retaining both historical form endpoints before any policy integration. Original
+6/7FAILED and productionprecision/runtime/defaults/quality thresholds stay.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
