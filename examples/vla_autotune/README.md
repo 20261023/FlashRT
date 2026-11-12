@@ -762,3 +762,30 @@ failed controls stop the candidate and retain unqualified partial artifacts.
 Even7/7would mean only this existing synthetic numerical proxy, not robot,
 generalization, performance or production-default qualification. Historical6/7
 FAILED records and all thresholds remain unchanged.
+
+### Frozen complete Merger stages
+
+`hy_trace/merger_stages.py` separates different upstream vision values from
+complete Merger arithmetic. With only eight BF16 checkpoint tensors, it runs the
+actual official AST Tensor-forward/pooler once per camera and the unchanged
+native HWD `camera_merger` (per-camera PROJ1, batched remaining operations).
+Four combinations use accepted Gold308690 or historical native313766 inputs,
+each reconstructed in both recorded input-layout forms. No model is constructed.
+
+Fourteen stages span input, PROJ1, spatial grouping/mean, predictor, softmax,
+products/sum, activation, PROJ2 and merged tokens. Each reconstructed endpoint
+must EXACT its own actual API. Official camera live layouts are recorded before
+concatenating artifact values; no batched live layout is invented for them.
+Each runtime saves60arrays, including four actual endpoints. Old2.7 official on
+Gold input must reproduce accepted Gold image tokens; new2.11 native HWD on the
+historical native input must reproduce native `vision.merged` and the verified
+R33 image-token output bridge. Other batching/runtime comparisons are outcomes.
+
+The input manifest binds actual report/raw paths, file stats, source, checkpoint
+and runtime identity before weight reads. Baseline/state shared vision values,
+prepared inputs and the R33 output bridge are checked. Historical layouts omit
+storage offsets: reconstruction uses bounded zero offsets, explicitly not an
+observation of the old offset. R33 actual vision input was NOT captured; a
+historical input and current output bridge must not be relabelled as one capture.
+The original6/7 policy failure, precision/runtime/defaults and gates remain;
+this is not a policy fix, error-fraction, performance or robot qualification.
