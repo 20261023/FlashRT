@@ -4,7 +4,7 @@
 
 **覆盖：**π0、π0.5、FastWAM，以及重点展开的 Hy 数值一致性定位。
 
-**记录边界：**已核验结果更新至 R35。首版 `5d515b0a` 的R34预测及 `32ea141e` 的R35七臂预测保留，分别在第8.4—8.5节和第8.7节追加结果与解释修正。
+**记录边界：**已核验结果更新至 R36。保留结果前预测：`5d515b0a` 的R34、`32ea141e` 的R35七臂及 `a5078137` 的R36单变量设计；结果分别在第8.4—8.5、8.7、8.9节追加，不改写先前假设。
 
 **性质：**可审计的研究／工程实验记录，不是机器人成功率、模型排行榜或生产默认变更说明。
 
@@ -427,7 +427,7 @@ M1／M2／M3并不互斥；不能把一次局部 EXACT写成对所有输入的�
 
 ### 8.8 R36结果前追加：完整端点前置门与单一PROJ2策略实验
 
-R36目前尚未冻结／提交。只改变最后PROJ2的biased Linear：B3→三个B1，保持HWD PROJ1、原生Expert QKV／attention顺序／RMS、native vision/prefill、Euler10、noise和原质量门。**不混入R33三项Expert改动。**
+本节在R36提交前固定于 `a5078137`，不按后来结果改写预测。只改变最后PROJ2的biased Linear：B3→三个B1，保持HWD PROJ1、原生Expert QKV／attention顺序／RMS、native vision/prefill、Euler10、noise和原质量门。**不混入R33三项Expert改动。**
 
 | 待验证命题 | 判别条件／如何接受反例 |
 |---|---|
@@ -443,6 +443,62 @@ R36目前尚未冻结／提交。只改变最后PROJ2的biased Linear：B3→三
 计划是单A800、20分钟、先零模型前置门再一次模型加载，七例两臂各双重放，共28请求／280NFE；无prepare、warmup、profiling或时延目标。每臂Expert都需观测129次original RMS／32 block／32 attention每NFE，保证本次没有悄悄开启R33候选。所有cleanup／raw／原门独立审计后才追加结果；局部成立不预告策略或机器人通过。
 
 独立复核还将利用**已经保留的R33作业316975七例control轨迹**核对旧60字段，这是明确命名的额外历史来源，不代表更早309681的NPZ突然有了velocity数据，也不增加GPU请求。完整入口链仍缺临时目录端到端CPU测试；该覆盖缺口保留，不用1088项所选回归替代本轮实际准入和完整原始审计。
+
+### 8.9 R36结果后追加：state达标，但失败迁移到noise
+
+作业 `317665`／冻结 `a5078137` 完成 `0:0`，无观测错误、无重提。完整60文件／835570416字节取回，20个前置数组、1792个请求数组、28请求／280NFE及所有回放、mask／perm／visual bridge、Euler链、作用域与close清理均独立审计。两臂均为original Expert，每NFE129original RMS／32block／32attention，确认没有带入R33三项Expert改动。
+
+**前置命题成立：**在两来源的实际完整Merger上，观察前后control恢复native端点，candidate恢复official端点；真实输入、各自捕获的activation和callback/view/read-only证据都获准。真实策略中实际Merger输入／activation及布局、非图像prefix、条件／noise／time保持不变，只有预期的PROJ2及下游可变。
+
+**完整策略达标命题仍被否定，但不是“state一直没变”：**padded和public均control6/7、candidate6/7；state从3个超限变0而通过，noise从0变6而失败。
+
+| padded40×32 | HWD control | 单改PROJ2 candidate |
+|---|---:|---:|
+| state超限 | 3 | **0** |
+| state maxabs | .016632080078125 | .0078125 |
+| state RMSE | .0016343457521882086 | .0017172309821804235 |
+| noise超限 | 0 | **6** |
+| noise maxabs | .01318359375 | .039031982421875 |
+| noise RMSE | .0017243589961676209 | .0029772034588235836 |
+
+noise cosine仍有`.9999559557532167`，不能覆盖逐元素失败。RMSE在episode_start／current／history／prompt四例改善，baseline／state／noise三例变差。**仅写“6/7没变”会掩盖失败迁移；仅写“state修好了”又会掩盖新反例。候选作为七例统一合格配置被拒绝。**没有按case选择实现、放宽门限或改默认。
+
+控制证据也加强了：七例actions EXACT旧309681；baseline/state各47字段 EXACT313766；另有七例各60字段 EXACT已保留的R33 control，总420项。后者明确引用316975，并不是给更早309681 NPZ补造velocity。
+
+#### 同一prefix扰动为何不能预告统一改善
+
+对已保存数据额外做CPU复核，确认baseline／state／noise在各臂内部拥有EXACT相同的实际Merger输入、activation、merged、prefix embedding及K/V。state与baseline的差别在suffix state，noise的差别在初始noise／latent；tokens相同。相同prefix变化却产生不同最终误差响应，支持**效果依赖后缀条件／自由轨迹**，不能由局部端点更接近参考就预告所有请求改善。这不是新GPU试验，也不构成模块误差百分比。
+
+#### 从“可能抵消”到一个可验证、但严格局部的结论
+
+本轮真正捕获的baseline/state Merger输入 EXACT历史313766，仍与Gold输入相差476775值、relative L2约`.00657351`。candidate实际merged EXACT R34 official form在该native输入上的端点。**这是本轮当前输入证据，仍不回填R33未捕获的vision输入。**
+
+对这一个共享vision context（baseline/state不是两个独立视觉样本），比较三个经验证端点：
+
+```text
+U = official_form(native_input) - official_form(Gold_input)
+B = native_form(native_input)   - official_form(native_input)
+E_control = U + B
+```
+
+实际向量验证上述恒等式；以Gold输出范数平方归一化：
+
+```text
+(||E_control||² - ||U||²) / ||Gold||²
+  = 2<U,B>/||Gold||² + ||B||²/||Gold||²
+  = -1.2201970422635243e-8 + 5.655137735145709e-9
+  = -6.5468326874961355e-9 < 0
+```
+
+也就是说，在**这个Merger输出、这个L2指标与这个共享视觉输入context**上，旧批调用差异`B`对输入来源效应`U`有净抵消。改为official调用形式后，merged不同元素266738→266736，relative L2却略增`.01257768617→.01257794642`。这是局部净抵消的直接端点证据，不再只是猜测。
+
+**边界必须保留：**不能据此证明最终action误差为何变化、给出因果解释比例，或解释R33 Expert修正失败的全部原因；也没有观测具体cuBLAS算法或epilogue。此前“完整策略可能存在误差抵消”的强说法仍未闭合，只有这里的有限向量关系被验证。
+
+#### 下一问题的选择，不是下一轮成功的预告
+
+R33的E（Expert bundle）单独未达标，R36的P（PROJ2）单独使失败迁移。下一项有依据的问题是一次**统一配置的E×P四格交互验证**：前三个已知单元格必须在当前运行中重现，再测both；不把两组旧action差值相加当作组合结果，不按state/noise路由。
+
+这是由已见反例触发的机制交互／事后组合选择，不是独立泛化验证；E本身含三项改动，四格不能再分摊三者贡献。若both仍未统一7/7，结束这一轮组合搜索，转上游frozen ViT定位；即使7/7，也只保留原七例代理资格，不能自动推广默认、机器人或速度。具体矩阵、交互量和停止条件应在新作业前另行固定。
 
 ## 9. 研究工具本身也要接受反例和修正
 
@@ -468,12 +524,15 @@ R36目前尚未冻结／提交。只改变最后PROJ2的biased Linear：B3→三
 5. 在16组相同RMS输入上，首差异位于FP32 mean，旧variance对所测下游局部充分；显式输入驱动加法树可重现两版mean。
 6. 该输入驱动RMS在联合固定GoldKV／外部轨迹条件下恢复完整32层Expert，但native-policy仍6/7。
 7. 实际native prefix的image embedding在prefill前已不同；VLM不是一个无上游混杂的独立解释对象。
+8. PROJ2的受测biased调用按M49／M147恢复不同端点，显式拆bias不复现原端点；这是条件化的执行路径效应，不是通用行数定律。
+9. 单改PROJ2在本七例使state过门、noise新失败，6/7计数不变会掩盖失败迁移；数值质量改善不能只用一个聚合数字叙述。
+10. 在一个共享视觉context的Merger输出L2边界，三端点向量验证了局部净抵消；该结论不等于最终action误差的机制或解释比例。
 
 ### 10.2 尚未验证，不能写成结论
 
 - 每项源代码变动对ULP／动作误差贡献多少；没有加性“解释误差百分比”。
 - 某次mean调用具体读取了哪个runtime `ReduceConfig`字段／编译分支；相同kernel符号不是证明。
-- R33失败是否主要来自某个vision／Merger／VLM因素或误差抵消；R34专门用于区分其中部分解释。
+- R33失败是否主要来自某个vision／Merger／VLM因素或完整策略误差抵消；R34/R35已识别局部PROJ2项，R36证明单改仍未统一过门。Merger边界已测出的局部抵消不能代替这一开放问题。
 - 显式旧树是否适用于任意形状、布局、数据或更宽norm；当前不扩大支持范围。
 - 多kernel数值原型的加速价值；它没有作为性能候选验收。
 - 未参与筛选的真实任务／机器人质量、跨硬件／checkpoint泛化、任何自动生产默认变更。
@@ -503,7 +562,7 @@ R36目前尚未冻结／提交。只改变最后PROJ2的biased Linear：B3→三
 - [实现与结果总报告](2026-11-09-vla-autotune-report.zh-CN.md)：第11节持续补充后续轮次；早期摘要有其历史时间边界。
 - [Examples README](../../examples/vla_autotune/README.md)：诊断入口、API范围及非生产性质。
 - [执行层契约](../vla_backend.md)与[autotune控制层](../vla_autotune.md)：输出域、实际NFE、身份／质量入账边界。
-- 固定结果提交：R26 `52e03612`、R27 `df83cb94`、R28 `71406637`、源码机制 `eb59d6a8`、失败采集 `682f9f14`、R30 `f04a95e3`、R31 `398bdecb`、R32 `200e6560`、R33 `5f084d43`。
+- 固定结果提交：R26 `52e03612`、R27 `df83cb94`、R28 `71406637`、源码机制 `eb59d6a8`、失败采集 `682f9f14`、R30 `f04a95e3`、R31 `398bdecb`、R32 `200e6560`、R33 `5f084d43`、R34 `6930a674`、R35 `3b76eae8`；R36实现 `a5078137`，实测与边界分析见第8.9节。
 - R34实现固定到 [`c990f271`](https://github.com/20261023/FlashRT/tree/c990f271/examples/vla_autotune/hy_trace)；实现存在／测试通过不代表作业结果已通过。
 
 完整输入、权重、动作／中间数组、raw trace、环境和私有路径不随本文公开；公开记录给出可核对的job／源码／聚合结果，不上传凭据、个人信息或大产物。本文不新增内容哈希工作。

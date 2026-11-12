@@ -519,3 +519,11 @@ CPU 边界复核进一步发现：baseline/state 与 Gold 的266738个 prefix em
 两种显式BF16 `mm→add`均不匹配任一原端点，对official参考分别76773／77608个值不同、maxabs`.5`。保存输出的追加CPU比较还发现，这两种显式表达式彼此在两个来源上EXACT。因此这是**biased执行路径条件下**的行分组效应，不是“M不同就总会不同”的普遍规律，也没有证明某个具体cuBLAS epilogue原因。
 
 已追加到[研究记录第8.7节](2026-11-12-vla-autotune-research-process.zh-CN.md)，保留第8.6节结果前七臂预测。下一步须先验证examples-only完整Merger中的实际端点，再重测单一PROJ2改动的native-policy；当前没有新七例通过、速度或机器人结论，原6/7失败和默认／门限保持。
+
+### 11.16 Hy：单改PROJ2使state过门，但noise新失败，统一候选仍拒绝
+
+`317665`／`a5078137` 完成并通过20前置＋1792请求数组、28请求／280NFE独立审计。完整Merger候选恢复受测official端点；两臂实际输入／activation、非视觉prefix、固定条件一致，Expert均为原生，所有回放与清理通过。七例control actions精确复现309681；baseline/state47字段各EXACT313766，七例旧60字段又全部EXACT R33 control。
+
+原padded与public都仍6/7，但**失败从state迁移到noise**。state超限3→0、maxabs`.01663208→.0078125`，RMSE却`.00163435→.00171723`；noise超限0→6、maxabs`.01318359→.03903198`、RMSE`.00172436→.00297720`。四例RMSE改善、三例变差，没有七例统一通过，候选被拒绝，不放宽门限或按case挑实现。
+
+当前真实vision输入复核仍见上游差异。Merger输出端点的附加向量分析在一个共享视觉context上验证了局部L2净抵消，但不是完整策略误差归因／比例。具体预测、失败迁移、公式证据及限制见[过程记录第8.8—8.9节](2026-11-12-vla-autotune-research-process.zh-CN.md)。下一步拟预注册一次E×P交互验证而非无限组合；目前无新默认、机器人、泛化或性能资格。

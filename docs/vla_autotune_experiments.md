@@ -1183,6 +1183,76 @@ not a policy conclusion from these two saved activations. Upstreamvisioninput
 differences and historical6/7FAILED remain; no runtime/precision/default/gate,
 speed, robot or generalization promotion follows.
 
+Job317665 (`round036/a5078137`) changed ONLY complete-Merger PROJ2 from one
+batched biased Linear to three camera-B1 biased calls. HWDPROJ1, native Expert
+QKV/order/RMS, vision/prefill, supplied noise and Euler10 stayed unchanged.
+The fresh zero-model precondition checked20BF16arrays: unobserved/observed HWD
+controls recovered both R34native endpoints; candidates recovered R34official
+endpoints on both input origins; a separately named old-kind PROJ1child matched
+captured Gold projection values. This was not a relabelled whole-policy proof.
+
+COMPLETED0:0/errors0. Full60files/835570416bytes were retrieved with existing
+zstd(546242654bytes,835645440byte tar), exact inventory/sizes/source and both
+separately fetched headers checked, no new hash/model rerun. Independent audit
+verified20precondition arrays+1792request arrays,28requests/280NFE,64roles each,
+all replays/actual mask+permutation+visual bridges/Euler chains/callback counts,
+both arms'129ORIGINALRMS/32block/32attention perNFE and close/cleanup. Actual
+Merger inputs/activations/layouts and non-image/fixed conditions were EXACTacross
+arms; intended image embeddings and all prefix KV were allowed to change.
+
+All7control actions were EXACT309681, baseline/state47legacy fields each EXACT
+313766. Additionally every control's60old fields were EXACTR33/316975control
+(420comparisons). These are explicitly R33trajectories, not invented velocities
+in the older309681NPZs. Four newly captured actual Vision fields were not passed
+off as historical R33vision-input evidence.
+
+The candidate is **REJECTED as a unified seven-fixture qualification**: padded
+ANDpublic stay6/7, but the failing fixture CHANGES. State now passes while a new
+noise failure appears. Equal pass counts do not mean equal failure patterns:
+
+| Case / padded40x32 | Control outside | Candidate outside | Control RMSE | Candidate RMSE |
+|---|---:|---:|---:|---:|
+| baseline | 0 | 0 | .001600906810 | .001715194554 |
+| episode_start | 0 | 0 | .002484001517 | .001481730841 |
+| current | 0 | 0 | .001986950988 | .001720648773 |
+| history | 0 | 0 | .001957458629 | .001740908140 |
+| prompt | 0 | 0 | .001997666450 | .001289391827 |
+| state | 3 | **0** | .001634345752 | .001717230982 |
+| noise | 0 | **6** | .001724358996 | .002977203459 |
+
+State maxabs fell .016632080078125→.0078125 even though RMSE increased; noise
+maxabs rose .01318359375→.039031982421875. Candidate noise cosine remained
+.9999559557532167, but could not rescue six elementwise failures. RMSE improved
+for4cases and worsened for3. No input-dependent routing, tolerance/default,
+precision/runtime/sampler change, speed or robot claim was introduced.
+
+Supplementary saved-array CPU analysis confirmed that baseline/state/noise have
+EXACTthe same actual Merger inputs/activations/outputs and prefix embeddings/KV
+within each arm. State differs in suffix state, noise in initial latent/noise;
+the same prefix perturbation therefore has context-dependent action effects.
+This is not a new GPU trial or a measured policy-error fraction.
+
+For baseline/state's ONEshared vision context, current actual Merger input was
+EXACThistorical313766input, still476775values/L2.00657350586 from Gold input.
+Current candidate output was EXACTR34official form on that native input. Against
+Gold-origin merged output, its L2 slightly increased .01257768617059049→
+.01257794642374306 although unequal values decreased266738→266736.
+Let U=official(native_input)-official(Gold_input),
+B=native(native_input)-official(native_input), E_control=U+B. Saved vectors
+verified that identity and the normalized squared-error relation:
+`(||E_control||²-||U||²)/||Gold||² = 2<U,B>/||Gold||²+||B||²/||Gold||²`.
+The two terms were -1.2201970422635243e-8 and5.655137735145709e-9; net
+-6.5468326874961355e-9. Thus a NETL2compensation is measured at THISMerger
+boundary, not merely guessed; it is not proof of the cause/fraction of final
+policy error or of R33's Expert failure. R33vision input remains uncaptured.
+
+The next proposed experiment is one predeclared E×P interaction matrix (Expert
+bundle and PROJ2 form), not case-specific repair: requalify allthreeknown cells
+before the joint cell, measure actual first-velocity/action finite differences,
+and do not infer joint behavior by adding old errors. A failed joint cell would
+end this combination search and redirect localization upstream; even7/7would
+only qualify these existing proxies, not production/generalization/robot quality.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
