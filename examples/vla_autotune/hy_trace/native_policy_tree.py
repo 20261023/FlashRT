@@ -128,6 +128,67 @@ def _load_support(folder,task):
     return r,load_file(str(folder/'native/operator_outputs.safetensors')),refs
 
 
+def load_policy_inputs(fixtures,prior,*,task,checkpoint,weight_stat,runtime):
+    import numpy as np
+    from safetensors.torch import load_file
+    fixtures=Path(fixtures);prior=Path(prior);task=Path(task).resolve()
+    if prior.resolve()!=task/'results/hy-proj1-fold-309681/camera_proj1':raise ValueError('Historical seven-fixture prior root differs')
+    data={};priors={};inputs={};legacy={};legacy_reports={}
+    for variant in VARIANTS:
+        old_folder=prior/variant;pr=json.loads((old_folder/'result.json').read_text())
+        ablation.classify_exit(json.loads((old_folder/'child_exit.json').read_text())['returncode'],pr)
+        with np.load(old_folder/'actions.npz',allow_pickle=False) as z:old={k:z[k].copy() for k in z.files}
+        fixture=fixtures/(variant+'.npz')
+        with np.load(fixture,allow_pickle=False) as z:arrays={k:z[k].copy() for k in z.files}
+        admitted=controls.admit_candidate_prior(pr,old,arrays,variant=variant,expected_job='309681',checkpoint=checkpoint,runtime=runtime,fixture=validator.fixture_record(fixture))
+        if not np.array_equal(old['oracle_actions20'],arrays['expected_actions20']) or not np.array_equal(old['actions20'],old['actions32'][:,:20]):raise ValueError('Prior public slice/oracle pairing differs')
+        data[variant]=arrays;priors[variant]=old
+        inputs[variant]={'admission':admitted,'fixture':validator.fixture_record(fixture),'prior_files':{n:expert.rms.layers._file_record(old_folder/n) for n in ('result.json','actions.npz','child_exit.json')}}
+        if variant in ('baseline','state'):
+            folder=task/'results/hy-folded-state-trace-313766/native'/variant;lr=json.loads((folder/'result.json').read_text())
+            legacy[variant]=admit_legacy_header(lr,variant=variant,checkpoint=checkpoint,weight_stat=weight_stat,runtime=runtime,
+                factory=lambda:load_file(str(folder/'trace.safetensors')))
+            legacy_reports[variant]={'job_id':'313766','files':{n:expert.rms.layers._file_record(folder/n) for n in ('result.json','trace.safetensors')}}
+    return data,priors,inputs,legacy,legacy_reports
+
+
+def execute_request(backend,arrays,*,output,arm,variant,index,expert_enabled,separate_block,synchronize,request_context=None):
+    from contextlib import ExitStack
+    import torch
+    from safetensors.torch import save_file
+    if arm not in ('control','candidate') or variant not in VARIANTS or type(index) is not int or index not in (0,1) or type(expert_enabled) is not bool:
+        raise ValueError('Invalid bound policy request identity/replay index/Expert flag')
+    frontend=backend.frontend;output=Path(output)
+    folder=output/arm/variant/('replay'+str(index));folder.mkdir(parents=True,exist_ok=False)
+    tensors={};state={};request_id=arm+'.'+variant+'.r'+str(index)
+    obs={'images':{'observation.images.'+k:arrays[k] for k in ('top_head','hand_left','hand_right')},'state':arrays['state'],'prompt':str(arrays['prompt'].item())}
+    try:
+        with ExitStack() as stack:
+            extra=stack.enter_context(request_context(tensors)) if request_context is not None else None
+            stack.enter_context(policy.expert_policy_request(frontend,enabled=expert_enabled,request_id=request_id,separate_block=separate_block,
+                tensors=tensors,state=state,expected_nfe=10,synchronize=synchronize))
+            result=backend.infer(obs,noise=arrays['noise'].copy())
+        if extra is not None and (extra.get('complete') is not True or extra.get('cleanup',{}).get('passed') is not True):raise ValueError('Auxiliary request context cleanup incomplete')
+        validator.validate_actions(result['actions'])
+        if not policy._same(tensors['actions'],torch.from_numpy(result['actions'])[None]):raise ValueError('API action domain differs from raw native graph boundary')
+        sampler=validator.jsonable(result.get('sampler_metadata'));meta=validator.jsonable(result.get('backend_metadata'))
+        validator.validate_sampler_metadata(sampler,sampler='euler',num_steps=10,max_steps=None)
+        if (sampler.get('numerical_profile')!='official_local_fp32' or meta.get('model')!='hyvla' or meta.get('precision')!='bf16'
+                or meta.get('action_domain')!='normalized-padded-model-actions'):raise ValueError('Actual native sampler/backend metadata differs')
+        for s in range(10):
+            expected=tensors[f'step{s+1}.latent_before'] if s<9 else tensors['actions']
+            if not policy._same(controls.reference_euler_step(tensors[f'step{s}.latent_before'],tensors[f'step{s}.velocity']),expected):raise ValueError('Observed native Euler increment chain differs')
+        record={'status':'request_captured_pending_backend_cleanup','request_id':request_id,'scope':state,'sampler_metadata':sampler,'backend_metadata':meta,
+            'euler_chain_characterization_exact':True,'time_scalar_source':'frontend_schedule_reconstruction_not_observed_scalar','path':str(folder.relative_to(output))}
+        if extra is not None:record['operator_scope']=extra
+        common._save(folder,tensors,record,atomic_report=True)
+    except BaseException as error:
+        if tensors:save_file({k:v.contiguous() for k,v in tensors.items()},str(folder/'unqualified_partial.safetensors'))
+        (folder/'failure.json').write_text(json.dumps({'status':'unqualified_request_failure','error_type':type(error).__name__,'error':str(error)},indent=2)+'\n')
+        raise
+    return {**record,'tensors':tensors}
+
+
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
     for name in ('checkpoint','fixtures','prior','support-root','preflight-report','output'):p.add_argument('--'+name,type=Path,required=True)
@@ -135,7 +196,6 @@ def main(argv=None):
     import platform,sys
     import numpy as np
     import torch
-    from safetensors.torch import load_file,save_file
     from flash_rt.vla import BackendConfig,load_backend
     from flash_rt.frontends.torch.hyvla_probeflow import HyVLAFlowFrontend
     if len(args.source_revision)!=40 or any(c not in '0123456789abcdef' for c in args.source_revision):raise ValueError('Exact current source revision required')
@@ -154,22 +214,7 @@ def main(argv=None):
     for path,record in ((Path(expert.__file__),sr['source_records']['driver']),(Path(expert.mt.__file__),sr['source_records']['tree']),(native_source,sr['source_records']['native'])):
         if path.read_bytes()!=Path(record['path']).read_bytes():raise ValueError('R32 RMS/tree/native implementation source changed')
     proof=json.loads(args.preflight_report.read_text());ablation.validate_precondition(proof,job_id=os.environ['SLURM_JOB_ID'],source_revision=args.source_revision,checkpoint=args.checkpoint,fold_spatial=True)
-    data={};priors={};inputs={};legacy={};legacy_reports={}
-    for variant in VARIANTS:
-        old_folder=args.prior/variant;pr=json.loads((old_folder/'result.json').read_text())
-        ablation.classify_exit(json.loads((old_folder/'child_exit.json').read_text())['returncode'],pr)
-        with np.load(old_folder/'actions.npz',allow_pickle=False) as z:old={k:z[k].copy() for k in z.files}
-        fixture=args.fixtures/(variant+'.npz')
-        with np.load(fixture,allow_pickle=False) as z:arrays={k:z[k].copy() for k in z.files}
-        admitted=controls.admit_candidate_prior(pr,old,arrays,variant=variant,expected_job='309681',checkpoint=checkpoint,runtime=runtime,fixture=validator.fixture_record(fixture))
-        if not np.array_equal(old['oracle_actions20'],arrays['expected_actions20']) or not np.array_equal(old['actions20'],old['actions32'][:,:20]):raise ValueError('Prior public slice/oracle pairing differs')
-        data[variant]=arrays;priors[variant]=old
-        inputs[variant]={'admission':admitted,'fixture':validator.fixture_record(fixture),'prior_files':{n:expert.rms.layers._file_record(old_folder/n) for n in ('result.json','actions.npz','child_exit.json')}}
-        if variant in ('baseline','state'):
-            folder=task/'results/hy-folded-state-trace-313766/native'/variant;lr=json.loads((folder/'result.json').read_text())
-            legacy[variant]=admit_legacy_header(lr,variant=variant,checkpoint=checkpoint,weight_stat=weight_stat,runtime=runtime,
-                factory=lambda:load_file(str(folder/'trace.safetensors')))
-            legacy_reports[variant]={'job_id':'313766','files':{n:expert.rms.layers._file_record(folder/n) for n in ('result.json','trace.safetensors')}}
+    data,priors,inputs,legacy,legacy_reports=load_policy_inputs(args.fixtures,args.prior,task=task,checkpoint=checkpoint,weight_stat=weight_stat,runtime=runtime)
     args.output.mkdir(parents=True,exist_ok=False)
     config=BackendConfig(model='hyvla',checkpoint=str(args.checkpoint),hardware='cuda_sm80',precision='bf16',sampler='euler',num_steps=10,
         options={'use_cuda_graph':False,'numerical_profile':'official_local_fp32'})
@@ -182,29 +227,9 @@ def main(argv=None):
             frontend=backend.frontend;sources=validator.model_sources(backend)
             separate=expert.rms.layers.load_native_owner(native_source,projection='separate',n_heads=frontend.n_heads,n_kv=frontend.n_kv,head_dim=frontend.pipe.head_dim)._block.__func__
             def execute(arm,variant,index):
-                arrays=data[variant];folder=args.output/arm/variant/('replay'+str(index));folder.mkdir(parents=True,exist_ok=False)
-                tensors={};state={};request_id=arm+'.'+variant+'.r'+str(index)
-                obs={'images':{'observation.images.'+k:arrays[k] for k in ('top_head','hand_left','hand_right')},'state':arrays['state'],'prompt':str(arrays['prompt'].item())}
-                try:
-                    with policy.expert_policy_request(frontend,enabled=arm=='candidate',request_id=request_id,separate_block=separate,tensors=tensors,state=state,
-                            expected_nfe=10,synchronize=torch.cuda.synchronize):result=backend.infer(obs,noise=arrays['noise'].copy())
-                    validator.validate_actions(result['actions'])
-                    if not policy._same(tensors['actions'],torch.from_numpy(result['actions'])[None]):raise ValueError('API action domain differs from raw native graph boundary')
-                    sampler=validator.jsonable(result.get('sampler_metadata'));meta=validator.jsonable(result.get('backend_metadata'))
-                    validator.validate_sampler_metadata(sampler,sampler='euler',num_steps=10,max_steps=None)
-                    if (sampler.get('numerical_profile')!='official_local_fp32' or meta.get('model')!='hyvla' or meta.get('precision')!='bf16'
-                            or meta.get('action_domain')!='normalized-padded-model-actions'):raise ValueError('Actual native sampler/backend metadata differs')
-                    for s in range(10):
-                        expected=tensors[f'step{s+1}.latent_before'] if s<9 else tensors['actions']
-                        if not policy._same(controls.reference_euler_step(tensors[f'step{s}.latent_before'],tensors[f'step{s}.velocity']),expected):raise ValueError('Observed native Euler increment chain differs')
-                    record={'status':'request_captured_pending_backend_cleanup','request_id':request_id,'scope':state,'sampler_metadata':sampler,'backend_metadata':meta,
-                        'euler_chain_characterization_exact':True,'time_scalar_source':'frontend_schedule_reconstruction_not_observed_scalar','path':str(folder.relative_to(args.output))}
-                    common._save(folder,tensors,record,atomic_report=True)
-                except BaseException as error:
-                    if tensors:save_file({k:v.contiguous() for k,v in tensors.items()},str(folder/'unqualified_partial.safetensors'))
-                    (folder/'failure.json').write_text(json.dumps({'status':'unqualified_request_failure','error_type':type(error).__name__,'error':str(error)},indent=2)+'\n')
-                    raise
-                item={**record,'tensors':tensors};requests.append(item);return item
+                item=execute_request(backend,data[variant],output=args.output,arm=arm,variant=variant,index=index,
+                    expert_enabled=arm=='candidate',separate_block=separate,synchronize=torch.cuda.synchronize)
+                requests.append(item);return item
             def qualify_control(variant,pair):
                 if not np.array_equal(pair[0]['tensors']['actions'][0].numpy(),priors[variant]['actions32']):raise ValueError('Current control actions differ from historical HWD prior')
                 evidence=legacy_step_check(variant,pair[0]['tensors'],legacy.get(variant))

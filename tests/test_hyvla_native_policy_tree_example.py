@@ -1,5 +1,7 @@
 import importlib.util
 import copy
+from contextlib import contextmanager
+import json
 from pathlib import Path
 import subprocess
 import os
@@ -194,3 +196,134 @@ def test_help_and_allocation_guard_before_model_or_input_io(tmp_path):
     r=subprocess.run([sys.executable,str(SCRIPT),'--checkpoint','/missing','--fixtures','/missing','--prior','/missing',
         '--support-root','/missing','--preflight-report','/missing','--source-revision','a'*40,'--output',str(tmp_path/'unused')],env=env,text=True,capture_output=True)
     assert r.returncode!=0 and 'allocated GPU srun' in r.stderr and not (tmp_path/'unused').exists()
+
+
+def disk_policy_inputs(driver,tmp_path):
+    from test_hyvla_proj1_ablation_example import completed_record,saved_arrays
+    from safetensors.torch import save_file
+    _,checkpoint,weight_stat,_=legacy_header_fixture()
+    fixtures=tmp_path/'fixtures';fixtures.mkdir();(fixtures/'manifest.json').write_text(json.dumps({'job_id':'1','source_revision':'a'*40}))
+    prior=tmp_path/'results/hy-proj1-fold-309681/camera_proj1'
+    runtime=completed_record()['runtime']
+    for case in driver.VARIANTS:
+        saved=saved_arrays();saved['actions32']=saved['actions32'].copy()
+        if case=='state':saved['actions32'][0,0]=.04
+        saved['actions20']=saved['actions32'][:,:20].copy()
+        saved.update(replay_actions32=np.stack([saved['actions32']]*2),graph_actions32=saved['actions32'].copy(),eager_actions32=saved['actions32'].copy())
+        arrays={'noise':saved['noise'],'state':saved['input_state'],'prompt':saved['input_prompt'],
+            'expected_actions32':saved['oracle_actions32'],'expected_actions20':saved['oracle_actions20']}
+        np.savez(fixtures/(case+'.npz'),**arrays)
+        record=completed_record(case!='state',arm='camera_proj1',variant=case)
+        record.update(job_id='309681',checkpoint=checkpoint,runtime=runtime,fixture=driver.validator.fixture_record(fixtures/(case+'.npz')))
+        record['official_oracle']=driver.validator.oracle_comparison(saved['actions32'],arrays,sampler='euler',num_steps=10)
+        record['experimental_merger_proj1'].update(fold_spatial=True,effective_projection='per_camera_hwd')
+        record['experimental_merger_proj1']['precondition'].update(job_id='309681',fold_spatial=True)
+        folder=prior/case;folder.mkdir(parents=True)
+        (folder/'result.json').write_text(json.dumps(record));(folder/'child_exit.json').write_text(json.dumps({'returncode':3 if case=='state' else 0}))
+        np.savez(folder/'actions.npz',**saved)
+        if case in ('baseline','state'):
+            header,_,_,_=legacy_header_fixture();header.update(variant=case,checkpoint=checkpoint,runtime=runtime)
+            old=tmp_path/'results/hy-folded-state-trace-313766/native'/case;old.mkdir(parents=True)
+            (old/'result.json').write_text(json.dumps(header))
+            # This helper transports the legacy payload; its step-role admission
+            # is exercised separately by legacy_step_check, not invented here.
+            save_file({'legacy.transport_sentinel':torch.tensor([3.])},str(old/'trace.safetensors'))
+    return fixtures,prior,checkpoint,weight_stat,runtime
+
+
+@pytest.mark.parametrize('bad',['none','noise','fixture_stat','checkpoint'])
+def test_shared_disk_input_admission_preserves_seven_priors_and_both_checkpoint_schemas(driver,tmp_path,bad):
+    fixtures,prior,checkpoint,weight_stat,runtime=disk_policy_inputs(driver,tmp_path);called=[]
+    if bad=='noise':
+        p=prior/'baseline/actions.npz'
+        with np.load(p,allow_pickle=False) as z:saved={k:z[k].copy() for k in z.files}
+        saved['noise'][0,0]+=1;np.savez(p,**saved)
+    if bad=='fixture_stat':
+        p=fixtures/'baseline.npz'
+        with np.load(p,allow_pickle=False) as z:values={k:z[k].copy() for k in z.files}
+        np.savez(p,**values,unexpected=np.zeros(100))
+    if bad=='checkpoint':checkpoint=copy.deepcopy(checkpoint);checkpoint['config']['mtime_ns']+=1
+    def consume():
+        out=driver.load_policy_inputs(fixtures,prior,task=tmp_path,checkpoint=checkpoint,weight_stat=weight_stat,runtime=runtime)
+        called.append('backend_factory');return out
+    if bad=='none':
+        data,priors,records,legacy,oldrecords=consume()
+        assert set(data)==set(priors)==set(records)==set(driver.VARIANTS) and set(legacy)==set(oldrecords)=={'baseline','state'}
+        assert all(records[c]['admission']['admitted'] for c in driver.VARIANTS)
+        assert torch.equal(legacy['baseline']['legacy.transport_sentinel'],torch.tensor([3.]))
+    else:
+        with pytest.raises(ValueError,match='prior|identity|checkpoint|input|Folded'):consume()
+        assert not called
+
+
+class CPURequestBackend:
+    def __init__(self):
+        from test_hyvla_expert_policy_scope_example import Front
+        self.frontend=Front();self.frontend.num_steps=10
+        self.frontend._embedding_times=[1.+i*(-1./10) for i in range(10)];self.calls=0
+    def infer(self,observation,noise):
+        self.calls+=1
+        result=self.frontend.run()
+        return {'actions':result[0].numpy().copy(),
+            'sampler_metadata':{'sampler':'euler','scheduled_steps':10,'nfe':10,'timesteps':[1.+i*(-1./10) for i in range(10)],
+                'numerical_profile':'official_local_fp32','operation_dtypes':{'euler_increment':'bfloat16'},
+                'embedding_timesteps':self.frontend._embedding_times,'profile_scope':'local_math_hooks_not_official_exact'},
+            'backend_metadata':{'model':'hyvla','backend':'flashrt','sampler':'euler','hardware':'cuda_sm80','precision':'bf16',
+                'framework':'torch','action_domain':'normalized-padded-model-actions'}}
+
+
+def request_arrays():
+    return {**{k:np.zeros((3,2,2),np.uint8) for k in ('top_head','hand_left','hand_right')},
+        'state':np.zeros(20,np.float32),'prompt':np.asarray('unit'),'noise':np.zeros((40,32),np.float32)}
+
+
+def test_shared_executor_retains_native_expert_and_waits_for_auxiliary_cleanup_before_saving(driver,tmp_path):
+    backend=CPURequestBackend();events=[]
+    @contextmanager
+    def extra(tensors):
+        state={'complete':False,'cleanup':{'passed':False}};events.append('enter')
+        tensors['auxiliary.value']=torch.ones(1)
+        yield state
+        events.append('cleanup');state.update(complete=True,cleanup={'passed':True})
+    record=driver.execute_request(backend,request_arrays(),output=tmp_path,arm='candidate',variant='baseline',index=0,
+        expert_enabled=False,separate_block=None,synchronize=lambda:None,request_context=extra)
+    assert backend.calls==1 and record['scope']['enabled'] is False and record['scope']['nfe']==10
+    assert all(s['norm']['original_norm_calls']==129 for s in record['scope']['steps'])
+    saved=json.loads((tmp_path/'candidate/baseline/replay0/result.json').read_text())
+    assert saved['status']=='request_captured_pending_backend_cleanup' and saved['operator_scope']['complete']
+    assert saved['operator_scope']['cleanup']['passed'] and events==['enter','cleanup']
+
+
+def test_shared_executor_never_infers_when_expert_flag_requires_missing_template(driver,tmp_path):
+    backend=CPURequestBackend()
+    with pytest.raises(ValueError,match='unbound|separate'):
+        driver.execute_request(backend,request_arrays(),output=tmp_path,arm='candidate',variant='baseline',index=0,
+            expert_enabled=True,separate_block=None,synchronize=lambda:None)
+    assert backend.calls==0 and not (tmp_path/'candidate/baseline/replay0/result.json').exists()
+
+
+def test_shared_executor_auxiliary_failure_keeps_partial_without_success_sidecar(driver,tmp_path):
+    backend=CPURequestBackend()
+    @contextmanager
+    def broken(tensors):
+        tensors['auxiliary.value']=torch.ones(1)
+        yield {'complete':False,'cleanup':{'passed':False}}
+        raise RuntimeError('aux cleanup failed')
+    with pytest.raises(RuntimeError,match='aux cleanup'):
+        driver.execute_request(backend,request_arrays(),output=tmp_path,arm='control',variant='baseline',index=0,
+            expert_enabled=False,separate_block=None,synchronize=lambda:None,request_context=broken)
+    folder=tmp_path/'control/baseline/replay0'
+    assert (folder/'unqualified_partial.safetensors').exists() and (folder/'failure.json').exists() and not (folder/'result.json').exists()
+
+
+@pytest.mark.parametrize('bad',['arm','variant','index','expert_flag'])
+def test_shared_executor_rejects_unbound_request_identity_before_any_output_or_inference(driver,tmp_path,bad):
+    backend=CPURequestBackend();output=tmp_path/'unused'
+    options={'arm':'control','variant':'baseline','index':0,'expert_enabled':False}
+    if bad=='arm':options['arm']='other'
+    if bad=='variant':options['variant']='../../escape'
+    if bad=='index':options['index']=2
+    if bad=='expert_flag':options['expert_enabled']='false'
+    with pytest.raises(ValueError,match='request|identity|flag'):
+        driver.execute_request(backend,request_arrays(),output=output,separate_block=None,synchronize=lambda:None,**options)
+    assert backend.calls==0 and not output.exists()
