@@ -69,6 +69,13 @@ def legacy_step_check(variant,tensors,legacy):
         'scope':'observed_native_steps_and_available_conditions_not_forged_other_fixtures'}
 
 
+def admit_legacy_header(report,*,variant,checkpoint,weight_stat,runtime,factory):
+    expert.rms.layers.admit_baseline_header(report,job_id='313766',source_revision='2959bd8710038c7dcdebdd17ac645b7feed4333f',checkpoint=weight_stat)
+    if report.get('checkpoint')!=checkpoint:raise ValueError('Legacy native top-level checkpoint/config differs')
+    if report.get('runtime')!=runtime or report.get('variant')!=variant:raise ValueError('Legacy native step trace runtime/case differs')
+    return factory()
+
+
 def qualify_candidate(candidate,control,arrays):
     a,b=candidate['tensors'],control['tensors']
     names=(*CONDITIONS,*(f'step{s}.time_embedding' for s in range(10)))
@@ -139,9 +146,10 @@ def main(argv=None):
     if args.prior.resolve()!=task/'results/hy-proj1-fold-309681/camera_proj1':raise ValueError('Historical seven-fixture prior root differs')
     runtime={'python':platform.python_version(),'executable':sys.executable,'torch':torch.__version__,'cuda':torch.version.cuda,'numpy':np.__version__}
     sr,sa,refs=_load_support(support,task);_,checkpoint=validator.checkpoint_record(args.checkpoint)
+    weight_stat=ablation._checkpoint_stat(args.checkpoint)
     if (runtime!=sr['runtime'] or torch.version.git_version!=sr['torch_git_version']
             or torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction!=sr['bf16_reduced_precision_reduction']
-            or ablation._checkpoint_stat(args.checkpoint)!=sr['checkpoint']):raise ValueError('Support/current runtime/checkpoint/flags differ')
+            or weight_stat!=sr['checkpoint']):raise ValueError('Support/current runtime/checkpoint/flags differ')
     native_source=Path(__file__).resolve().parents[3]/'flash_rt/models/hyvla/pipeline_thor.py'
     for path,record in ((Path(expert.__file__),sr['source_records']['driver']),(Path(expert.mt.__file__),sr['source_records']['tree']),(native_source,sr['source_records']['native'])):
         if path.read_bytes()!=Path(record['path']).read_bytes():raise ValueError('R32 RMS/tree/native implementation source changed')
@@ -159,9 +167,9 @@ def main(argv=None):
         inputs[variant]={'admission':admitted,'fixture':validator.fixture_record(fixture),'prior_files':{n:expert.rms.layers._file_record(old_folder/n) for n in ('result.json','actions.npz','child_exit.json')}}
         if variant in ('baseline','state'):
             folder=task/'results/hy-folded-state-trace-313766/native'/variant;lr=json.loads((folder/'result.json').read_text())
-            expert.rms.layers.admit_baseline_header(lr,job_id='313766',source_revision='2959bd8710038c7dcdebdd17ac645b7feed4333f',checkpoint=checkpoint)
-            if lr['runtime']!=runtime or lr['variant']!=variant:raise ValueError('Legacy native step trace runtime/case differs')
-            legacy[variant]=load_file(str(folder/'trace.safetensors'));legacy_reports[variant]={'job_id':'313766','files':{n:expert.rms.layers._file_record(folder/n) for n in ('result.json','trace.safetensors')}}
+            legacy[variant]=admit_legacy_header(lr,variant=variant,checkpoint=checkpoint,weight_stat=weight_stat,runtime=runtime,
+                factory=lambda:load_file(str(folder/'trace.safetensors')))
+            legacy_reports[variant]={'job_id':'313766','files':{n:expert.rms.layers._file_record(folder/n) for n in ('result.json','trace.safetensors')}}
     args.output.mkdir(parents=True,exist_ok=False)
     config=BackendConfig(model='hyvla',checkpoint=str(args.checkpoint),hardware='cuda_sm80',precision='bf16',sampler='euler',num_steps=10,
         options={'use_cuda_graph':False,'numerical_profile':'official_local_fp32'})

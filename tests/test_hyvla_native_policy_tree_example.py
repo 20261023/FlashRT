@@ -1,4 +1,5 @@
 import importlib.util
+import copy
 from pathlib import Path
 import subprocess
 import os
@@ -86,6 +87,40 @@ def test_baseline_state_legacy_raw_steps_are_required_and_compared(driver):
     old={k:v.clone() for k,v in raw.items()};assert driver.legacy_step_check('state',raw,old)['historical_step_trace_available']
     old['step8.velocity']+=1
     with pytest.raises(ValueError,match='legacy|historical'):driver.legacy_step_check('state',raw,old)
+
+
+def legacy_header_fixture():
+    source='2959bd8710038c7dcdebdd17ac645b7feed4333f'
+    file={'path':'/checkpoint/model.safetensors','bytes':42,'mtime_ns':7}
+    directory={'path':'/checkpoint','weights_size_bytes':42,'weights_mtime_ns':7,
+        'config':{'path':'/checkpoint/config.json','size_bytes':8,'mtime_ns':9},
+        'camera_order':['top_head','hand_left','hand_right'],'profile_fields':{'num_steps':10},'identity_note':'stat only'}
+    runtime={'torch':'2.11.0+cu128'}
+    header={'engine':'native','variant':'baseline','job_id':'313766','artifact_complete':True,
+        'execution_mode':'diagnostic_eager','diagnostic_cleanup':{'passed':True},
+        'config':{'use_cuda_graph':False,'numerical_profile':'official_local_fp32'},
+        'experimental_projection':{'fold_spatial':True,'effective_projection':'per_camera_hwd','source_revision':source,
+            'precondition':{'job_id':'313766','source_revision':source,'checkpoint':copy.deepcopy(file),'operator_exact':True}},
+        'historical_official_reference':{'job_id':'308690'},'prior_graph_output':{'exact':True},'suffix_order_control':None,
+        'frozen_control_evidence':{'native_replay_exact':True,'prefix_preserved':True},
+        'checkpoint':copy.deepcopy(directory),'runtime':dict(runtime)}
+    return header,directory,file,runtime
+
+
+@pytest.mark.parametrize('bad',['none','bytes','mtime','directory','config','runtime'])
+def test_real_legacy_two_checkpoint_schemas_are_admitted_before_factory(driver,bad):
+    header,directory,file,runtime=legacy_header_fixture();called=[]
+    if bad=='bytes':header['experimental_projection']['precondition']['checkpoint']['bytes']+=1
+    if bad=='mtime':header['experimental_projection']['precondition']['checkpoint']['mtime_ns']+=1
+    if bad=='directory':header['checkpoint']['path']='/other'
+    if bad=='config':header['checkpoint']['config']['mtime_ns']+=1
+    if bad=='runtime':header['runtime']['torch']='other'
+    def factory():called.append(True);return 'legacy trace reader'
+    call=lambda:driver.admit_legacy_header(header,variant='baseline',checkpoint=directory,weight_stat=file,runtime=runtime,factory=factory)
+    if bad=='none':assert call()=='legacy trace reader' and called==[True]
+    else:
+        with pytest.raises(ValueError,match='checkpoint|baseline|legacy|runtime'):call()
+        assert not called
 
 
 def test_original_padded_gate_cannot_be_rescued_by_public_slice(driver):
