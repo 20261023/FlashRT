@@ -448,3 +448,33 @@ baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有�
 32个窗口的平方输入均为 FP32、storage offset0、16字节对齐；两版实际 kernel 完整符号也相同，为 FP32 `reduce_kernel<512,1,…,4,4>`。这确认了直接输入／布局／launch 预测，**没有证明 runtime `ReduceConfig` 的向量化字段或编译后的 shuffle 路径相同**，更不否定此前已测得的不同 mean 数组。
 
 下一步只测试从实际输入计算的显式 FP32 加法树，不能把保存的旧 variance 当答案；没有启用生产兼容归约或将 profiler 时长当作候选延迟。完整策略、机器人及历史6/7失败边界不变。详细证据见[launch 实测f04a95e3](https://github.com/20261023/FlashRT/blob/f04a95e3/docs/vla_autotune_experiments.md)。
+
+### 11.11 Hy：输入驱动的显式加法树重现两版 mean 端点
+
+`316521` 直接接收实际 FP32 平方输入，预先固定四种“标量／向量4分组 × 升序／降序 shuffle”模型，不读取保存的 variance 作为答案，也不调用 native `sum/mean`。全部96个数组、128项旧／新对照独立审计通过，64个 GPU 树输出均逐位等于独立 NumPy FP32、逐 lane／component 索引的重算。
+
+| 显式 FP32 树 | EXACT旧 mean | EXACT新 mean |
+|---|---:|---:|
+| 标量分组＋升序 | 8/16 | 0/16 |
+| 标量分组＋降序 | 0/16 | 0/16 |
+| 向量4分组＋升序 | 8/16 | 0/16 |
+| 向量4分组＋降序 | 0/16 | 16/16 |
+
+按旧源码为128宽选择标量＋升序、1024宽选择向量＋升序，可由实际输入恢复16/16旧 mean；新式向量＋降序恢复16/16新 mean。这比交接保存的旧 variance 更进一步，但仍不是对内部编译分支的直接观测，也不是任意形状／数据／布局或完整策略的保证。所有否定交叉组合都保留，没有据结果继续调参。
+
+该模型刻意采用多个 eager FP32 加法 kernel，只作机制诊断，不是加速候选。后续完整 Expert 原型必须由 LIVE input／weight 计算 RMS，并先通过全部 native 历史对照；最终 norm／head 参与干预，不能宣称 Gold-head 是不变负对照。生产默认、原质量阈值和历史6/7失败不变。详细证据见[源码树实测398bdecb](https://github.com/20261023/FlashRT/blob/398bdecb/docs/vla_autotune_experiments.md)。
+
+### 11.12 Hy：32层条件 Expert 的跨 runtime 差异已闭合
+
+`316722` 保持 separate QKV、prefix 原序、Gold KV 和固定官方外部轨迹，先要求全部2600个未改动 native 对照张量精确复现历史。随后只用每次 LIVE input／checkpoint weight 计算 source-old RMS，没有注入保存的 norm 输入、variance 或输出。
+
+| case | native 对照与旧2.7 EXACT | live-tree 与旧2.7 EXACT | 传播 raw velocity relative L2 |
+|---|---:|---:|---|
+| baseline | 509/1300 | **1300/1300** | .00307602–.00494808 → **0** |
+| state | 510/1300 | **1300/1300** | .00316721–.00527045 → **0** |
+
+全部5200个原始数组及旧 oracle 对照均独立审计。原型两例的32层、两种 hidden 输入模式、十步的每个 residual／output 都 EXACT；20个传播速度和20个固定-Gold head 速度也全部 EXACT。最终 norm／head 参与干预，不能把它当作不变负对照；state 的 control head 为9/10 EXACT，原型为10/10。额外 BF16→int16 比较连 signed zero 的位型也一致，未添加内容哈希。
+
+每臂观测5160次 norm，作用域／H0／attention-order 清理通过；仅加载363个唯一 checkpoint key／臂，726次读取事件，没有构造完整模型或构建新 kernel。登录节点只读加载预检的 SSH 超时没有被记为通过；相同来源／输入门在 allocation 内先于 owner／weights 执行，实际完成后再由原始数组审计确认。
+
+**这是联合固定投影／顺序条件下的完整 Expert 等价，不是完整 native policy 修复。** Vision/prefill KV 在该实验中来自 Gold，latent/time 来自固定外部轨迹；native vision KV、free-running、原七 fixture 和机器人资格尚未重测。多-kernel 原型不是加速候选，历史6/7失败、生产默认和门限保持不变。下一轮只在实际 `evaluate_velocity` 阶段接入，VLM/prefill、积分和原质量门均不改。详细证据见[完整 Expert 实测200e6560](https://github.com/20261023/FlashRT/blob/200e6560/docs/vla_autotune_experiments.md)。

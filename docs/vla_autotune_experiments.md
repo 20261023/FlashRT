@@ -1023,6 +1023,9 @@ The original seven-fixture6/7FAILED remains untouched. Next investigate a strict
 Expert-phase-only native diagnostic hook and its actual prefix permutation before
 testing native KV/free-running fixtures; do not change VLM/prefill, integrator,
 precision, runtime, production defaults or original quality thresholds here.
+An additional independent BF16-as-int16 pattern comparison, including signed
+zero, found zero unequal bit patterns in all2600control/prior-native pairs and
+all2600prototype/old2.7pairs. This is an array comparison, not a content hash.
 
 ## Remaining acceptance and testing limits
 
