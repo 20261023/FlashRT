@@ -511,3 +511,11 @@ CPU 边界复核进一步发现：baseline/state 与 Gold 的266738个 prefix em
 这支持“最后Linear调用组织仍有局部数值影响”，而不是PROJ1局部EXACT就代表完整Merger等价。实际PROJ2输入为每camera `[1,7,7,2048]` 对native batched `[3,7,7,2048]`；源码预示flattened M49对M147，但具体GEMM算法／bias epilogue未观测。上游输入差异也仍在：同form换origin的merged relative L2约`.012578`，不能把PROJ2发现当作整个策略误差的解释比例。
 
 下一步先从已获准activation孤立最后Linear，验证两个原端点再判别调用组织；没有新增七例通过或生产默认变更，历史6/7失败保持。研究过程中的M1—M4预测及其支持／否定边界见[过程记录第8节](2026-11-12-vla-autotune-research-process.zh-CN.md#8-r34在结果前写下下一轮如何判别原因)。
+
+### 11.15 Hy：隔离PROJ2后，biased Linear的M49／M147效应被直接重现
+
+`317555`／`32ea141e` 的30数组、14个CPU trace、4个历史端点和28项对照独立审计通过。在两个冻结activation来源上，per-camera B1／HWD／flat49三个有bias调用都EXACT官方端点；B3／flat147都EXACT native端点。实际CPU侧aten记录分别是3次M49 `addmm` 对1次M147 `addmm`，计算使用A800，但没有采CUDA算法／kernel时长。
+
+两种显式BF16 `mm→add`均不匹配任一原端点，对official参考分别76773／77608个值不同、maxabs`.5`。保存输出的追加CPU比较还发现，这两种显式表达式彼此在两个来源上EXACT。因此这是**biased执行路径条件下**的行分组效应，不是“M不同就总会不同”的普遍规律，也没有证明某个具体cuBLAS epilogue原因。
+
+已追加到[研究记录第8.7节](2026-11-12-vla-autotune-research-process.zh-CN.md)，保留第8.6节结果前七臂预测。下一步须先验证examples-only完整Merger中的实际端点，再重测单一PROJ2改动的native-policy；当前没有新七例通过、速度或机器人结论，原6/7失败和默认／门限保持。

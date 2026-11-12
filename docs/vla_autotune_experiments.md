@@ -1134,6 +1134,55 @@ seven-fixture pass. Next isolate the final Linear from the admitted activation,
 retaining both historical form endpoints before any policy integration. Original
 6/7FAILED and productionprecision/runtime/defaults/quality thresholds stay.
 
+Job317555 (`round035/32ea141e`) isolated PROJ2 from two admitted R34activations,
+using only its two BF16checkpoint tensors. All17files/18425066bytes were fetched;
+file set/sizes/source and the separately retrieved header matched. Independent
+audit checked all30raw arrays,14CPUChrome traces,14profiled/unprofiled exact
+replays,4historical form anchors and28reference contrasts. The seven arms were
+fixed before the run; no parameter refinement or model/policy rerun followed.
+
+Both origins gave the same grouping of observed endpoints:
+
+| PROJ2 arm | EXACT R34official endpoint | EXACT R34nativeHWD endpoint | Actual CPU-side GEMM lowering |
+|---|---:|---:|---|
+| batched_bias | 0/2 | 2/2 | 1addmm, M147 |
+| per_camera_b1_bias | 2/2 | 0/2 | 3addmm, M49each |
+| per_camera_hwd_bias | 2/2 | 0/2 | 3addmm, M49each |
+| per_camera_flat_bias | 2/2 | 0/2 | 3addmm, M49each |
+| flat147_bias | 0/2 | 2/2 | 1addmm, M147 |
+| batched_mm_add | 0/2 | 0/2 | 1mm, M147, followed by BF16add |
+| per_camera_mm_add | 0/2 | 0/2 | 3mm, M49each, followed by BF16adds |
+
+The computation ran on A800; only CPUaten activities/input shapes were profiled,
+not CUDA kernels or durations. Parent `aten::matmul` and child `aten::mm` records
+are not counted as two separate GEMMs. Thus the source-based M49/M147 prediction
+is now an actual aten-lowering observation on these calls, while cuBLAS algorithm,
+epilogue implementation and accumulation tree remain unobserved.
+
+Within the biased-Linear path, row grouping reproduced the two historical
+endpoints independently of B1/HWD/flat exterior rank. The explicit BF16mm-then-add
+expressions did NOT reproduce either endpoint: againstofficialGold-origin output,
+76773values differed(relativeL2.002756387646,maxabs.5); fornative-origin,
+77608values differed(.002678609636,maxabs.5). Splitting bias is therefore a
+negative arithmetic control, not an exact fix. This does not assign all those
+differences exclusively to a specific fused GPU epilogue.
+
+An additional CPU comparison of the already-saved predeclared outputs found
+batched_mm_add EXACTper_camera_mm_add on both origins, including BF16bit patterns.
+No new GPU trial or adaptive arm was introduced. This counterexample rules out
+"M49 versus M147 must always differ regardless of expression" on this matrix;
+the measured row-geometry effect is conditional on the biased execution path.
+Separately,18paired BF16-as-int16 checks (14replays+4historicalanchors), including
+signedzero, foundzero unequal patterns; ordinary numerical EXACTwas not assumed
+to imply bit identity without this extra check. No content hash was computed.
+
+COMPLETED0:0/errors0. The next step can restore per-camera biased PROJ2 in an
+examples-only complete HWDMerger, first require actual frozen endpoints and
+then test a singly changed native-policy arm. That would be a NEWqualification,
+not a policy conclusion from these two saved activations. Upstreamvisioninput
+differences and historical6/7FAILED remain; no runtime/precision/default/gate,
+speed, robot or generalization promotion follows.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
