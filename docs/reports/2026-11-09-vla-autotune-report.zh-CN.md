@@ -478,3 +478,24 @@ baseline仅6/10步、state仅7/10步 L2 改善，其余步反而变差；没有�
 每臂观测5160次 norm，作用域／H0／attention-order 清理通过；仅加载363个唯一 checkpoint key／臂，726次读取事件，没有构造完整模型或构建新 kernel。登录节点只读加载预检的 SSH 超时没有被记为通过；相同来源／输入门在 allocation 内先于 owner／weights 执行，实际完成后再由原始数组审计确认。
 
 **这是联合固定投影／顺序条件下的完整 Expert 等价，不是完整 native policy 修复。** Vision/prefill KV 在该实验中来自 Gold，latent/time 来自固定外部轨迹；native vision KV、free-running、原七 fixture 和机器人资格尚未重测。多-kernel 原型不是加速候选，历史6/7失败、生产默认和门限保持不变。下一轮只在实际 `evaluate_velocity` 阶段接入，VLM/prefill、积分和原质量门均不改。详细证据见[完整 Expert 实测200e6560](https://github.com/20261023/FlashRT/blob/200e6560/docs/vla_autotune_experiments.md)。
+
+### 11.13 Hy：完整 native-policy 候选仍6/7，拒绝晋升
+
+`316975` 将 separate QKV、prefix attention 列逆序和 LIVE source-old RMS 三项改动限制在实际 `evaluate_velocity` 内，最终 norm／head 包含在内；vision、VLM/prefill、native KV、Euler10 和固定 noise 不变。先让七例 HWD 控制各运行两次并精确复现历史 actions／6/7，再让候选各运行两次。没有注入 Gold KV、latent、norm 或 velocity。
+
+原作业曾因 SSH 观测失败而终态未知，但没有被判为 Slurm 失败或重复提交；退避恢复后确认同一回执／源码的作业 COMPLETED `0:0`。完整60文件、739398628字节回传，1680个请求张量、28次请求／280 NFE、两次回放、native-prefix／conditions 不变性、实际129 RMS／32 block／32 attention 每 NFE、Euler 链及清理均独立审计通过。
+
+**机械验证通过，数值候选仍被拒绝：padded40×32 和 public40×20 都是 control6/7、candidate6/7，state 仍失败。** 原门保持逐元素 `abs(delta)<=.01+.01*abs(ref)` 且 cosine≥`.999`，public 切片不能替代 padded 门。
+
+| state／padded40×32 | HWD control | Expert 三项改动 candidate |
+|---|---:|---:|
+| 超限元素数 | 3 | **4** |
+| maxabs | .016632080078125 | .015106201171875 |
+| RMSE | .0016343457521882086 | **.0017574000621361032** |
+| cosine | .9999873074562833 | .9999853985877847 |
+
+六个原本通过的 case 保持通过，但只有 episode_start／history／noise 的 RMSE 改善，baseline／current／prompt／state 变差。不能用更小的 state maxabs 救门限，也不能把 R32 的条件 Expert EXACT 外推成完整策略单调改善。七例历史 actions 都精确复现；baseline/state 另有各47个历史字段 EXACT，其余五例旧 NPZ 没有逐步轨迹，明确只作本轮新控制的双回放验证，没有伪造历史 velocity 证据。
+
+CPU 边界复核进一步发现：baseline/state 与 Gold 的266738个 prefix embedding 差异全部在 image tokens（relative L2 `.01257768617059049`、maxabs `.75`），非图像 tokens、pad／modality masks EXACT；K/V 从 layer0 已不同。历史 native Merger 输入在进入 Merger 前也已有476775个值不同（relative L2 `.006573505861752344`、maxabs `16`）。R33 image-token 输出 EXACT该历史 native `vision.merged`，但**没有捕获 R33 实际 vision 输入，输出桥接不能冒充同一次输入捕获**。
+
+因此下一轮先用相同 frozen 输入比较完整 Merger 的官方 per-camera API 和 native HWD 调用，并检查阶段端点，不直接归因于 VLM RMS、不扩大支持宽度或围绕失败 state 调参。历史失败、原阈值、生产默认／runtime／精度均保持，未形成机器人或加速资格。R33 实测与否定结论见[固定记录5f084d43](https://github.com/20261023/FlashRT/blob/5f084d43/docs/vla_autotune_experiments.md)。
