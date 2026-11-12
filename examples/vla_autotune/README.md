@@ -695,3 +695,32 @@ every arm is compared to both old/native arrays. Hypothesis equality is an
 outcome, not a success requirement. No block/model/checkpoint tensor is read,
 no candidate latency measured, and no internal compiled branch, full-policy or
 robot qualification follows. Historical6/7FAILED and production defaults stay.
+
+### LIVEinput source-tree RMS across the conditional full Expert
+
+`hy_trace/expert_mean_tree.py` wraps only a standalone native AST owner's norm.
+`tree_rms(x,w)` derives its FP32 variance from the current input using the tested
+source-old arithmetic tree, then applies the unchanged epsilon/rsqrt/scaling/
+cast-back/weight order. It receives no captured norm input or old variance and
+has no silent native fallback. R31's complete96raw support and actual16selected
+old/native means must be admitted before owner creation, not header flags alone.
+
+The shared `replay_core` runs unchanged separate-QKV/original-order GoldKV,
+32layers,10steps,baseline/state with teacher and propagated hidden modes. All
+1300control tensors/case must EXACT the prior native-original315024records
+before the prototype is interpreted. Every prototype tensor is compared to the
+old2.7original oracle; equality is an outcome. Final norm and both velocity heads
+participate, so fixed-Gold head output is NOT an unchanged negative control here.
+
+Each arm checks5160actual norm calls and scoped restoration:2560FP32/width128,
+2600BF16/width1024 including40heads. It reads363unique checkpoint keys/arm,
+726events across the two serial arms, constructs no model, and publishes all
+5200BF16arrays plus every old comparison. Expected historical report/raw and
+actual manifest/Gold/native trace/frozen-input paths/stats are bound before owner
+and checkpoint tensor reads. H0/order eligibility and attention cleanup remain
+hard gates. Large raw data stay private; no content hashes or new builds.
+
+This intentionally multi-kernel prototype is not a latency candidate or a new
+production norm. GoldKV/fixed external trajectory excludes native vision KV,
+sampler integration/free-running, seven-fixture and robot qualification; original
+6/7FAILED, runtime defaults and quality thresholds remain unchanged.
