@@ -1312,6 +1312,70 @@ move to upstream frozen ViT localization.** Do not add case-specific routing,
 new combinations or looser gates. R33/R36 failures remain in history; production
 defaults/runtime/precision/sampler and original numerical budgets are unchanged.
 
+Job318174 (`round038/311c66d0`) followed the R37stop rule with actual ViT
+blocks0–3, not another policy combination. One shared baseline visual context
+used three cameras/six frames and51selectedBF16weights(161436544bytes) per
+process; no full VLA/backend/VLM/Expert/Merger orblock4 was constructed/executed.
+The official process constructed only the original four-block vision module;
+native retained the original `vit_forward` loop and stopped AFTER actualblock3.
+
+COMPLETED0:0/errors0/no resubmit/cancel. Allsixfiles/770439476bytes were fetched
+(598739766zstd/770447360tar), exact inventory/sizes/source marker and two
+separately retrieved headers checked. Independent source-free CPU audit verified
+allofficial124/native42arrays, three Goldblock3 FULLsix-frame anchors, Patch/
+position anchors, native stop-only/observedblock3 parity, typed complete roles,
+chain/residual/timePE/current-frame bridges, recorded layouts/calls and cleanup.
+All41comparison boundaries and per-camera/per-frame metrics were independently
+recomputed. Ordinary numerical EXACT is not an unperformed signed-zero bit test.
+
+The earliest observed mismatch is **block0.attention AFTER output projection**.
+Prepared images, Patch, position, block0input/norm1input/norm1/QKV all EXACT:
+
+| Boundary | Unequal values | Maxabs | RMSE | RelativeL2 (native denominator) |
+|---|---:|---:|---:|---:|
+| block0 projected attention | 2139 | .03125 | .000043909956944 | .000023615980828 |
+| block0 residual / actualnorm2input | 642 | .03125 | .000053090967356 | .000025562209115 |
+| block0 norm2 | 1406 | .03125 | .000046897356430 | .000088078770820 |
+| block0 MLP output | 21532 | .0625 | .000157515718338 | .000139708879685 |
+| block0 output | 9889 | .0625 | .000211912479530 | .000116026314386 |
+| block1 output | 438831 | .125 | .001227866431582 | .000973342106066 |
+| block2 output | 1432143 | .5 | .002584514271401 | .002063878126848 |
+| block3 output / allsixframes | 2089847 | .5 | .003857332748271 | .003056802672383 |
+
+The first boundary's camera counts were483/675/981. Subsequent blocks already
+receive different values; their output gaps are NOT independent primitive causes
+or a per-layer policy-error attribution. The post-projection boundary still
+combines attention context with output Linear. Runtime AND call form/backend
+(oldper-cameraFA2 vsnewcombinedSDPA) are confounded, so2139values cannot be called
+"the SDPA error" or "the Linear grouping error" from this experiment alone.
+All relativeL2 comparisons here use the native endpoint norm, per the producer's
+old-versus-native argument order; equality/maxabs/RMSE are symmetric. These are
+local comparison metrics, not a new quality gate.
+
+One additional fixed endpoint was observed at block3timePE: oldper-camera values
+were EXACTeachother, but each differed from the nativePE at ONEentry(frame4,
+feature571), -.0830078125 versus-.08251953125, maxabs.00048828125. The canonical
+three-camera comparison counts3because the SAMEfixedPE is reused—not three
+independent contexts. Unlike propagated hidden values, this PE is built only
+from fixed frame/width/base/dtype inputs. Its precise arithmetic cause and effect
+on final policy remain untested; it does not displace the earlier block0boundary.
+
+Supplementary CPU comparison of saved arrays bridged actual current block0input,
+norm1 andQKV to the corresponding retained309182 AND309409 official/native
+reconstructed values: all12paired arrays EXACTdtype/shape/value. Thus the older
+same-QKV frozen attention controls (including the measured559-value TorchFlash/
+externalFA2 context difference) now have an actual-input VALUEbridge for this
+context. This does not retrospectively observe old internal layouts or make
+their saved attention contexts actual R38pre-projection captures; R38did not save
+that boundary. No new GPU trial was run for this supplemental analysis.
+
+The next proposed minimal question is to split ACTUALpre-projection attention
+context from output projection on this admitted block0input, requiring own actual
+API endpoints before any same-input context/call-form cuts. It must not re-run
+the entire SDPAbackend search, import oldFA2 into newruntime, broaden RMS widths,
+extend blocks4–26 or revive failed policy combinations. No defaults/runtime/
+precision/gates, robot/performance/generalization qualification changed.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot

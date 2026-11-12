@@ -537,3 +537,13 @@ CPU 边界复核进一步发现：baseline/state 与 Gold 的266738个 prefix em
 预注册的`I=(both-Ponly)-(Eonly-base)`由实际数组CPU FP64独立重算。七例首步velocity与最终actions交互均非零，前者每例747–797个非零元素、maxabs均`.03125`；后者1096–1119个、maxabs约`.00537109–.00695801`。共享首步条件下已出现非加性响应，但非零交互并未带来统一质量资格，也不识别E内三个子改动。
 
 已执行结果前声明的停止规则：**结束E×P组合搜索，下一步做上游frozen ViT定位**。这不是独立泛化、机器人成功率或性能结果，不改生产默认／runtime／精度／sampler／原门。完整预测与结果后修订见[研究记录第8.10—8.11节](2026-11-12-vla-autotune-research-process.zh-CN.md)。
+
+### 11.18 Hy：实际四块ViT首差异定位到block0投影后attention
+
+`318174`／`311c66d0` 的官方124／native42共166数组、41个比较边界和逐camera／frame指标独立审计通过。只读51个指定BF16权重；官方原四块模块恢复三份Gold block3全六帧端点，native原`vit_forward`在真实block3返回后停止，观察前后控制一致。没有构造完整VLA或读取block4权重。
+
+实际images、Patch、位置、block0输入、norm1和QKV全EXACT，首差异在attention输出投影后：2139个值不同、maxabs`.03125`、RMSE约`.00004391`。block0输出9889值不同，后续输入已变，不能把block1–3的norm／MLP差异直接归为独立原因。该边界仍包含attention context与输出Linear，且旧／新runtime与per-camera FA2／combined SDPA混杂，不是单一kernel原因证明。
+
+另测到固定block3时间PE每份一个元素不同，三camera重复汇总为3个，并非三个独立样本；具体算术原因和策略影响未验证。追加保存数组CPU比较还将本轮实际输入／norm1／QKV与309182及309409的12项旧重建值配对EXACT，未回填历史未记录layout，亦未冒称R38已有投影前context捕获。
+
+后续问题只收窄为该block0的context／输出投影分离，不恢复组合或blind backend搜索。过程中的预测、实际锚点、否定解释及限制见[研究记录第8.12—8.13节](2026-11-12-vla-autotune-research-process.zh-CN.md)。无默认／质量门／机器人／速度推广。
