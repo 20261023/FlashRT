@@ -848,3 +848,39 @@ padded gate/public slice and close/cleanup must be independently audited. A
 candidate quality failure is retained as a completed diagnostic, never a reason
 to loosen the gate or combine the earlier Expert triple. No production default,
 runtime/precision, robot/generalization or unmeasured performance change follows.
+
+### Expert × PROJ2 four-cell interaction
+
+`hy_trace/policy_factorial.py` fixes four uniform groups in order: base(E0P0),
+Eonly(E1P0), Ponly(E0P1), both(E1P1). E is the existing velocity-only Expert
+bundle; P is the biased PROJ2 B3-to-three-B1 intervention. All seven cases get
+the same configuration, never a case-dependent router. This is a post-selected
+mechanistic interaction experiment, not held-out generalization; E's three
+components cannot be separately identified by this matrix.
+
+A fresh R36 complete-Merger preflight remains a separate first process. The
+second process admits R32's full5200-array Expert support, R33/R36 source,
+runtime/checkpoint/fixture identity and both historical replays before constructing
+one eager model backend. All three known groups must reproduce their raw fields
+before any both request. base/Ponly match R36's64fields; Eonly matches R33's60
+old fields, and its four NEW actual Vision fields match current base, not
+imaginary historical R33 inputs. The shared control/candidate request guard is
+unchanged: each fixed group has its own root, explicit E/P flags and globally
+unique operator identity. Repeated local candidate IDs are not global IDs.
+
+Each request retains64typed finite arrays. Fixed input/activation/layout,
+non-image prefix, masks/segments/permutation/RoPE, suffix/noise/time conditions
+stay exact across groups. Fixed P with E toggled must preserve all Vision and
+prefix/KV values; fixed E with P toggled may change visual prefix, KV and later
+trajectory. One native prefill and all per-NFE Expert/Merger counters, internal
+KV read-only checks and cleanup remain required.
+
+After backend close, CPU FP64 analysis computes actual finite differences
+`I=(both-Ponly)-(Eonly-base)` for first raw velocity and final actions, saving
+all fourteen interaction arrays. This is not an FP64 GPU policy, an interaction
+inferred from RMSE/pass counts, or an explained-error percentage. Completion
+requires56requests/560NFE, all3584request arrays plus20preflight and14interaction
+arrays, known-cell admission, both replays and all cleanup. The old28-request
+publisher is not relaxed or reused. If both fails the unchanged seven-case gate,
+stop this combination search and localize upstream ViT next. Even7/7 is only
+the existing proxy scope, not default, robot, speed or generalization promotion.
