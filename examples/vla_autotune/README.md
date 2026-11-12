@@ -671,3 +671,27 @@ equal symbols and launch dimensions still do not reveal runtime `ReduceConfig`
 vectorization or warp-shuffle branches. This is not a compatible mean, an error
 fraction, a library-bug claim or a policy gate; historical6/7FAILED and production
 math/dtype/runtime/defaults/thresholds remain unchanged.
+
+### Source-explicit FP32 mean tree diagnostic
+
+`hy_trace/mean_tree.py` models32lanes and four independent FP32 accumulators
+using only eager tensor additions, then explicit ascending/descending shuffle
+trees and one final power-of-two factor. It predeclares four scalar/vector4
+grouping × shuffle-order arms. Source-old hypotheses are scalar-ascending for
+128wide rows and vector-ascending for1024; source-native is vector-descending.
+These are hypotheses to test against actual arrays, not asserted dispatch facts.
+
+The function receives only the direct square tensor and two bools, never a
+stored variance. It calls no native `sum`/`mean`, uses no FP64/JIT/build and
+rejects nonfinite/negative/non-FP32 inputs, widths outside128/1024, nonunit last
+stride or non16byte-aligned pointers. A reshape may copy logical rows without
+changing values. It is deliberately a multi-kernel arithmetic diagnostic, not a
+fast or generic production normalization implementation.
+
+The native-only driver first admits315256history and315622actual launch capture,
+exact runtime/source/checkpoint stats, direct square layout and unmodified
+native mean values. It records96arrays:16squares,16native baselines,64tree means;
+every arm is compared to both old/native arrays. Hypothesis equality is an
+outcome, not a success requirement. No block/model/checkpoint tensor is read,
+no candidate latency measured, and no internal compiled branch, full-policy or
+robot qualification follows. Historical6/7FAILED and production defaults stay.
