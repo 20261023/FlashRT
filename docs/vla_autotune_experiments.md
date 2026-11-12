@@ -1027,6 +1027,57 @@ An additional independent BF16-as-int16 pattern comparison, including signed
 zero, found zero unequal bit patterns in all2600control/prior-native pairs and
 all2600prototype/old2.7pairs. This is an array comparison, not a content hash.
 
+Job316975 (`round033/54a661d5`) tested the triple Expert intervention inside
+actual native-prefix/free-running policy requests. A single eager HWD backend
+ran seven controls twice BEFORE seven candidates twice (28requests/280NFE).
+Vision/prefill and native KV were not modified; separateQKV, prefix-only inverse
+columns and LIVEsource-old RMS existed only during `evaluate_velocity`, including
+the final norm/head. No Gold KV/latent/norm/velocity was injected and no timing
+or graph qualification was performed.
+
+The observer first exhausted SSH retries after lastPENDING(Priority); a pure
+no-filesystem/no-Slurm SSH probe also timed out. This was NOT treated as a job
+failure. Backoff recovery later confirmed the SAME316975COMPLETED0:0, rechecked
+its persistent receipt/source and fetched all60files/739398628bytes. Existing
+zstd transfer was477389305compressed/739471360tarbytes, with full file set/sizes/
+source/separately-fetched-header checks and no new hash or model rerun.
+
+Independent audit verified all1680request tensors/280NFE, actual permutation and
+mask reconstruction, read-only native-prefix/conditions, exact double replays,
+129RMS/32block/32attention calls perNFE, unchanged BF16-increment Euler chain,
+seven historical HWD action controls EXACT and both313766legacy step controls
+(47fields/case) EXACT. The other five old NPZs contain NO step trajectories;
+their new control captures were labelled current-job replay evidence, not forged
+historical velocity checks. Candidate native-prefix/conditions/time embeddings
+were EXACTthe same-case control. Model close and all request cleanups passed.
+
+The candidate is **REJECTED as a seven-fixture-qualified policy**: both padded
+40x32 AND public40x20 remain6/7, with state failing. Original budgets stay
+`abs(delta)<=.01+.01*abs(ref)` and cosine>=.999; no threshold rescues the result.
+
+| State / padded40x32 | HWD control | Expert triple candidate |
+|---|---:|---:|
+| Outside tolerance | 3 | **4** |
+| Maxabs | .016632080078125 | .015106201171875 |
+| RMSE | .0016343457521882086 | **.0017574000621361032** |
+| Cosine | .9999873074562833 | .9999853985877847 |
+
+Allsixalready-passing cases remained passing, but RMSE improved only for
+episode_start/history/noise and worsened forbaseline/current/prompt/state. The
+smaller state maxabs is not a universal accuracy improvement or a policy pass.
+R32conditionalExpertEXACT remains valid; native-prefix/free-run coupling does
+not make component-error corrections monotonic. No production/default/runtime/
+precision/sampler/gate change, speed claim or robot qualification follows.
+
+Additional CPU comparison of the retained baseline/state native prefixes against
+accepted314485Gold shows divergence BEFOREVLMprefill: all266738unequal embedding
+values lie in image tokens(relativeL2.01257768617,maxabs.75), while non-image
+tokens, pad and modality masks are EXACT. Native K/V already differ at layer0
+and remain different at layer31. This does not prove a causal error fraction or
+that VLM RMS alone is responsible: the VLM receives differing vision embeddings.
+Next localize the vision/merger boundary with frozen identical inputs, rather
+than retune the failed state case or broaden RMS widths without evidence.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
