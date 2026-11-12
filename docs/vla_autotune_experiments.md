@@ -1253,6 +1253,65 @@ and do not infer joint behavior by adding old errors. A failed joint cell would
 end this combination search and redirect localization upstream; even7/7would
 only qualify these existing proxies, not production/generalization/robot quality.
 
+Job317924 (`round037/e97f22e7`) executed the preregistered four-cell Expert×PROJ2
+matrix, uniformly across all seven fixtures: base(E0P0), Eonly(E1P0), Ponly(E0P1),
+both(E1P1). E is the existing three-change Expert bundle, not three separately
+identified factors. This was post-selected mechanistic interaction validation,
+not a held-out test or case-dependent routing.
+
+COMPLETED0:0/errors0, no resubmit/cancel. All117files/1654149558bytes were fetched
+(1083298926zstd/1654302720tar bytes), with exact inventory/sizes/source marker
+and two separately fetched headers. Independent source-free CPU audit checked
+all20fresh precondition arrays,3584request arrays and14FP64interaction arrays,
+56requests/560NFE, every typed role/replay/actual mask/visual bridge/Euler chain,
+factor binding, Expert/P2 counts, within-request read-only guards and cleanup.
+Full three-cell historical reproduction happened BEFORE any both request:
+base896raw-field comparisons to R36control, Eonly840 to R33candidate, Ponly896
+to R36candidate, including both replays. Eonly's four new Vision fields were
+EXACTcurrent base, explicitly NOT historical R33vision-input observations.
+
+Padded ANDpublic gate counts were base6/Eonly6/Ponly6/**both5**. Both is REJECTED:
+
+| Fixture / padded outside count | base | Eonly | Ponly | both |
+|---|---:|---:|---:|---:|
+| baseline | 0 | 0 | 0 | 0 |
+| episode_start | 0 | 0 | 0 | 0 |
+| current | 0 | 0 | 0 | 0 |
+| history | 0 | 0 | 0 | **1** |
+| prompt | 0 | 0 | 0 | 0 |
+| state | 3 | 4 | 0 | 0 |
+| noise | 0 | 0 | 6 | **6** |
+
+Both-history maxabs=.0107421875, RMSE=.0017224562468873739 and cosine=
+.9999835400631613; both-noise maxabs=.0421142578125, RMSE=.0031483730505876707,
+cosine=.9999509332927161. Both's history RMSE improved versus base/Eonly/Ponly,
+yet a new elementwise failure appeared. State remained passed, but did not rescue
+history/noise. No quality threshold or fixture was dropped to preserve success.
+
+The predeclared interaction `I=(both-Ponly)-(Eonly-base)` was recomputed from
+actual arrays independently in NumPy FP64, not inferred from gate counts/RMSE.
+All seven first-velocity interactions were nonzero:747–797/1280elements,
+maxabs=.03125, L2=.17198954905–.19135488884. All seven final-action interactions
+were also nonzero:1096–1119/1280elements, maxabs=.00537109375–.0069580078125,
+L2=.04744580724–.05132326981. The saved fourteen complete arrays matched the
+independent formulas EXACT numerically; no unperformed signed-zero bit proof is
+claimed. GPU dtypes were unchanged; FP64 was CPU analysis only.
+
+Fixed-P E toggles preserved every Vision/prefix/KV field; all four cells shared
+initial latent/time/state and fixed input/activation/non-image/masks/segments/
+conditions. Thus nonadditivity is already measured in first velocity's bundle
+response to different prefix/KV, rather than only inferred from free-running
+feedback. Final actions include feedback as well. This identifies neither each
+E subcomponent, a particular cuBLAS algorithm nor a policy-error percentage.
+
+The hypothesis "these two uniform interventions jointly qualify all seven"
+is falsified. The distinct hypothesis "their measured effects are additive"
+is also falsified, but nonzero interaction did not imply quality improvement.
+**The preregistered stop rule is now executed: end this combination search and
+move to upstream frozen ViT localization.** Do not add case-specific routing,
+new combinations or looser gates. R33/R36 failures remain in history; production
+defaults/runtime/precision/sampler and original numerical budgets are unchanged.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
