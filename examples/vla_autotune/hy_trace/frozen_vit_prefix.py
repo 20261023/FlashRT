@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import ast
 import copy
+import argparse
+import importlib.util
+import json
+import os
 from pathlib import Path
-from types import MethodType
+from types import MethodType,SimpleNamespace
 
 WEIGHT_PREFIX='model.dual_tower.vlm.model.visual.vision_tower.'
 FIELDS=('input','norm1_input','norm1','qkv','attention','residual','norm2','mlp','output')
@@ -32,6 +36,48 @@ def read_prefix_weights(reader,*,device):
             raise ValueError('Prefix weight must have exactly admitted finite BF16 shape: '+name)
         weights[name]=value.to(device=device)
     return weights
+
+
+def _validate_weights(weights):
+    import torch
+    spec=prefix_keys()
+    if set(weights)!=set(spec):raise ValueError('Prefix weight keys must be exactly51 selected tensors')
+    device=weights['pos_embed'].device
+    if any(v.dtype!=torch.bfloat16 or v.shape!=spec[k] or v.device!=device or not torch.isfinite(v).all() for k,v in weights.items()):
+        raise ValueError('Prefix weight shape/device/finite BF16 contract differs')
+
+
+def make_native_owner(weights,*,source):
+    _validate_weights(weights)
+    W=SimpleNamespace(_vit_patch_w=weights['patch_embed.proj.weight'],_vit_patch_b=weights['patch_embed.proj.bias'],_vit_pos_embed=weights['pos_embed'])
+    for attr,stem in {'ln1':'norm1','ln2':'norm2','qkv':'attn.qkv','proj':'attn.proj','fc1':'mlp.fc1','fc2':'mlp.fc2'}.items():
+        for suffix,field in (('w','weight'),('b','bias')):setattr(W,'_vit_'+attr+'_'+suffix,[weights[f'blocks.{i}.{stem}.{field}'] for i in range(4)])
+    owner=SimpleNamespace(W=W,_fp8=False,vit_heads=16,vit_hd=72,vit_scale=72**-.5,vit_eps=1e-6,vit_time_base=100.,
+        vit_spacetime_ids=set(range(3,27,4)),_prefix_source=Path(source))
+    for name,method in load_native_methods(source).items():setattr(owner,name,MethodType(method,owner))
+    return owner
+
+
+def make_official_prefix(vision,video,weights,*,device):
+    import torch
+    _validate_weights(weights)
+    tower=vision._create_hyvit2(select_layer=4,ckpt_path='',weight_init='skip').to(device=device,dtype=torch.bfloat16)
+    if len(tower.blocks)!=4 or not isinstance(tower.patch_drop,torch.nn.Identity) or not isinstance(tower.norm_pre,torch.nn.Identity):
+        raise ValueError('Official prefix constructor is not original four-block identity-preprocessing form')
+    for block in tower.blocks:
+        if (block.attn.q_bias is not None or not isinstance(block.attn.q_norm,torch.nn.Identity) or not isinstance(block.attn.k_norm,torch.nn.Identity)
+                or (block.attn.num_heads,block.attn.head_dim)!=(16,72)
+                or any(not isinstance(getattr(block,k),torch.nn.Identity) for k in ('ls1','ls2','drop_path1','drop_path2'))):
+            raise ValueError('Official prefix block has unsupported qk-norm/scale/drop/head routing')
+    if any(isinstance(m,torch.nn.Dropout) and m.p!=0 for m in tower.modules()):raise ValueError('Official prefix requires original zero-dropout source defaults')
+    tower.blocks[3]=video.SpaceTimeBlock(tower.blocks[3],max_num_frames=18,learnable_time_embed=False,time_embed_base=100.)
+    tower.past_drop_layer=None;tower.spacetime_layer_stride=4;tower.max_num_frames=18
+    if set(tower.state_dict())!=set(weights):raise ValueError('Official prefix parameter keys differ from selected51 weights')
+    tower.load_state_dict(weights,strict=True)
+    for parameter in tower.parameters():parameter.requires_grad_(False)
+    tower.eval()
+    if any(not _same(value,weights[key]) for key,value in tower.state_dict().items()):raise ValueError('Official prefix selected parameter values changed during loading')
+    return tower
 
 
 def _layout(x):
@@ -184,7 +230,8 @@ def capture_native(owner,images,*,synchronize):
         if errors:
             state['complete']=False
             if primary is not None:primary.add_note('; '.join(errors))
-            else:raise RuntimeError('Native prefix cleanup failed: '+'; '.join(errors))
+            else:
+                error=RuntimeError('Native prefix cleanup failed: '+'; '.join(errors));error.prefix_partial=(raw,state);raise error
     return raw,state
 
 
@@ -365,3 +412,225 @@ def compare_prefix(official,native):
     return {'first_different_stage':first,'first_different_block':int(first[5]) if first is not None and first.startswith('block') else None,
         'stages':stages,'comparison_representation':'camera-major/frame-major CPU concatenation; native position/timePE reused only for comparison',
         'scope':'Actualprefixboundarylocalization,notisolatedruntimecauseorpropagatederrorfraction;physicalschemaadmissionseparate.'}
+
+
+def _sibling(name):
+    spec=importlib.util.spec_from_file_location('hy_vit_prefix_'+name,Path(__file__).with_name(name+'.py'))
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+
+def file_record(path):
+    p=Path(path).resolve();stat=p.stat();return {'path':str(p),'bytes':stat.st_size,'mtime_ns':stat.st_mtime_ns}
+
+
+def admit_before_weights(manifest,*,native_source,factory):
+    if manifest.get('kind')!='hy_frozen_actual_vit_prefix_inputs':raise ValueError('Actual ViT input manifest kind differs')
+    task=Path(manifest['task_root']).resolve();record=manifest['history_manifest'];expected=task/'results/hy-merger-stages-317360/inputs.json'
+    if Path(record['path']).resolve()!=expected or file_record(expected)!=record:raise ValueError('Actual ViT historical manifest path/stat differs')
+    history=json.loads(expected.read_text());_sibling('merger_stages').admit_file_records(history,factory=lambda:None)
+    gold=json.loads(Path(history['records']['gold.baseline.report']['path']).read_text())
+    package=Path(gold['hy_vla_source']).resolve();root=task/'snapshots/round007/diagnostic/official/hy_vla'
+    if package!=root/'__init__.py' or not package.is_file() or Path(history['official_source']['path']).resolve()!=root/'hunyuan_vl_mot/modeling_hunyuan_vl_mot.py':
+        raise ValueError('Actual ViT official source must belong to accepted Gold round007')
+    policy=root/'modeling_hy_vla.py'
+    paths={'official_policy':policy,'official_modeling':Path(history['official_source']['path']).resolve(),
+        'official_video':root/'space_time_attention.py','official_configuration':root/'configuration_hy_vla.py',
+        'native':task/'snapshots/round038/code/flash_rt/models/hyvla/pipeline_thor.py','config':Path(history['checkpoint']['path']).parent/'config.json'}
+    if Path(native_source).resolve()!=paths['native'] or set(manifest.get('source_files',{}))!=set(paths):raise ValueError('Actual ViT new source/input role paths differ')
+    for role,path in paths.items():
+        rec=manifest['source_files'][role]
+        if Path(rec['path']).resolve()!=path or file_record(path)!=rec:raise ValueError('Actual ViT source/config path/stat differs: '+role)
+    return factory(history)
+
+
+def admit_prior_official(report,raw,gold,*,job_id,source_revision,runtime,torch_git,checkpoint,input_manifest,source_records,factory):
+    state=report.get('observations',{})
+    if (report.get('kind')!='hy_actual_frozen_vit_prefix' or report.get('engine')!='official' or report.get('status')!='prefix_capture_complete'
+            or report.get('job_id')!=job_id or report.get('source_revision')!=source_revision or report.get('runtime')!=runtime
+            or report.get('torch_git_version')!=torch_git or report.get('checkpoint')!=checkpoint or report.get('input_manifest')!=input_manifest
+            or report.get('source_records')!=source_records or report.get('weight_read_events')!=51
+            or len(report.get('selected_checkpoint_keys',[]))!=51 or set(report['selected_checkpoint_keys'])!={WEIGHT_PREFIX+k for k in prefix_keys()}
+            or report.get('full_model_constructed') is not False or report.get('blocks_constructed')!=4
+            or state.get('complete') is not True or state.get('cleanup',{}).get('passed') is not True
+            or state.get('camera_block_indices')!=[[0,1,2,3]]*3):raise ValueError('Prior official prefix header/source/runtime/cleanup differs')
+    if report.get('raw_proof')!=validate_raw(raw,engine='official'):raise ValueError('Prior official raw proof differs')
+    return admit_official_capture(raw,gold,factory=factory)
+
+
+def admit_gold_inputs(samples):
+    import torch
+    if set(samples)!={'baseline','state'}:raise ValueError('Gold shared-context roles differ')
+    for sample in samples.values():
+        if (len(sample.get('patches',()))!=3 or len(sample.get('block3',()))!=3
+                or sample['images'].shape!=(3,6,3,224,224) or sample['position'].shape!=(1,196,1152)
+                or any(v.shape!=(6,196,1152) for v in (*sample['patches'],*sample['block3']))):raise ValueError('Gold images/Patch/block3 role geometry differs')
+        if any(v.dtype!=torch.bfloat16 or not torch.isfinite(v).all() for v in (sample['images'],sample['position'],*sample['patches'],*sample['block3'])):
+            raise ValueError('Gold prefix inputs require finite actual BF16 captures')
+        meta=sample['image_metadata']
+        if meta.get('shape')!=[3,6,3,224,224] or meta.get('dtype')!='torch.bfloat16' or meta.get('live_stride')!=[903168,150528,50176,224,1]:
+            raise ValueError('Gold actual prepared-image layout metadata differs')
+    a,b=samples['baseline'],samples['state']
+    if (not _same(a['images'],b['images']) or not _same(a['position'],b['position'])
+            or any(not _same(x,y) for x,y in zip((*a['patches'],*a['block3']),(*b['patches'],*b['block3'])))):
+        raise ValueError('Gold baseline/state are not one shared visual context')
+    return a
+
+
+def load_inputs(manifest,*,engine,runtime,torch_git):
+    from safetensors import safe_open
+    native=Path(__file__).resolve().parents[3]/'flash_rt/models/hyvla/pipeline_thor.py';merger=_sibling('merger_stages')
+    historical=admit_before_weights(manifest,native_source=native,factory=lambda old:old)
+    history,proof=merger.load_history(historical,engine=engine,runtime=runtime,torch_git=torch_git)
+    samples={}
+    for case in ('baseline','state'):
+        rec=historical['records'];doc=json.loads(Path(rec['gold.'+case+'.report']['path']).read_text())
+        with safe_open(rec['gold.'+case+'.raw']['path'],framework='pt',device='cpu') as sf:
+            samples[case]={'images':sf.get_tensor('prepared.images'),'position':sf.get_tensor('vision.position_embedding'),
+                'patches':tuple(sf.get_tensor(f'vision.patch_embed.{i}') for i in range(3)),
+                'block3':tuple(sf.get_tensor(f'vision.block3.{i}') for i in range(3)),'image_metadata':doc['tensor_metadata']['prepared.images']}
+    gold=admit_gold_inputs(samples)
+    checkpoint=historical['checkpoint'];checkpoint_dir=Path(checkpoint['path']).parent
+    validator=_sibling('native_policy_tree').validator;_,directory=validator.checkpoint_record(checkpoint_dir)
+    old_native=json.loads(Path(historical['records']['native.baseline.report']['path']).read_text())
+    if directory!=old_native['checkpoint']:raise ValueError('Actual prefix checkpoint/config directory identity changed')
+    cfg=json.loads(Path(manifest['source_files']['config']['path']).read_text())
+    if (cfg.get('use_video_encoder') is not True or cfg.get('spacetime_layer_stride',4)!=4 or cfg.get('past_drop_layer') is not None
+            or cfg.get('max_num_frames',18)!=18 or cfg.get('learnable_time_embed',False) is not False or cfg.get('time_embed_base',100.)!=100.):
+        raise ValueError('Actual prefix video configuration differs from fixed temporal source path')
+    if file_record(checkpoint_dir/'config.json')!=manifest['source_files']['config']:raise ValueError('Actual prefix config file stat changed during admission')
+    return {'gold':gold,'checkpoint':checkpoint,'directory_checkpoint':directory,'native_source':native,'history_manifest':historical,
+        'history_proof':proof,'image_layout':{'live_stride':gold['image_metadata']['live_stride'],'storage_offset_assumption':0,'historical_offset_observed':False}}
+
+
+def _source_records(manifest):
+    return {'driver':file_record(__file__),**manifest['source_files']}
+
+
+def publish_capture(output,raw,report):
+    from safetensors.torch import save_file
+    state=report.get('observations',{})
+    if state.get('complete') is not True or state.get('cleanup',{}).get('passed') is not True:raise ValueError('Actual prefix capture/cleanup is not complete')
+    proof=validate_raw(raw,engine=report['engine'])
+    if report.get('raw_proof',proof)!=proof:raise ValueError('Actual prefix raw proof changed before publication')
+    save_file({k:v.contiguous() for k,v in raw.items()},str(Path(output)/'operator_outputs.safetensors'))
+    temp=Path(output)/'result.json.tmp';temp.write_text(json.dumps(report,indent=2,allow_nan=False)+'\n');temp.replace(Path(output)/'result.json')
+
+
+def _official_modules(manifest):
+    import importlib,sys
+    sources=manifest['source_files'];root=Path(sources['official_policy']['path']).parent.parent
+    before=list(sys.path)
+    try:
+        sys.path.insert(0,str(root))
+        vision=importlib.import_module('hy_vla.hunyuan_vl_mot.modeling_hunyuan_vl_mot')
+        video=importlib.import_module('hy_vla.space_time_attention')
+    finally:sys.path[:]=before
+    for module,role in ((vision,'official_modeling'),(video,'official_video')):
+        if file_record(module.__file__)!=sources[role]:raise ValueError('Imported official prefix module belongs to another source tree')
+    return vision,video
+
+
+def qualified_capture(owner,images,*,engine,video_function,gold,official_raw,synchronize):
+    raw={};observations={}
+    try:
+        if engine=='official':
+            raw,observations=observe_official(owner,video_function,images,synchronize=synchronize)
+            admit_official_capture(raw,gold,factory=lambda:None);comparison=None
+        elif engine=='native':
+            raw,observations=capture_native(owner,images,synchronize=synchronize)
+            validate_raw(raw,engine='native');comparison=compare_prefix(official_raw,raw)
+        else:raise ValueError('Unknown actual prefix capture engine')
+        return raw,observations,comparison
+    except BaseException as error:
+        # An observer can finish successfully and only THEN fail the external
+        # Gold anchor, typed schema or comparison. Retain that new evidence too.
+        if raw:error.prefix_partial=(raw,observations)
+        raise
+
+
+def write_failure(output,error,*,raw=None,observations=None):
+    from safetensors.torch import save_file
+    partial=getattr(error,'prefix_partial',None)
+    if partial is not None:raw,observations=partial
+    raw=raw or {};observations=observations or {};failures=[]
+    if raw:
+        try:save_file({k:v.contiguous() for k,v in raw.items()},str(Path(output)/'unqualified_partial.safetensors'))
+        except BaseException as secondary:
+            failures.append('raw evidence write failed: '+str(secondary));error.add_note(failures[-1])
+    report={'status':'unqualified_frozen_vit_prefix_failure','qualified':False,'error_type':type(error).__name__,'error':str(error),
+        'observations':observations,'captured_raw_roles':list(raw),'evidence_write_errors':failures}
+    try:(Path(output)/'failure.json').write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')
+    except BaseException as secondary:error.add_note('failure metadata write failed: '+str(secondary))
+
+
+def run(args,runtime,torch_git):
+    import sys
+    import torch
+    from safetensors import safe_open
+    from safetensors.torch import load_file,save_file
+    manifest=json.loads(args.inputs.read_text());task=Path(manifest['task_root']).resolve();root=task/'results'/('hy-vit-prefix-'+os.environ['SLURM_JOB_ID'])
+    if (args.inputs.resolve()!=root/'inputs.json' or args.output.resolve()!=root/args.engine
+            or (root/'SOURCE_GIT_COMMIT').read_text().strip()!=args.source_revision):raise ValueError('Actual prefix current source/job/input/output identity differs')
+    admitted=load_inputs(manifest,engine=args.engine,runtime=runtime,torch_git=torch_git)
+    reference=admitted['history_proof']['runtime_reference'];flag=torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
+    if flag!=reference['bf16_reduced_precision_reduction']:raise ValueError('Actual prefix BF16 reduction flag differs from admitted runtime')
+    sources=_source_records(manifest);gold=admitted['gold'];prior=None;old_raw=None
+    if args.engine=='native':
+        if args.official_prefix is None or args.official_prefix.resolve()!=root/'official':raise ValueError('Native prefix needs same-job actual official prefix predecessor')
+        prior=json.loads((args.official_prefix/'result.json').read_text());old_raw=load_file(str(args.official_prefix/'operator_outputs.safetensors'))
+        old_runtime=json.loads(Path(admitted['history_manifest']['records']['runtime.official']['path']).read_text())
+        admit_prior_official(prior,old_raw,gold,job_id=os.environ['SLURM_JOB_ID'],source_revision=args.source_revision,runtime=old_runtime['runtime'],
+            torch_git=old_runtime['torch_git_version'],checkpoint=admitted['checkpoint'],input_manifest=manifest,source_records=sources,factory=lambda:None)
+        if any(n=='hy_vla' or n.startswith('hy_vla.') for n in sys.modules):raise ValueError('Native runtime must not import official FA2/Hy package')
+    args.output.mkdir(parents=True,exist_ok=False);raw={};observations={}
+    try:
+        vision,video=_official_modules(manifest) if args.engine=='official' else (None,None)
+        with torch.inference_mode(),torch.autocast(device_type='cuda',enabled=False):
+            with safe_open(admitted['checkpoint']['path'],framework='pt',device='cpu') as sf:weights=read_prefix_weights(sf,device='cuda')
+            # Both historical runtimes observed this contiguous live image
+            # stride. Zero offset is an explicitly labelled reconstruction.
+            images=gold['images'].to('cuda')
+            if list(images.stride())!=admitted['image_layout']['live_stride'] or images.storage_offset()!=0:raise ValueError('Actual frozen image layout reconstruction differs')
+            if args.engine=='official':
+                owner=make_official_prefix(vision,video,weights,device='cuda')
+            else:
+                owner=make_native_owner(weights,source=admitted['native_source'])
+            raw,observations,comparison=qualified_capture(owner,images,engine=args.engine,
+                video_function=video._patched_forward_video_features if video is not None else None,gold=gold,official_raw=old_raw,synchronize=torch.cuda.synchronize)
+        proof=validate_raw(raw,engine=args.engine)
+        report={'kind':'hy_actual_frozen_vit_prefix','status':'prefix_capture_complete','engine':args.engine,'job_id':os.environ['SLURM_JOB_ID'],
+            'source_revision':args.source_revision,'runtime':runtime,'torch_git_version':torch_git,'bf16_reduced_precision_reduction':flag,
+            'input_manifest':manifest,'checkpoint':admitted['checkpoint'],'directory_checkpoint':admitted['directory_checkpoint'],
+            'history_proof':admitted['history_proof'],'source_records':sources,'weight_read_events':51,'selected_checkpoint_keys':[WEIGHT_PREFIX+k for k in weights],
+            'full_model_constructed':False,'vision_prefix_module_constructed':args.engine=='official','blocks_constructed':4,'performance_measurement':False,
+            'image_layout':admitted['image_layout'],'observations':observations,'raw_proof':proof,'comparison':comparison,
+            'official_imports':{n:file_record(m.__file__) for n,m in (('modeling',vision),('video',video))} if args.engine=='official' else {},
+            'actual_endpoint_scope':'Official4-blockvideoAPIand3Goldblock3returns' if args.engine=='official' else 'Actualnativeblock3returnafteroriginalvit_forwardprefixSTOP,NOTfull27-blockAPIreturn',
+            'scope':'Onefrozenvisualcontext/4blocks;runtimeANDcallformconfounded,nopolicyerrorfraction/robot/speed/defaultclaim. Noautomaticblock4–26extension.'}
+        if args.engine=='native':report['official_predecessor']={n:file_record(args.official_prefix/n) for n in ('result.json','operator_outputs.safetensors')}
+        publish_capture(args.output,raw,report)
+        print(json.dumps({'engine':args.engine,'raw_proof':proof,'first_different_stage':comparison['first_different_stage'] if comparison is not None else None,
+            'full_model_constructed':False}),flush=True)
+    except BaseException as error:
+        write_failure(args.output,error,raw=raw,observations=observations)
+        raise
+    return 0
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
+    parser.add_argument('--engine',choices=('official','native'),required=True);parser.add_argument('--inputs',type=Path,required=True)
+    parser.add_argument('--official-prefix',type=Path);parser.add_argument('--source-revision',required=True);parser.add_argument('--output',type=Path,required=True)
+    args=parser.parse_args(argv);_sibling('diagnose').require_step()
+    import platform,sys
+    import numpy as np
+    import torch
+    if len(args.source_revision)!=40 or any(c not in '0123456789abcdef' for c in args.source_revision):raise ValueError('Exact R38 source revision required')
+    if tuple(torch.cuda.get_device_capability())!=(8,0) or 'A800' not in torch.cuda.get_device_name():raise RuntimeError('Actual ViT prefix requires admitted A800')
+    torch.set_num_threads(2);torch.manual_seed(17);torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False
+    torch.backends.cudnn.benchmark=False;torch.backends.cudnn.deterministic=True
+    runtime={'python':platform.python_version(),'executable':sys.executable,'torch':torch.__version__,'cuda':torch.version.cuda,'numpy':np.__version__}
+    return run(args,runtime,torch.version.git_version)
+
+
+if __name__=='__main__':raise SystemExit(main())

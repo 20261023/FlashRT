@@ -577,6 +577,29 @@ R32的条件Expert EXACT、R35局部PROJ2端点恢复、R36失败迁移、R37组
 
 **现执行停止规则：结束这一轮E×P组合搜索，下一步转上游frozen ViT定位。**不追加新组合、不做case-dependent路由；生产默认、runtime／精度、Euler10和原容差均不变。上游实验也须先复现真实固定端点，再区分ViT内部差异，不将Merger局部净抵消当作最终策略归因，也不回填R33未捕获的输入。
 
+### 8.12 R38结果前追加：上游ViT最短可锚定前缀，而非再拼修复
+
+R37停止组合搜索后，下一问题固定为：**同一份实际prepared images进入ViT，差异是否已出现在block0–3；最早不同的、可验证实际边界是什么？** R38尚未冻结／提交，没有数值结果。
+
+选择四块而不是一块或27块，是因为Gold实际只保留了block3、block26输出：四块是能抵达第一个已保存块端点的最短前缀。主会话已核对raw角色与shape：有三份Patch输出、三份block3全六帧输出和prepared images；没有native的逐块历史轨迹。此前“patch＋position”重建过block0输入，但不能冒称真实历史边界；这轮要真正观察。
+
+STD只读header核实51个BF16张量均存在，总161436544字节，包括Patch／position及blocks0–3所需norm／QKV／投影／MLP参数；不读VLM、Expert、Merger或后23块。视频配置核对为开启、stride4、past_drop=None，固定时间PE源默认值不改。该预检未读取权重数据，也没有使用GPU。
+
+| 竞争解释／边界问题 | 这轮能区分的结果 | 不能跳写的结论 |
+|---|---|---|
+| 差异在Patch／位置或进入第一块前已产生 | 实际Patch／position／block0输入先比较，旧结果须复现已有Gold | 不因309016曾通过就省略当前实际端点验证 |
+| 首个不一致已在blocks0–3某个实际阶段 | 逐块输入、norm1输入／输出、QKV、attention投影、residual、norm2、MLP、output，另捕获block3时间PE／temporal V | 后续输入已不同的阶段不等于独立局部原因；不预设attention或RMS是根因 |
+| 差异只在更后层出现 | 如果四块均一致，本轮结论是此前缀未定位 | 不自动扩读4–26，不冒称整个ViT一致 |
+| 观察器或重建改变了路径 | 官方三份block3全六帧输出须EXACT历史Gold；native观察前后完整四块prefix控制须一致 | 任一端点失败即停止，不拿“接近”替代硬门或回退成相似循环 |
+
+官方旧runtime只构造原四块ViT模块，用真实视频函数与SpaceTimeBlock3逐camera调用；不是构造完整HyVLA。native新runtime保留原`vit_forward`源码循环，在实际block3返回后用独立停止信号退出，禁止block4触及权重。该端点是block3真实返回，不称完整27块API输出。两边都不改数学，只加实际module／方法／功能调用观察器，并要求输入／权重只读和异常恢复。
+
+预定旧124、新42共166个完整BF16数组；block3的norm1输入和输出实际都为4维，保留该事实。官方新内部输入是**当前新观测**，native内部轨迹同样是新数据，不补写313766历史。prepared images的live stride有历史metadata；旧storage offset未记录，零offset重建须标注假设。
+
+**重要限制：**本轮比较的是旧runtime／per-camera／FA2对新runtime／combined／SDPA，runtime与调用形式仍混杂。它只定位最早实际边界，不从两格比较宣称runtime单因果、具体kernel原因或策略误差份额。若要做同输入局部因果切口，必须另立后续判别实验。
+
+计划仍是单A800≤20分钟、旧→新两进程串行、零完整VLA／backend，无prepare／warmup／profile／性能目标；166数组全部审计。官方依赖无法导入、旧端点不能复现、缺任一camera／frame／stage均只得未获准诊断；不装依赖、不建新runtime、不放宽门限。当前CPU组件测试不替代旧环境真实导入或Gold前缀资格。
+
 ## 9. 研究工具本身也要接受反例和修正
 
 | 问题 | 容易出现的错误解释 | 实际处理与影响 |
@@ -587,6 +610,8 @@ R32的条件Expert EXACT、R35局部PROJ2端点恢复、R36失败迁移、R37组
 | R33 legacy checkpoint schema混用 | “checkpoint本身不兼容／缺权重” | 文件stat与目录／config完整记录分别验证；真实结构正例先RED，bytes／mtime／config等负例保持拒绝，真实headers再CPU重放 |
 | SSH观测连续失败 | “Slurm作业失败，重新sbatch” | 先用无实验FS／无Slurm的SSH探测隔离传输问题；保留原回执，退避恢复同一作业，绝不因此重复提交 |
 | 大数组传输超时 | “只拿summary也足够” | 有界压缩传输、完整清单／大小／source／单独header核对，再独立读全数组；没有为记录研究而重跑GPU |
+| R38把Gold的package来源字段当成policy文件 | “绿色临时fixture就代表真实历史schema相容” | 核对实际Gold与producer：字段是`__init__.py`，严格绑定round007 package后再派生policy源；真实schema正例RED→GREEN，旧错误文件／错误round仍拒绝，未改历史数据 |
+| R38观察完成后的Gold锚点／最终同步失败 | “拒绝complete就足够，不必保留已采数组” | 失败仍须保留未获准raw与cleanup／layout状态；注入锚点、同步及证据写盘失败，保持原异常与`qualified=False`，绝不生成成功报告；修正发生在GPU提交前 |
 
 这些修正提高的是证据可信度，不是模型质量。RED→GREEN说明特定回归反例被覆盖；它不是跨设备、所有输入或全部主流程的证明。独立审查提供第二视角，但主执行者仍负责核查结果和最终原始审计。
 

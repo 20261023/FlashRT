@@ -884,3 +884,46 @@ arrays, known-cell admission, both replays and all cleanup. The old28-request
 publisher is not relaxed or reused. If both fails the unchanged seven-case gate,
 stop this combination search and localize upstream ViT next. Even7/7 is only
 the existing proxy scope, not default, robot, speed or generalization promotion.
+
+### Frozen actual ViT prefix localization
+
+After the rejected R37 joint candidate, `hy_trace/frozen_vit_prefix.py` localizes
+only blocks0–3 on one admitted three-camera/six-frame visual context. Four blocks
+are the shortest prefix reaching the first captured Gold block endpoint. It
+does not run a policy, read all27layers, alter kernels, or restart combination
+search. Header preflight identifies exactly51BF16tensors/161436544bytes; the actual
+reader admits their1152/4304 geometry and never loads a complete checkpoint.
+
+The old runtime imports source-bound original `_create_hyvit2(select_layer=4)`,
+`SpaceTimeBlock` and the video function. Actual module hooks capture9fields per
+block, block3 time PE/temporal V and the actual current-frame return separately
+for each camera. Three complete six-frame block3 outputs, Patch and positional
+outputs must EXACT Gold. No new block0 input is misrepresented as a historical
+capture: it is observed now, rather than reconstructed from stored patch+position.
+
+The native runtime imports no official FA2 module. Eight actual methods retain
+the original `vit_forward` loop; an instance stop occurs AFTER block3 returns,
+before block4 can touch any weight. This is an actual block3 return, NOT a
+complete27-block API output. A stop-only control must EXACT the observed prefix.
+Inverse-checked AST observers replace only calls with wrappers that invoke the
+same original Torch operation and return it unchanged; no global patch or staged
+loop substitutes for the real methods. Hooks/own attributes restore on errors,
+inputs and weights remain read-only, and partial captures never become complete.
+
+Official124/native42 typed arrays (166total) retain actual chain/residual and
+current-frame/control bridges. Block3 norm1 input AND output are4D before their
+callers' view. Analysis concatenates only on CPU for camera/frame comparisons;
+the earliest unequal observed boundary is not automatically a primitive cause.
+Here relative L2 normalizes old-minus-native by the native endpoint norm;
+equality, maxabs and RMSE are symmetric. This is not the policy quality gate.
+Old/new runtime AND per-camera/combined FA2/SDPA forms are confounded here. Old
+internal layouts/offsets were not historically captured; the observed image
+stride is retained and zero storage offset is explicitly a reconstruction
+assumption. New native internal captures are not claimed historical313766 data.
+
+Import/source/old Gold anchor failure stops the experiment without installing
+dependencies or falling back to approximate reconstruction. If these four blocks
+match, report "not localized in this prefix"; do not automatically expand to
+blocks4–26. All166arrays and source/call/cleanup evidence need independent audit
+after a bounded old-then-new allocation. No policy-error fraction, generalization,
+robot quality, unmeasured speed or production-default qualification follows.

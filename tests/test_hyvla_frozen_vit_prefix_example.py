@@ -1,5 +1,9 @@
 import importlib.util
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from types import MethodType,SimpleNamespace
 
 import pytest
@@ -232,3 +236,207 @@ def test_comparison_finds_first_actual_stage_and_reports_camera_frame_difference
         assert row['max_abs']==1. and row['unequal_elements']==native[changed].numel()*(3 if changed=='block3.time_pe' else 1)
         assert len(row['per_camera'])==3 and all(len(c['per_frame'])==6 for c in row['per_camera'])
     else:assert all(row['exact'] for row in result['stages'].values())
+
+
+def input_manifest(prefix,tmp_path):
+    task=tmp_path;roles={}
+    for origin,folder,engine in (('gold','hy-trace-308690','official'),('native','hy-folded-state-trace-313766','native'),
+            ('current','hy-native-policy-tree-316975','native/control')):
+        for case in ('baseline','state'):
+            for kind,name in (('report','result.json'),('raw','trace.safetensors')):
+                p=task/'results'/folder/engine/case
+                if origin=='current':p=p/'replay0'
+                roles[f'{origin}.{case}.{kind}']=p/name
+    roles.update({'r33':task/'results/hy-native-policy-tree-316975/native/result.json',
+        **{'runtime.'+e:task/'results/hy-rms-stages-315256'/e/'result.json' for e in ('official','native')}})
+    for p in roles.values():p.parent.mkdir(parents=True,exist_ok=True);p.write_text('{}')
+    off=task/'snapshots/round007/diagnostic/official/hy_vla';source=off/'hunyuan_vl_mot/modeling_hunyuan_vl_mot.py'
+    native=task/'snapshots/round038/code/flash_rt/models/hyvla/pipeline_thor.py'
+    records={}
+    for role,p in {'official_modeling':source,'official_video':off/'space_time_attention.py','official_policy':off/'modeling_hy_vla.py',
+            'official_configuration':off/'configuration_hy_vla.py','native':native,'config':task/'checkpoint/config.json'}.items():
+        p.parent.mkdir(parents=True,exist_ok=True);p.write_text('{}' if role=='config' else '# source')
+        records[role]=prefix.file_record(p)
+    (off/'__init__.py').write_text('# historical package source')
+    roles['gold.baseline.report'].write_text(json.dumps({'hy_vla_source':str(off/'__init__.py')}))
+    ck=task/'checkpoint/model.safetensors';ck.write_bytes(b'no tensor data')
+    history={'kind':'hy_frozen_complete_merger_inputs','task_root':str(task),'checkpoint':prefix.file_record(ck),
+        'official_source':prefix.file_record(source),'records':{k:prefix.file_record(p) for k,p in roles.items()}}
+    path=task/'results/hy-merger-stages-317360/inputs.json';path.parent.mkdir(parents=True,exist_ok=True);path.write_text(json.dumps(history))
+    manifest={'kind':'hy_frozen_actual_vit_prefix_inputs','task_root':str(task),'history_manifest':prefix.file_record(path),'source_files':records}
+    return manifest,native
+
+
+@pytest.mark.parametrize('bad',['none','old_raw_stat','config_stat','new_source_path','old_source_path','missing_role','history_path','package_file','package_round'])
+def test_input_source_config_history_paths_and_stats_precede_any_weight_consumer(prefix,tmp_path,bad):
+    manifest,native=input_manifest(prefix,tmp_path);called=[]
+    if bad=='old_raw_stat':
+        path=tmp_path/'results/hy-trace-308690/official/baseline/trace.safetensors';path.write_bytes(b'changed old actual raw')
+    if bad=='config_stat':Path(manifest['source_files']['config']['path']).write_text('{"changed":true}')
+    if bad=='new_source_path':manifest['source_files']['native']=manifest['source_files']['official_video']
+    if bad=='old_source_path':manifest['source_files']['official_video']=manifest['source_files']['official_policy']
+    if bad=='missing_role':manifest['source_files'].pop('official_configuration')
+    if bad=='history_path':manifest['history_manifest']['path']=str(tmp_path/'other.json')
+    if bad in ('package_file','package_round'):
+        historical=Path(manifest['history_manifest']['path']);history=json.loads(historical.read_text())
+        report=Path(history['records']['gold.baseline.report']['path']);root=tmp_path/'snapshots/round007/diagnostic/official/hy_vla'
+        report.write_text(json.dumps({'hy_vla_source':str(root/'modeling_hy_vla.py' if bad=='package_file' else tmp_path/'snapshots/other/official/hy_vla/__init__.py')}))
+        history['records']['gold.baseline.report']=prefix.file_record(report);historical.write_text(json.dumps(history));manifest['history_manifest']=prefix.file_record(historical)
+    call=lambda:prefix.admit_before_weights(manifest,native_source=native,factory=lambda m:called.append('weight consumer') or m)
+    if bad=='none':assert call()['kind']=='hy_frozen_complete_merger_inputs' and called==['weight consumer']
+    else:
+        with pytest.raises((ValueError,FileNotFoundError),match='source|record|path|stat|role|manifest|inputs|No such'):call()
+        assert not called
+
+
+@pytest.mark.parametrize('bad',['none','job','source','runtime','weight_keys','full_model','anchor','cleanup'])
+def test_native_predecessor_official_header_and_actual_Gold_raw_precede_51_weight_reads(prefix,bad):
+    raw,_=prefix_raw();gold={'images':raw['prepared.images'],'patches':[raw[f'camera{i}.patch'] for i in range(3)],
+        'position':raw['camera0.position'],'block3':[raw[f'camera{i}.block3.output'] for i in range(3)]}
+    report={'kind':'hy_actual_frozen_vit_prefix','engine':'official','status':'prefix_capture_complete','job_id':'9','source_revision':'a'*40,
+        'runtime':{'torch':'old'},'torch_git_version':'b'*40,'checkpoint':{'bytes':17},'input_manifest':{'identity':'fixture'},'source_records':{'driver':{}},
+        'weight_read_events':51,'selected_checkpoint_keys':['model.dual_tower.vlm.model.visual.vision_tower.'+k for k in tensor_schema()],
+        'full_model_constructed':False,'blocks_constructed':4,
+        'raw_proof':{'tensors':124,'block_chain_exact':True,'residual_chains_exact':True,'actual_endpoint_bridge_exact':True},
+        'observations':{'complete':True,'cleanup':{'passed':True},'camera_block_indices':[[0,1,2,3]]*3}}
+    if bad=='job':report['job_id']='8'
+    if bad=='source':report['source_revision']='c'*40
+    if bad=='runtime':report['runtime']={'torch':'new'}
+    if bad=='weight_keys':report['selected_checkpoint_keys'][-1]='blocks.4.norm1.weight'
+    if bad=='full_model':report['full_model_constructed']=True
+    if bad=='anchor':gold['block3'][0]=torch.ones_like(gold['block3'][0])
+    if bad=='cleanup':report['observations']['cleanup']['passed']=False
+    called=[]
+    call=lambda:prefix.admit_prior_official(report,raw,gold,job_id='9',source_revision='a'*40,runtime={'torch':'old'},torch_git='b'*40,
+        checkpoint={'bytes':17},input_manifest={'identity':'fixture'},source_records={'driver':{}},factory=lambda:called.append('51-key reader'))
+    if bad=='none':call();assert called==['51-key reader']
+    else:
+        with pytest.raises(ValueError,match='prior|official|source|runtime|anchor|Gold|weight|header|cleanup'):call()
+        assert not called
+
+
+def test_help_and_allocation_guard_before_any_source_or_weight_read(tmp_path):
+    env={k:v for k,v in os.environ.items() if not k.startswith('SLURM_')}
+    r=subprocess.run([sys.executable,str(SCRIPT),'--help'],env=env,text=True,capture_output=True)
+    assert r.returncode==0 and '--inputs' in r.stdout and '--official-prefix' in r.stdout
+    r=subprocess.run([sys.executable,str(SCRIPT),'--engine','native','--inputs','/missing','--source-revision','a'*40,
+        '--output',str(tmp_path/'unused')],env=env,text=True,capture_output=True)
+    assert r.returncode!=0 and 'allocated GPU srun' in r.stderr and not (tmp_path/'unused').exists()
+
+
+def physical_weights():
+    return {name:torch.full((),(i+1)/64,dtype=torch.bfloat16).expand(shape) for i,(name,shape) in enumerate(tensor_schema().items())}
+
+
+def test_native_standalone_owner_uses_exact_selected_objects_without_constructing_full_pipeline(prefix):
+    weights=physical_weights();owner=prefix.make_native_owner(weights,source=NATIVE)
+    assert owner._fp8 is False and owner.vit_heads==16 and owner.vit_hd==72 and owner.vit_spacetime_ids=={3,7,11,15,19,23}
+    assert owner.W._vit_patch_w is weights['patch_embed.proj.weight']
+    assert len(owner.W._vit_qkv_w)==4 and owner.W._vit_fc1_w[3] is weights['blocks.3.mlp.fc1.weight']
+    assert owner._prefix_source==NATIVE and all(getattr(owner,k).__self__ is owner for k in prefix.METHODS)
+
+
+@pytest.mark.parametrize('bad',['missing','dtype','shape'])
+def test_invalid_prefix_weight_set_rejects_before_official_module_constructor(prefix,bad):
+    weights=physical_weights();called=[]
+    if bad=='missing':weights.pop('blocks.0.norm1.bias')
+    if bad=='dtype':weights['blocks.0.norm1.weight']=weights['blocks.0.norm1.weight'].float()
+    if bad=='shape':weights['blocks.0.mlp.fc1.bias']=torch.ones(4303,dtype=torch.bfloat16)
+    vision=SimpleNamespace(_create_hyvit2=lambda **kw:called.append(kw))
+    with pytest.raises(ValueError,match='weight|shape|BF16|keys'):
+        prefix.make_official_prefix(vision,SimpleNamespace(),weights,device='cpu')
+    assert not called
+
+
+def test_official_factory_constructs_only_four_blocks_and_loads_every_selected_parameter(prefix):
+    import torch.nn as nn
+    def factory(*,select_layer,ckpt_path,weight_init):
+        assert select_layer==4 and ckpt_path=='' and weight_init=='skip'
+        tower=nn.Module();tower.pos_embed=nn.Parameter(torch.empty(1,16384,1152));tower.patch_embed=nn.Module()
+        tower.patch_embed.proj=nn.Conv2d(3,1152,16,bias=True);tower.blocks=nn.Sequential()
+        tower.patch_drop=nn.Identity();tower.norm_pre=nn.Identity()
+        for i in range(4):
+            b=nn.Module();b.norm1=nn.LayerNorm(1152);b.norm2=nn.LayerNorm(1152);b.attn=nn.Module()
+            b.attn.qkv=nn.Linear(1152,3456);b.attn.proj=nn.Linear(1152,1152);b.attn.q_bias=None
+            b.attn.q_norm=nn.Identity();b.attn.k_norm=nn.Identity();b.attn.num_heads=16;b.attn.head_dim=72
+            b.mlp=nn.Module();b.mlp.fc1=nn.Linear(1152,4304);b.mlp.fc2=nn.Linear(4304,1152)
+            b.ls1=nn.Identity();b.ls2=nn.Identity();b.drop_path1=nn.Identity();b.drop_path2=nn.Identity();tower.blocks.add_module(str(i),b)
+        return tower
+    class SpaceTimeBlock(nn.Module):
+        def __init__(self,base_block,*,max_num_frames,learnable_time_embed,time_embed_base):
+            super().__init__();assert (max_num_frames,learnable_time_embed,time_embed_base)==(18,False,100.)
+            for k,v in base_block._modules.items():setattr(self,k,v)
+    values=physical_weights();tower=prefix.make_official_prefix(SimpleNamespace(_create_hyvit2=factory),SimpleNamespace(SpaceTimeBlock=SpaceTimeBlock),values,device='cpu')
+    assert len(tower.blocks)==4 and isinstance(tower.blocks[3],SpaceTimeBlock) and tower.past_drop_layer is None
+    assert set(tower.state_dict())==set(values) and all(not m.training for m in tower.modules())
+    assert all(torch.equal(v,values[k]) and v.dtype==torch.bfloat16 for k,v in tower.state_dict().items())
+
+
+@pytest.mark.parametrize('bad',['none','state_images','patch_dtype','block3_missing','layout'])
+def test_actual_Gold_images_patch_block3_roles_and_shared_context_admit_before_forward(prefix,bad):
+    def zero(shape):return torch.zeros((),dtype=torch.bfloat16).expand(shape)
+    samples={c:{'images':zero((3,6,3,224,224)),'patches':tuple(zero((6,196,1152)) for _ in range(3)),
+        'position':zero((1,196,1152)),'block3':tuple(zero((6,196,1152)) for _ in range(3)),
+        'image_metadata':{'shape':[3,6,3,224,224],'dtype':'torch.bfloat16','live_stride':[903168,150528,50176,224,1]}} for c in ('baseline','state')}
+    if bad=='state_images':samples['state']['images']=torch.ones_like(samples['state']['images'])
+    if bad=='patch_dtype':samples['baseline']['patches']=(samples['baseline']['patches'][0].float(),*samples['baseline']['patches'][1:])
+    if bad=='block3_missing':samples['baseline']['block3']=samples['baseline']['block3'][:2]
+    if bad=='layout':samples['baseline']['image_metadata']['live_stride'][0]+=1
+    called=[]
+    def consume():
+        result=prefix.admit_gold_inputs(samples);called.append('actual four-block owner');return result
+    if bad=='none':assert consume() is samples['baseline'] and called==['actual four-block owner']
+    else:
+        with pytest.raises(ValueError,match='Gold|image|shared|block3|BF16|layout|role'):consume()
+        assert not called
+
+
+@pytest.mark.parametrize('failure',['raw_write','incomplete'])
+def test_prefix_publication_never_marks_partial_or_raw_write_failure_complete(prefix,tmp_path,monkeypatch,failure):
+    import safetensors.torch
+    raw,_=prefix_raw();report={'engine':'official','observations':{'complete':failure!='incomplete','cleanup':{'passed':True}}}
+    if failure=='raw_write':
+        def fail(*a,**kw):raise OSError('prefix raw write failed')
+        monkeypatch.setattr(safetensors.torch,'save_file',fail)
+    with pytest.raises((OSError,ValueError),match='raw write|complete|cleanup'):
+        prefix.publish_capture(tmp_path,raw,report)
+    assert not (tmp_path/'result.json').exists()
+
+
+@pytest.mark.parametrize('evidence_failure',[False,True])
+def test_post_observation_Gold_rejection_retains_unqualified_raw_state_and_original_error(prefix,tmp_path,monkeypatch,evidence_failure):
+    from safetensors.torch import load_file
+    raw,_=prefix_raw();state={'complete':True,'cleanup':{'passed':True},'layouts':{'evidence':'captured before anchor check'}}
+    def observed(*a,**kw):return raw,state
+    monkeypatch.setattr(prefix,'observe_official',observed)
+    gold={'images':raw['prepared.images'],'patches':[raw[f'camera{i}.patch'] for i in range(3)],'position':raw['camera0.position'],
+        'block3':[torch.ones_like(raw['camera0.block3.output']),raw['camera1.block3.output'],raw['camera2.block3.output']]}
+    with pytest.raises(ValueError,match='Gold anchor') as caught:
+        prefix.qualified_capture(None,None,engine='official',video_function=None,gold=gold,official_raw=None,synchronize=lambda:None)
+    original=caught.value
+    if evidence_failure:
+        import safetensors.torch
+        def broken(*a,**kw):raise OSError('evidence disk failed')
+        monkeypatch.setattr(safetensors.torch,'save_file',broken)
+    prefix.write_failure(tmp_path,original)
+    failed=json.loads((tmp_path/'failure.json').read_text())
+    assert failed['qualified'] is False and failed['observations']['complete'] is True and failed['observations']['cleanup']['passed'] is True
+    assert failed['error_type']=='ValueError' and 'Gold anchor' in failed['error'] and not (tmp_path/'result.json').exists()
+    if evidence_failure:
+        assert failed['evidence_write_errors'] and any('evidence disk failed' in note for note in original.__notes__)
+    else:
+        saved=load_file(str(tmp_path/'unqualified_partial.safetensors'));assert len(saved)==124
+        assert torch.equal(saved['camera0.block3.output'],raw['camera0.block3.output'])
+
+
+def test_native_cleanup_only_failure_carries_full_CPU_partial_to_failure_audit(prefix,tmp_path):
+    from safetensors.torch import load_file
+    owner,images=tiny_native(prefix);old=dict(owner.__dict__)
+    def sync():raise RuntimeError('final sync failed')
+    with pytest.raises(RuntimeError,match='cleanup') as caught:prefix.capture_native(owner,images,synchronize=sync)
+    raw,state=caught.value.prefix_partial
+    assert len(raw)==42 and state['complete'] is False and state['cleanup']['passed'] is False
+    prefix.write_failure(tmp_path,caught.value)
+    assert len(load_file(str(tmp_path/'unqualified_partial.safetensors')))==42
+    failed=json.loads((tmp_path/'failure.json').read_text());assert failed['qualified'] is False and failed['observations']['cleanup']['passed'] is False
+    assert not (tmp_path/'result.json').exists() and set(owner.__dict__)==set(old)
