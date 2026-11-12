@@ -976,6 +976,54 @@ Gold variance, reproduce the unchanged full native baseline first and retain
 all-layer positive/negative outcomes. No full-policy/native-vision/free-running/
 robot qualification, default/tolerance/runtime change or6/7FAILED rewrite.
 
+Job316722 (`round032/d8cdfec9`) tested the functional source-old RMS across the
+FULL32-layer Expert and final heads, with separateQKV/originalprefixorder held
+fixed. The prototype derives variance from each LIVEinput/weight only; it does
+not supply captured norm inputs, variances or outputs. The same shared replay
+core runs teacher and propagated hidden modes, baseline/state, ten external
+official trajectory steps, with Gold KV. Full old/native input/header/path/stat
+admission occurs before ASTowner creation/checkpoint tensor reads.
+
+Accounting confirmedCOMPLETED0:0/errors0. Fullcompressedtransfer (337071861bytes,
+432558080byte tar) checked paths/file set/byte sizes/source marker and a separately
+retrieved header, without a new hash. Independent audit checked all5200BF16raw
+arrays and recomputed every old-oracle metric, not just worker success flags:
+
+| Case | Unchanged control EXACT prior native | Control EXACT old2.7 | LIVE-tree EXACT old2.7 |
+|---|---:|---:|---:|
+| baseline | 1300/1300 | 509/1300 | **1300/1300** |
+| state | 1300/1300 | 510/1300 | **1300/1300** |
+
+| Case | Control propagated velocity relativeL2 | LIVE-tree velocity relativeL2 |
+|---|---:|---:|
+| baseline | .00307602–.00494808 | **0 (10/10EXACT)** |
+| state | .00316721–.00527045 | **0 (10/10EXACT)** |
+
+For EACH prototype case, all320teacher residuals,320teacher outputs,
+320propagated residuals and320propagated outputs were EXACTold; all20propagated
+velocities and20fixed-Gold head velocities across both cases were EXACTtoo.
+The head participates in the RMS intervention, so it is not an unchanged
+negative control: the control state head was9/10EXACT, the prototype10/10.
+Each arm observed5160norm calls (2560FP32/128 and2600BF16/1024, including40heads),
+with binding restoration/H0/order/attention cleanup verified. Only363unique
+checkpoint keys/arm were loaded,726read events; no full model or new kernel build.
+
+The login-only frozen input-loading preflight had an SSH180s timeout with no
+recoverable completion and was NOT counted as passed. A read-only recovery found
+no lingering process/no submission receipt; the identical full input checks
+remained inside the allocation before owner/weights, and the completed control
+and independent raw audit now establish that path. No repeated oldjob or gate
+relaxation was used to bypass the uncertainty.
+
+This closes the measured cross-runtime Expert gap under the JOINT fixed
+projection/order/GoldKV/externaltrajectory conditions, using an input-derived
+arithmetic model rather than saved Gold norm answers. It is not a fast candidate,
+direct compiledbranch proof, native vision KV or free-running full policy result.
+The original seven-fixture6/7FAILED remains untouched. Next investigate a strictly
+Expert-phase-only native diagnostic hook and its actual prefix permutation before
+testing native KV/free-running fixtures; do not change VLM/prefill, integrator,
+precision, runtime, production defaults or original quality thresholds here.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot
