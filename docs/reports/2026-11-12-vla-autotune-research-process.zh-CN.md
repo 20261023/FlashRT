@@ -788,6 +788,10 @@ CPU FP64参考采用同一实际BF16 Q/K、先FP32再提升的scale与稳定logs
 
 下一步先只读核实：在不改dropout、不换backend、不安装／构建kernel的条件下，现有接口是否还有真正有鉴别力的内部观测。若没有，就明确标出可观察性限制，而不是重复同样的backend矩阵、从LSE伪造概率，或靠数学重建冒称捕获了GPU内部值。R37组合停止规则继续有效，当前无待运行GPU作业，不改生产默认、runtime／精度／sampler或原门。
 
+**随后完成的只读可行性核实：**两份固定源码都在`return_softmax`时检查`p_dropout>0`（[外部FA2检查](https://github.com/Dao-AILab/flash-attention/blob/5231d95fe13733fb534c01895f7ea88c6a6c7793/csrc/flash_attn/flash_api.cpp#L442-L449)、[Torch内嵌检查](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/transformers/cuda/flash_attn/flash_api.cpp#L504-L508)），没有在本轮dropout=0约束下直接返回scores／概率矩阵的该forward入口。没有为取得矩阵而改dropout或debug开关。
+
+已有CUDA12.8 `cuobjdump`／`nvdisasm`工具与帮助已只读核对；对本轮实际加载且stat未变的两个库做`--list-elf`，外部FA2有84个SM80代码对象、Torch库有444个。**代码对象数不是Flash kernel数量，也不能唯一绑定本次实际执行函数，更不证明FMA分支。** 本次未提取或反汇编指令、未装工具、未改binary，也未新提交GPU。由源码假设继续走到已编译指令，需要另立可验证的运行函数／代码对象对应协议，不能直接把这份清单写成根因证据。
+
 ## 9. 研究工具本身也要接受反例和修正
 
 | 问题 | 容易出现的错误解释 | 实际处理与影响 |
