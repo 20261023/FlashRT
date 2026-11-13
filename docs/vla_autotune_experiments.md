@@ -1,5 +1,15 @@
 # VLA autotune: measured iteration notes
 
+**Current Hy objective, changed by the user on2026-11-13:** performance/quality
+tradeoff like the other models, not old-runtime/intermediate EXACT closure.
+New campaigns use normalizedpublic20 relativeL2<=.05/cosine>=.999 against a
+fixed native semantic-BF16 Euler10 reference; all seven cases remain required.
+See the [explicit contract](../examples/vla_autotune/hyvla_tradeoff_quality.json)
+and [current objective](vla_autotune.md#hy-performancequality-objective-2026-11-13-revision).
+The stricter padded/official gates, failures and R1–R40 precision findings below
+are historical evidence, not a prerequisite for future speed search and not
+retroactively requalified. LSE/FMA/SASS research is no longer the active task.
+
 For the Chinese research narrative—observations, competing hypotheses,
 discriminating experiments, negative findings and subsequent revisions—see
 [the research-process record](reports/2026-11-12-vla-autotune-research-process.zh-CN.md).

@@ -1,0 +1,6 @@
+{
+  "scope": "hyvla-normalized-public20-native-euler10-tradeoff-v1",
+  "action_dim": 20,
+  "max_relative_l2": 0.05,
+  "min_cosine": 0.999
+}

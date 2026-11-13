@@ -6,6 +6,8 @@
 
 **记录边界：**已核验结果更新至 R40。保留各轮结果前预测，包括 `e97f22e7` 的R37停止规则、`311c66d0` 的R38前缀、`e058161a` 的R39context／投影切口和 `cf4d9741` 的R40零权重LSE；结果另节追加，不改写先前假设。
 
+**2026-11-13用户目标修订：**Hy从数值闭合主线转为与其他模型相同的性能—质量权衡；中间量EXACT／旧runtime复现不再是性能候选的前提，停止继续追LSE／FMA／SASS。新public20动作预算与历史官方门明确分开，详见第8.18节。
+
 **性质：**可审计的研究／工程实验记录，不是机器人成功率、模型排行榜或生产默认变更说明。
 
 ## 1. 为什么另写一份“过程记录”
@@ -791,6 +793,28 @@ CPU FP64参考采用同一实际BF16 Q/K、先FP32再提升的scale与稳定logs
 **随后完成的只读可行性核实：**两份固定源码都在`return_softmax`时检查`p_dropout>0`（[外部FA2检查](https://github.com/Dao-AILab/flash-attention/blob/5231d95fe13733fb534c01895f7ea88c6a6c7793/csrc/flash_attn/flash_api.cpp#L442-L449)、[Torch内嵌检查](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/transformers/cuda/flash_attn/flash_api.cpp#L504-L508)），没有在本轮dropout=0约束下直接返回scores／概率矩阵的该forward入口。没有为取得矩阵而改dropout或debug开关。
 
 已有CUDA12.8 `cuobjdump`／`nvdisasm`工具与帮助已只读核对；对本轮实际加载且stat未变的两个库做`--list-elf`，外部FA2有84个SM80代码对象、Torch库有444个。**代码对象数不是Flash kernel数量，也不能唯一绑定本次实际执行函数，更不证明FMA分支。** 本次未提取或反汇编指令、未装工具、未改binary，也未新提交GPU。由源码假设继续走到已编译指令，需要另立可验证的运行函数／代码对象对应协议，不能直接把这份清单写成根因证据。
+
+### 8.18 2026-11-13用户修订目标：Hy与其他模型对齐，不再追过高精确
+
+用户明确要求：“hy那个目标改成和其他的一样吧 别追求过高的精确了”。这改变的是**后续优化目标**，不是宣称前面的因果定位错误，也不是把既有失败重命名为成功。之前把“剩余数值差异闭合”持续当作性能工作的前置条件，已偏离用户现在确认的优先级；从这里停止该主线。
+
+核对现行π0.5／FastWAM campaign，二者均用相对固定参考输出的relative L2≤0.05、cosine≥0.999筛选，不要求逐元素复现官方实现。Hy的新契约采用同一预算逻辑，但按模型自己的动作域选择20个真实public通道：
+
+| 项目 | 新Hy性能搜索口径 |
+|---|---|
+| 优化目标 | 在动作偏差预算内最小化完整请求延迟，记录median／tail与实际NFE |
+| 数值参考 | 同checkpoint／source／runtime／输入／noise的固定原生BF16 `semantic_bf16` Euler10，另有bookend |
+| 评价域 | normalized public `40×20`，不以12个padding通道作为优化质量目标 |
+| 预算 | 每个请求／测量回放relative L2≤0.05且cosine≥0.999 |
+| 覆盖 | 保留全部七case，不为了过门删除state／noise等失败案例 |
+| 不再要求 | 中间张量EXACT、旧runtime／FlashAttention端点闭合、原padded逐元素门先通过 |
+| 仍要求 | 有限输出、正确shape／输入／身份／NFE／生命周期、完整raw／覆盖、reference drift检查 |
+
+固定原生参考是执行基线，不是独立official正确性或机器人成功率oracle；新数值预算也不证明闭环任务质量。官方差异、padding、maxabs仍可单列诊断，但不再作为这一scope的额外隐含否决条件。全局模型精度／默认配置没有因此自动修改。
+
+新增配置[`hyvla_tradeoff_quality.json`](../../examples/vla_autotune/hyvla_tradeoff_quality.json)直接供共用v2 worker/controller消费，新scope与旧official／padded门隔离。六个行为检查先因缺配置RED、再GREEN，验证允许非EXACT但预算内的动作、忽略padding差异、包含第20通道、保留relative L2与cosine拒绝，并证明旧oracle仍能独立判失败。没有修改旧`validate_hyvla.py`常量或历史作业／报告的通过状态。
+
+后续转向新鲜端到端性能campaign：Euler步数／ProbeFlow、graph／提交与实际prefix／velocity成本，而不是继续LSE／FMA／SASS或逐位RMS恢复。预算、参考点、输入与候选在新实验前冻结；尚未根据新标准宣布任何候选通过或产生新加速结果。
 
 ## 9. 研究工具本身也要接受反例和修正
 

@@ -145,6 +145,30 @@ unchanged during their experiments.
   substitution.
 - Failed cleanup retains samples as partial evidence, not valid measurement.
 
+### Hy performance/quality objective (2026-11-13 revision)
+
+Hy now follows the same optimization objective as the other models: minimize
+end-to-end latency within an explicit final-action deviation budget, rather than
+reproduce old-runtime intermediate tensors. The source-checkout contract is
+[`hyvla_tradeoff_quality.json`](../examples/vla_autotune/hyvla_tradeoff_quality.json):
+relative L2 <=0.05 and cosine >=0.999 on the normalized **20 trained/public
+channels**, for every request and measured replay. The12padding channels do not
+veto selection. Maxabs and the original elementwise official comparison may be
+reported separately, but are not this optimization objective.
+
+Use a newly measured, fixed native BF16 `semantic_bf16` Euler10 reference and
+bookend on the same source/checkpoint/runtime/workload/noise. Like the other
+campaign references, this measures deviation from an execution baseline, NOT
+independent official correctness or robot success. Freeze the new scope before
+running candidates; all seven existing Hy cases remain in coverage. Select the
+fastest passed point using the existing controller, retaining raw arrays, actual
+NFE, median/tail latency, source identity and reference drift.
+
+LSE/FMA/SASS and old-runtime EXACT research are no longer optimization blockers
+or the active workstream. No global production precision/default was changed.
+Historical `validate_hyvla.py` oracle budgets and prior failed results remain
+unchanged; a new criterion must never retroactively relabel them as passed.
+
 ## Profiling and dataflow
 
 Profiling adds a request outside formal samples. CUDA event intervals can include

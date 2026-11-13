@@ -7,6 +7,17 @@ an immutable source snapshot and explicitly named local inputs/checkpoints.
 
 ## HyVLA recorded-oracle validation
 
+**Current optimization goal (2026-11-13):** use the shared v2 tradeoff contract
+[`hyvla_tradeoff_quality.json`](hyvla_tradeoff_quality.json), normalized public20
+relative L2<=0.05 and cosine>=0.999 against a fixed native BF16 semantic Euler10
+reference. All requests/replays must pass. Minimize measured end-to-end latency;
+do not require old-runtime or intermediate-tensor EXACT first. This is a scoped
+runtime-deviation proxy, not an independent robot-quality oracle. The12padding
+channels and the original official elementwise gate are separate diagnostics.
+The following recorded-oracle runner remains available for historical parity
+checks; `--require-oracle` is NOT the new speed-search admission gate. See the
+[current objective](../../docs/vla_autotune.md#hy-performancequality-objective-2026-11-13-revision).
+
 `validate_hyvla.py` operates on the revision-bound public fixture contract:
 three uint8 camera histories `[6,480,640,3]`, normalized state20, supplied FP32
 noise `[40,32]`, and recorded normalized action oracles. It is not a generic
