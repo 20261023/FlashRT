@@ -716,7 +716,7 @@ O6“旧角恢复”是结果前允许失败的**结果项**，不是为了通�
 
 ### 8.16 R40结果前追加：零权重、同实际QKV的row-LSE观测
 
-R40尚未冻结或提交，没有LSE实测结果。R39将首个投影后差异收窄到实际context，并排除了该输入上投影分组6／18及Torch版本升级的必要性；它仍未说明context计算的哪一阶段产生差异。下一步只增加一个已有kernel可返回的行标量：**自然对数softmax LSE**，不开发或切换kernel，不重扫backend。
+本节在R40提交前固定于 `cf4d9741`，不按后来结果改写预测。R39将首个投影后差异收窄到实际context，并排除了该输入上投影分组6／18及Torch版本升级的必要性；它仍未说明context计算的哪一阶段产生差异。下一步只增加一个已有kernel可返回的行标量：**自然对数softmax LSE**，不开发或切换kernel，不重扫backend。
 
 精确版本官方源码支持可观测性：外部`flash_attn 2.7.4.post1`公共接口的`return_attn_probs=True`返回context、FP32 LSE和空S_dmask，dropout=0时底层`return_softmax`仍为False；新Torch2.11的已有Flash算子返回九项，0为context、1为LSE，无需开启debug mask。主会话另用系统Python核对了已安装旧wrapper的签名、版本、AST分支与binary stat，未导入Torch／FA2或读权重／使用GPU。**源码可行与stat一致不等于已安装二进制及实际输出获准**。
 
@@ -738,6 +738,8 @@ R40尚未冻结或提交，没有LSE实测结果。R39将首个投影后差异�
 源码中Torch声明`UNFUSE_FMA`、softmax存在条件算术分支，仅动机化“FMA／exp2舍入可能有关”的假设，不证明已安装binary分支或559个差异原因；本轮不改flag、不重建。仍限单A800、20分钟、旧→新两进程，无完整模型、warmup／profile／时延目标。失败时保留已经取得的context／LSE和FP64参考，不把缺数组运行写成complete；R37组合停止决定与所有生产默认／精度／runtime／sampler／原质量门不变。
 
 版本绑定来源：[FA2接口](https://github.com/Dao-AILab/flash-attention/blob/5231d95fe13733fb534c01895f7ea88c6a6c7793/flash_attn/flash_attn_interface.py#L812-L862)、[Torch2.11 schema](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/native_functions.yaml#L15193-L15198)、[返回LSE的softmax归一化](https://github.com/Dao-AILab/flash-attention/blob/e2743ab5b3803bb672b16437ba98a3b1d4576c50/csrc/flash_attn/src/softmax.h#L169-L185)、[Torch构建声明](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/CMakeLists.txt#L329-L334)。
+
+**提交状态追加：**`319757`已由持久回执确认，冻结`round040/cf4d9741`，单A800、20分钟、旧→新两进程。95项专项、1386项所选回归及隔离导出通过，另有41个subtests／2个skips；裸全仓仍有原20个收集错误。评审的两项Important已分别用反例RED→GREEN修正：按同Git CUDA／meta契约处理dense的None占位，以及解析拒绝前保留异常context／LSE原始数组。完整零权重磁盘准入链、synthetic17数组auditor正例及篡改反例均已验证，但不替代真实CUDA。纯元数据来源／wrapper分支持久准入未导入Torch／FA2、未读张量或使用GPU；此处尚无LSE实测结论，实际context硬门及17数组审计仍待核验。
 
 ## 9. 研究工具本身也要接受反例和修正
 
