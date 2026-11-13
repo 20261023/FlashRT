@@ -557,3 +557,11 @@ CPU 边界复核进一步发现：baseline/state 与 Gold 的266738个 prefix em
 新实际context与两轮旧冻结算子值配对EXACT；另外16个保存context的CPU比较显示，旧2.7与新2.11 Torch AUTO／Flash输出均等于当前native，外部FA2均等于当前旧context，故Torch版本升级不是该差异的必要条件。仍未获得具体kernel算术原因；注入旧context不是LIVE修复，不赋予完整ViT／策略／机器人／速度资格。
 
 结果、局部充分性边界及下一项既有API row-LSE只读研究见[过程记录第8.14—8.15节](2026-11-12-vla-autotune-research-process.zh-CN.md)。不恢复组合、不扩层或改门。
+
+### 11.20 Hy：零权重真实LSE观测完成，归一化摘要与context差异不一一对应
+
+`319757`／`cf4d9741` 的16个实际数组＋1个CPU FP64参考独立审计通过，零learned checkpoint／trace权重读取。旧FA2 public False／True、新AUTO／ATenFlash的context在group6／18均EXACT R39，输入layout／只读／返回契约与205非权重输入角色获准，未改变数值门或kernel。
+
+各自group6／18 LSE为实际int32位比较EXACT。旧／新在56448行中有5811行数值及位型不同，maxabs`3.814697265625e-6`。R39的559个context值差异占152行；交叉为22行两者不同、5789行仅LSE不同、130行仅context不同、50507行均相同。**LSE等否不能直接识别或解释context差异**，重合计数不是softmax的策略误差贡献比例。
+
+独立CPU FP64数学参考重算最大差`3.552713678800501e-15`；实际LSE相对参考的RMSE旧约`8.03538e-7`、新约`7.90556e-7`，只作描述，不排名kernel正确性或替代原质量门。QK／scale／exp／归约／log／FMA等具体来源仍未隔离；本轮不是LIVE策略修复。完整结果、否定解释及可观察性限制见[过程记录第8.16—8.17节](2026-11-12-vla-autotune-research-process.zh-CN.md)。

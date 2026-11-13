@@ -1437,6 +1437,65 @@ gates; no backend matrix/kernel build/oldFA2import into newruntime/policysearch
 is authorized by this result. No runtime/precision/sampler/gate/default, robot,
 speed or generalization promotion follows.
 
+Job319757 (`round040/cf4d9741`) observed existing row-LSE on the actual R39QKV,
+with ZERO learned checkpoint AND trace-weight reads. Metadata-only original
+R39/R38 namespaces and205role-allowlisted nonweight support arrays were admitted;
+no old full tensor loader, prefix/policy/PE, kernel build or backend sweep ran.
+
+COMPLETED0:0/errors0/no resubmit/cancel. Allsevenfiles/164137692bytes were fetched
+(124389566zstd/164147200tar); inventory/sizes/source marker and two independently
+retrieved headers matched. Independent source-free audit passed all16actual+
+1CPUFP64reference arrays, all plain/capture contexts EXACT R39 at both groupings,
+QKV before/after, actual axis/stride/offset/APIreturn metadata, zero-weight role
+boundary, finite FP32 LSE, numeric AND int32bit comparisons, camera/frame/head
+metrics, row alignment and reference formula. CUDA's dense sequence placeholders
+were indeed recorded as None in positions2/3; context/LSE/debug remained strict.
+
+Both engines' group6vs18 LSE were **bit-EXACT** across56448FP32rows each; actual
+int32patterns were compared, not inferred from numeric equality or hashes.
+Old-vs-native LSE differed in5811/56448rows BOTH numerically and by bit pattern,
+maxabs3.814697265625e-6, RMSE2.6749114708546303e-7, L2=6.35526541478637e-5.
+The per-camera unequal counts were1986/1870/1955; every head had some LSE
+differences. Thus a stored-FP32-normalizer gap is observable, but not an isolated
+QK/softmax/scale/exp/reduction/log/FMA cause or a library bug.
+
+Context-any-channel differences were mapped explicitly toB/H/N rows. The R39
+559BF16value differences occupy152rows; group6and18 gave the SAME cross-tab:
+
+| LSE / context row comparison | Rows |
+|---|---:|
+| both different | 22 |
+| LSE different, context equal | 5789 |
+| LSE equal, context different | 130 |
+| both equal | 50507 |
+| total | 56448 |
+
+Consequently stored LSE equality is not a detector of context equality: many
+changed LSE rows keep the same BF16context, and130changed context rows have equal
+stored FP32LSE. Equal summaries do not imply equal probabilities/internal row_sum,
+nor do the22overlapping rows establish a causal contribution or policy-error
+percentage. No scalar-ratio "repair" is justified by this table.
+
+CPUFP64 mathematical-reference distances were identical between group6and18:
+
+| Actual LSE vs mathematical reference | Maxabs | RMSE | L2 |
+|---|---:|---:|---:|
+| old externalFA2 | 8.087605710471735e-6 | 8.035376395867188e-7 | .00019091080306717477 |
+| native ATenFlash | 8.087605710471735e-6 | 7.905559534719443e-7 | .00018782651180408936 |
+
+The independent NumPy reference recomputation differed from the saved Torch
+CPUFP64reference by at most3.552713678800501e-15, within the preregistered FP64
+machine-order audit budget. This budget applies ONLY to the mathematical
+reference, never the actual context EXACT gates. The slightly different reference
+RMSEs are not a kernel correctness ranking, policy-quality proxy or new gate.
+
+The LSE observation is complete; the primitive rounding mechanism and LIVE
+native-policy remedy are not. FMA/exp2 source branches remain hypotheses, not
+installed-binary proof. Next work must first assess whether existing nonintrusive
+interfaces expose another genuinely discriminating boundary; do not simply
+repeat the backend matrix, change dropout to obtain an attention matrix, infer
+probabilities from LSE, build a kernel or revive policy combination search.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot

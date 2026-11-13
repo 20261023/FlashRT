@@ -4,7 +4,7 @@
 
 **覆盖：**π0、π0.5、FastWAM，以及重点展开的 Hy 数值一致性定位。
 
-**记录边界：**已核验结果更新至 R39。保留各轮结果前预测，包括 `e97f22e7` 的R37四格停止规则、`311c66d0` 的R38四块前缀与 `e058161a` 的R39实际context／投影切口；各轮结果另节追加，不改写先前假设。
+**记录边界：**已核验结果更新至 R40。保留各轮结果前预测，包括 `e97f22e7` 的R37停止规则、`311c66d0` 的R38前缀、`e058161a` 的R39context／投影切口和 `cf4d9741` 的R40零权重LSE；结果另节追加，不改写先前假设。
 
 **性质：**可审计的研究／工程实验记录，不是机器人成功率、模型排行榜或生产默认变更说明。
 
@@ -739,7 +739,54 @@ O6“旧角恢复”是结果前允许失败的**结果项**，不是为了通�
 
 版本绑定来源：[FA2接口](https://github.com/Dao-AILab/flash-attention/blob/5231d95fe13733fb534c01895f7ea88c6a6c7793/flash_attn/flash_attn_interface.py#L812-L862)、[Torch2.11 schema](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/native_functions.yaml#L15193-L15198)、[返回LSE的softmax归一化](https://github.com/Dao-AILab/flash-attention/blob/e2743ab5b3803bb672b16437ba98a3b1d4576c50/csrc/flash_attn/src/softmax.h#L169-L185)、[Torch构建声明](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/CMakeLists.txt#L329-L334)。
 
-**提交状态追加：**`319757`已由持久回执确认，冻结`round040/cf4d9741`，单A800、20分钟、旧→新两进程。95项专项、1386项所选回归及隔离导出通过，另有41个subtests／2个skips；裸全仓仍有原20个收集错误。评审的两项Important已分别用反例RED→GREEN修正：按同Git CUDA／meta契约处理dense的None占位，以及解析拒绝前保留异常context／LSE原始数组。完整零权重磁盘准入链、synthetic17数组auditor正例及篡改反例均已验证，但不替代真实CUDA。纯元数据来源／wrapper分支持久准入未导入Torch／FA2、未读张量或使用GPU；此处尚无LSE实测结论，实际context硬门及17数组审计仍待核验。
+**提交状态追加：**`319757`已由持久回执确认，冻结`round040/cf4d9741`，单A800、20分钟、旧→新两进程。95项专项、1386项所选回归及隔离导出通过，另有41个subtests／2个skips；裸全仓仍有原20个收集错误。评审的两项Important已分别用反例RED→GREEN修正：按同Git CUDA／meta契约处理dense的None占位，以及解析拒绝前保留异常context／LSE原始数组。完整零权重磁盘准入链、synthetic17数组auditor正例及篡改反例均已验证，但不替代真实CUDA。纯元数据来源／wrapper分支持久准入未导入Torch／FA2、未读张量或使用GPU；这条提交状态不含LSE实测结论，实际context硬门及17数组审计另见第8.17节。
+
+### 8.17 R40结果后追加：LSE确有差异，但行重合不能替代context机制
+
+`319757`／冻结 `cf4d9741` 完成 `0:0`，无观测错误、重提或取消。完整7文件／164137692字节回传，清单／大小／source与两个单独取得的header一致。运行准入先验证205个非权重支持数组；独立CPU auditor未导入producer，对16个新实际数组＋1个FP64参考做数值复算，并核对输入角色记录。QKV前后、实际轴序／stride／offset、返回metadata、数值／int32位型比较、逐camera／frame／head与行对齐均通过。
+
+**新观测具备资格的前提已实际成立：**旧public False／True和新AUTO／ATenFlash在group6／18的context均EXACT对应R39实际context；不是“LSE看起来合理，所以容许context略变”。真实dense返回也确认cum_seq_q/k为None占位，context／LSE／debug的硬门未放宽。没有读取learned checkpoint或trace权重，没有构造完整模型或新kernel。
+
+#### “存储后的归一化摘要相同”被否定，但分组仍没有作用
+
+每份统一LSE有56448个FP32行标量。旧／新各自的group6与18均**位型EXACT**，这里确实逐int32比较了原始FP32位模式，不是从普通数值EXACT推断；不使用hash。
+
+旧对新则5811行数值不同、5811行位型不同，maxabs`3.814697265625e-6`、RMSE`2.6749114708546303e-7`、L2`6.35526541478637e-5`；两种分组的这些统计完全相同。三个camera分别1986／1870／1955行不同，所有16个head均有差异。
+
+这将R39的context端点差异推进为**归一化侧另有可观察标量差异**；它没有把QK累加、scale、exp、softmax归约、log或末尾FP32舍入拆开。源码的FMA／exp2条件分支仍是假设，不是由这个结果证明的已安装binary分支或根因。
+
+#### 不能把5811个LSE差异直接解释成559个context差异
+
+R39的559个BF16 context值差异分布在152个`B/H/N`行。按每行任一D通道是否不同，与LSE逐行交叉：
+
+| 观察组合 | 行数 |
+|---|---:|
+| LSE不同、context也不同 | 22 |
+| LSE不同、context相同 | 5789 |
+| LSE相同、context不同 | 130 |
+| 两者相同 | 50507 |
+| 合计 | 56448 |
+
+group6与18得到同一张表。大量LSE差异没有改变已存储BF16 context；另130个context差异行的已存储LSE相同。因此不能拿LSE等否当成context差异检测器，也不能只用一条LSE比率去宣称修复context。相同LSE仍可能掩盖scores／概率／内部row_sum的不同，改变的行标量也不证明它导致了对应context差异。
+
+**22个重合行只是行级交叉观察，不是贡献比例。** 本轮没有估计“多少策略误差来自softmax”或从5811／559两个不同域的计数推导放大率。
+
+#### 数学参考验证了分析定义，不给kernel排正确性名次
+
+CPU FP64参考采用同一实际BF16 Q/K、先FP32再提升的scale与稳定logsumexp。独立NumPy重算和保存的Torch CPU参考最大差`3.552713678800501e-15`，通过结果前固定的FP64机器舍入复核预算；该预算从未用于放松任何实际context的EXACT门。
+
+| LSE相对数学参考，group6与18相同 | maxabs | RMSE | L2 |
+|---|---:|---:|---:|
+| 旧external FA2 | `8.087605710471735e-6` | `8.035376395867188e-7` | `.00019091080306717477` |
+| 新ATen Flash | `8.087605710471735e-6` | `7.905559534719443e-7` | `.00018782651180408936` |
+
+新端点的参考RMSE略小，不代表其kernel在任意输入更正确、策略质量更高，亦不能替代原质量门；CPU数学参考没有复现融合Tensor Core／FP32次序。这些距离保留为明确参考下的描述性结果，不用来挑选“赢家”。
+
+#### 当前解释边界与下一步的停止纪律
+
+已排除“此输入上group6／18改变LSE”的解释，已否定“两个实现存储的LSE全部相同”；尚未区分context内部的具体算术。**这轮观测完成，不等于LIVE attention／策略修复完成。**
+
+下一步先只读核实：在不改dropout、不换backend、不安装／构建kernel的条件下，现有接口是否还有真正有鉴别力的内部观测。若没有，就明确标出可观察性限制，而不是重复同样的backend矩阵、从LSE伪造概率，或靠数学重建冒称捕获了GPU内部值。R37组合停止规则继续有效，当前无待运行GPU作业，不改生产默认、runtime／精度／sampler或原门。
 
 ## 9. 研究工具本身也要接受反例和修正
 
@@ -777,6 +824,7 @@ O6“旧角恢复”是结果前允许失败的**结果项**，不是为了通�
 11. Expert bundle与PROJ2的首步／最终action有限差分交互在七例均非零，但both仅5/7且新增history失败；非加性不等于有利，组合搜索已按预注册规则结束。
 12. 同一实际视觉输入的四块前缀已精确锚定，首不同边界定位在block0投影后attention，前置norm1／QKV一致；后续模块差异不能再被当作无输入混杂的独立原因。
 13. 在该block0固定边界，旧实际context值足以恢复旧投影后端点，同值投影分组6／18无效且I=0；仍只是诊断交接，不是LIVE算法。保存数据还表明此context gap不需要Torch版本升级才出现。
+14. 同一实际QKV的真实LSE有5811行差异，而152个context差异行中仅22行与之重合；存储后的归一化摘要与BF16 context行差异不能互相代替，更不能被直接当作因果或策略误差份额。
 
 ### 10.2 尚未验证，不能写成结论
 
