@@ -1376,6 +1376,67 @@ the entire SDPAbackend search, import oldFA2 into newruntime, broaden RMS widths
 extend blocks4–26 or revive failed policy combinations. No defaults/runtime/
 precision/gates, robot/performance/generalization qualification changed.
 
+Job319502 (`round039/e058161a`) split that actual block0boundary using only
+four BF16QKV/output-projection tensors(10626048bytes/process). Original old
+`_ViTAttention.forward` ran three camera6 groups; original native QKV/spatial
+methods ran combined18. Actual projection PREhooks/functional observers captured
+NEWcontexts, rather than renaming R38 or older frozen-loop outputs.
+
+COMPLETED0:0/errors0/no resubmit/cancel. Allsevenfiles/260161742bytes were fetched
+(178880783zstd/260177920tar), source marker/inventory/sizes/two separately
+fetched headers checked. Source-free independent CPU audit passed all38BF16raw
+and oneFP64interaction array:old21/native17, actual R38norm1/QKV/post/API/
+unobserved-control/self-projection anchors, recorded live layouts/call counts,
+same-buffer context substitutions/B6views/input+weight read-only and exactN
+restoration/post-restore projection. No full prefix/policy or new backend ran.
+
+The ACTUALcontext gap is559BF16values,maxabs.00390625,RMSE5.784658939572094e-6,
+relativeL2.000029474206625764763(reference=old actualcontext). Both actual old
+contexts and native contexts EXACTtheir corresponding retained309182/309409
+context values. Thus the earlier frozen-operator gap now has an actual API
+context bridge, not only an equal-QKV bridge; it still does not create a
+retroactive R38pre-projection capture or historical layout observation.
+
+| Native-runtime projection cell | Compared with current native post | Compared with old actual post |
+|---|---|---|
+| N18: nativecontext,combined18 | EXACT | 2139unequal,maxabs.03125 |
+| N6: nativecontext,threecamera6 | EXACT | 2139unequal,maxabs.03125 |
+| O18: oldactualcontext,combined18 | 2139unequal,maxabs.03125 | **EXACT** |
+| O6: oldactualcontext,threecamera6 | 2139unequal,maxabs.03125 | **EXACT** |
+
+N18self-control andrestoration were hard gates. O6recovery was a preregistered
+OUTCOME, not forced by admission. Crucially O18already recoveredoldpost: replacing
+only the actual context values at the CURRENTnative projection layout/call
+locally sufficed to recover this one measured endpoint. Grouping6vs18 hadzero
+numerical effect on BOTHcontexts; this is not a universalGEMM/row-geometry law.
+CPUFP64 `I=(O6-O18)-(N6-N18)` matched the complete saved array, all4064256elements
+zero,maxabs/L2=0. This projection-level finite difference is not the different
+Expert×PROJ2 policy interaction measured in R37 and does not contradict it.
+
+This is an explicit intermediate-answer handoff for causal diagnosis. Native
+attention still does not compute oldcontext fromLIVEQKV; no deployable fix,
+whole-ViT equivalence or seven-fixture policy qualification was established.
+559context versus2139post differences are not an explained-error percentage
+or an eightfold/element-count amplification estimate.
+
+Additional saved-array CPU analysis (NOnewGPUtrial) compared16retained context
+outputs on the SAMEadmitted actualQKV:oldTorch2.7AUTO/forcedFlashSDPA group6/18
+and newTorch2.11AUTO/forcedFlashSDPA allEXACTcurrent actualnativecontext; retained
+externalFA2 group6/18 allEXACTcurrent actualoldcontext. Thus a TorchVERSIONchange
+is NOTNECESSARYto produce this gap on this input: it already exists between
+externalFA2andTorchSDPA within2.7. Neither does this prove universal runtime/
+backend equivalence or a specific compiled-kernel arithmetic cause. The external
+package was actually flash_attn2.7.4.post1; older309409GPU names showed Torch's
+Flash_fwd_kernel_traits<96,128,64,4,...> on bothTorchversions, not every internal
+branch or the standaloneFA2 kernel configuration.
+
+The remaining question is inside context computation, not projection grouping.
+Before any new execution, inspect exact-version existing APIs/source for a
+weightless same-QKV row-LSE observation with its own R39context endpoint hard
+gates; no backend matrix/kernel build/oldFA2import into newruntime/policysearch
+is authorized by this result. No runtime/precision/sampler/gate/default, robot,
+speed or generalization promotion follows.
+
 ## Remaining acceptance and testing limits
 
 - These input scopes are synthetic numerical/implementation probes. No robot

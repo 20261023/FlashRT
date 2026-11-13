@@ -547,3 +547,13 @@ CPU 边界复核进一步发现：baseline/state 与 Gold 的266738个 prefix em
 另测到固定block3时间PE每份一个元素不同，三camera重复汇总为3个，并非三个独立样本；具体算术原因和策略影响未验证。追加保存数组CPU比较还将本轮实际输入／norm1／QKV与309182及309409的12项旧重建值配对EXACT，未回填历史未记录layout，亦未冒称R38已有投影前context捕获。
 
 后续问题只收窄为该block0的context／输出投影分离，不恢复组合或blind backend搜索。过程中的预测、实际锚点、否定解释及限制见[研究记录第8.12—8.13节](2026-11-12-vla-autotune-research-process.zh-CN.md)。无默认／质量门／机器人／速度推广。
+
+### 11.19 Hy：实际context交接恢复局部投影端点，分组切口无效
+
+`319502`／`e058161a` 的旧21、新17个BF16与1个FP64交互数组，共39个完整数组独立审计通过。四个权重、真实attention API、QKV／自值／自回放／恢复控制均复现对应R38实际端点，没有完整prefix或policy运行。
+
+实际context差异559值、maxabs`.00390625`。N18与N6均EXACT native投影端点；O18与O6均EXACT旧端点。因此在该固定输入／权重／当前layout，**旧context值局部充分**，无需改变native投影分组；两份context上分组6／18无效。投影有限差分`I=(O6-O18)-(N6-N18)`的4064256个FP64元素全零。这不是R37的策略交互，也不是任意矩阵的行分组定律。
+
+新实际context与两轮旧冻结算子值配对EXACT；另外16个保存context的CPU比较显示，旧2.7与新2.11 Torch AUTO／Flash输出均等于当前native，外部FA2均等于当前旧context，故Torch版本升级不是该差异的必要条件。仍未获得具体kernel算术原因；注入旧context不是LIVE修复，不赋予完整ViT／策略／机器人／速度资格。
+
+结果、局部充分性边界及下一项既有API row-LSE只读研究见[过程记录第8.14—8.15节](2026-11-12-vla-autotune-research-process.zh-CN.md)。不恢复组合、不扩层或改门。
