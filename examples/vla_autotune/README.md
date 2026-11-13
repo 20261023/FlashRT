@@ -927,3 +927,42 @@ match, report "not localized in this prefix"; do not automatically expand to
 blocks4–26. All166arrays and source/call/cleanup evidence need independent audit
 after a bounded old-then-new allocation. No policy-error fraction, generalization,
 robot quality, unmeasured speed or production-default qualification follows.
+
+### Actual attention context / projection bridge
+
+`hy_trace/frozen_vit_attention_bridge.py` splits the R38 block0 post-projection
+boundary, using only four BF16 QKV/projection tensors (10626048bytes). It runs
+the original source-bound `_ViTAttention.forward` for three camera6 inputs and
+the original native `_vit_qkv/_vit_spatial_attn` for combined18. Neither a full
+prefix nor a policy is constructed. Fresh QKV/API/control/self-projection values
+must reproduce their respective actual R38 endpoints before any local cut.
+
+The R38 helper is imported from its ORIGINAL round038 path, retaining `__file__`
+and its original guards; the R39 copy is not used to relax those guards. Current
+native source must match R38 bytes. R38's full typed166raw, source/runtime/Git/
+flags/checkpoint and observed norm1 stride/offset are admitted before the four
+reads. The native phase also admits the same-job official21fields before its
+weight reads. Old FA2 never enters the new runtime. Newly captured projection
+prehook contexts are NEW data, not retroactive R38 observations or legacy loop
+outputs renamed as actual API captures.
+
+Four fixed native-runtime operator cells use N/O (new/old actual context) and
+18/6 (one combined / three camera projections): N18, N6, O18, O6. Controlled
+`copy_` substitutions use the SAME actual native projection-input buffer and
+restore its values/layout afterward; actual camera views share that storage.
+All calls keep original biased `F.linear`, dtype and weights, with no flatten,
+bias split or new attention backend. N18 must exactly reproduce native output
+BEFORE other cuts; restoration and post-restore projection are hard gates.
+O6 matching the old endpoint is an outcome, not a forced gate, because remaining
+runtime/layout/lowering effects are still possible. This is a local operator
+cut, not a revival of rejected Expert×PROJ2 policy search.
+
+Official21/native17 BF16 arrays plus one CPU FP64 finite difference
+`I=(O6-O18)-(N6-N18)` make39complete arrays. A negative old corner, zero effect
+or nonzero interaction may all be valid diagnostic outcomes. The exact raw
+roles, actual source contexts, counters, views, own API anchors and cleanup must
+pass independent audit. Failures merge already captured API fields with cut
+partials and preserve the original exception even when evidence writes fail.
+New actual contexts are separately compared with retained309182/309409 contexts;
+a mismatch never triggers another backend search. No performance, robot,
+generalization, default or explained-policy-error-fraction qualification follows.

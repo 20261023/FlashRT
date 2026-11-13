@@ -648,6 +648,31 @@ block3固定时间PE也有一个端点差异：旧三个camera的PE彼此EXACT�
 
 R37的组合停止决定继续有效：不恢复Expert×PROJ2搜索、不按case路由、不改runtime／精度／sampler／门限。本轮没有新的机器人、速度、泛化或生产默认资格。
 
+### 8.14 R39结果前追加：把实际context与输出投影拆开，不强迫旧角恢复
+
+R39尚未冻结或提交。针对R38“QKV以前一致、投影后2139个差异”的边界，下一问题不是再搜backend或策略组合，而是：**实际attention context已经不同吗；在同一context值上改变投影分组又有什么影响，两者有无局部有限差分交互？**
+
+只读block0 `attn.qkv.{weight,bias}` 与 `attn.proj.{weight,bias}` 四个BF16张量，STD header已核实合计10626048字节。旧实际 `_ViTAttention` 类也已在R38绑定的原源文件中确认；不能用一个相似循环替代。旧进程执行原API三次camera6，新进程执行原native两个方法combined18，从R38实际norm1交接开始，不重算上游norm或加载整prefix。
+
+先捕获投影前真实context与操作数，并设以下机械硬门：本轮QKV、未观察API控制、观察API、proj输出与自身投影回放必须分别EXACT对应R38实际端点；输入／权重只读、调用次数／scope／cleanup正确。官方21字段必须先完成并在新进程准入，才允许native四权重读取。保留R38 helper自己的原snapshot路径／namespace，不放宽旧round守卫。
+
+然后在新runtime复用**同一实际native投影输入buffer及其layout**，固定四个局部算子单元：
+
+| context来源 | 一次combined18 biased Linear | 三次camera6 biased Linear |
+|---|---|---|
+| N：本轮实际native context | N18，自值硬控制 | N6，同值分组切口 |
+| O：本轮实际官方context | O18，同当前layout的context值切口 | O6，旧角结果 |
+
+N18必须先EXACT当前native端点，失败立即阻止其他切口。其余三格是结果，**尤其新runtime的O6不强迫匹配旧2.7端点**；若有残差，runtime／layout／lowering仍可能混杂，不能为了“恢复”而改算术或松门。只在诊断中显式copy context值，不向完整策略注入答案，不把旧context切口当成可部署算法。权重／bias／dtype和原biased Linear表达式保持，真实切片共享原storage，最后恢复N及投影控制。
+
+预注册CPU FP64 `I=(O6-O18)-(N6-N18)`，直接从四份实际投影输出计算，零／非零均保留，不从norm／RMSE／通过数推断，也不解释为策略误差比例。推导行几何M1176／3528来自实际Python操作数，**不是本轮未采集的aten／cuBLAS算法观测**。
+
+预定旧21、新17个BF16数组，加1个FP64交互数组，共39个；包含四格完整输入／输出、原context恢复值与恢复后投影。新实际context与309182／309409保存context另做数值桥接；不相等也不触发backend重扫，更不能倒写R38未捕获的投影前数据。
+
+仍限单A800、20分钟、旧→新两进程，无warmup／profile／时延目标、无新环境／依赖／build／hash。任一自身API／QKV／自值／恢复硬门失败即未获准，保存已采API和切口partial及原异常；不丢frame／camera救完成。R37的策略组合停止规则继续生效，本轮不追PE、不扩后23层、不改生产默认／精度／runtime／sampler／原质量门。
+
+已知未补项也保留：完整`load_inputs→legacy→run`仍无端到端CPU成功链测试；若I已在内部计算、但晚期bundle qualification抛错，失败载荷可能没有这份FP64缓存，四个BF16投影输出仍保留，可不重跑GPU而在CPU精确重算。该失败不生成complete，也不能因此免除正常成功报告所需的完整39数组审计。
+
 ## 9. 研究工具本身也要接受反例和修正
 
 | 问题 | 容易出现的错误解释 | 实际处理与影响 |
@@ -660,6 +685,8 @@ R37的组合停止决定继续有效：不恢复Expert×PROJ2搜索、不按case
 | 大数组传输超时 | “只拿summary也足够” | 有界压缩传输、完整清单／大小／source／单独header核对，再独立读全数组；没有为记录研究而重跑GPU |
 | R38把Gold的package来源字段当成policy文件 | “绿色临时fixture就代表真实历史schema相容” | 核对实际Gold与producer：字段是`__init__.py`，严格绑定round007 package后再派生policy源；真实schema正例RED→GREEN，旧错误文件／错误round仍拒绝，未改历史数据 |
 | R38观察完成后的Gold锚点／最终同步失败 | “拒绝complete就足够，不必保留已采数组” | 失败仍须保留未获准raw与cleanup／layout状态；注入锚点、同步及证据写盘失败，保持原异常与`qualified=False`，绝不生成成功报告；修正发生在GPU提交前 |
+| R39第二／第三个hook安装失败 | “把三个注册调用放进列表赋值，finally就能统一移除” | 实际列表赋值要等全部右侧成功，先前handle可能丢失并误报cleanup成功；两种注册故障反例RED→GREEN，改为每成功一次立即记录handle，并验证已有hooks／active flag及之后普通forward不受旧observer影响 |
+| R39回归写临时safetensors出现磁盘配额错误 | “剩余全局空间就说明没有存储限制，或把7项写盘失败当成模型回归” | `/tmp`挂载启用usrquota且仍有全局空间／inode；不删原始产物、不改配额、不改测试，改用本计划独立新临时目录后同选集通过。原失败名／错误与处置另留观察摘要，不冒充恢复了已被复验覆盖的原完整stdout |
 
 这些修正提高的是证据可信度，不是模型质量。RED→GREEN说明特定回归反例被覆盖；它不是跨设备、所有输入或全部主流程的证明。独立审查提供第二视角，但主执行者仍负责核查结果和最终原始审计。
 

@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import ast
 import copy
+import argparse
+import importlib.util
+import json
+import os
 from pathlib import Path
-from types import MethodType
+from types import MethodType,SimpleNamespace
 
 PREFIX='model.dual_tower.vlm.model.visual.vision_tower.blocks.0.attn.'
 ACTUAL_FIELDS=('norm1','qkv','context','projection','api','control','self_projection')
@@ -114,7 +118,9 @@ def capture_actual(engine,owner,norm1,*,synchronize):
             def qkv_hook(m,a,out):event('qkv',a,{},out)
             def context_hook(m,a):event('context',a,{},None)
             def projection_hook(m,a,out):event('projection',a,{},out)
-            handles=[owner.qkv.register_forward_hook(qkv_hook),owner.proj.register_forward_pre_hook(context_hook),owner.proj.register_forward_hook(projection_hook)]
+            handles.append(owner.qkv.register_forward_hook(qkv_hook))
+            handles.append(owner.proj.register_forward_pre_hook(context_hook))
+            handles.append(owner.proj.register_forward_hook(projection_hook))
         else:
             for name,method in load_native_methods(owner._bridge_source,observer=event).items():
                 saved[name]=owner.__dict__.get(name,missing);setattr(owner,name,MethodType(method,owner))
@@ -316,3 +322,310 @@ def validate_bundle(raw,*,engine,actual_state,references,cut_state=None,old_cont
             or interaction_array.shape!=(18,196,1152) or not _same(interaction_array,expected)):
         raise ValueError('Native bridge bundle actual interaction array differs')
     return {'tensors':len(raw),'actual':proof,'cuts':qualification,'interaction_exact':True,'interaction_stats':stats}
+
+
+def _validate_weights(weights):
+    import torch
+    shapes=attention_keys()
+    if set(weights)!=set(shapes):raise ValueError('Attention weight key set must contain exactly four tensors')
+    device=weights['qkv.weight'].device
+    if any(v.dtype!=torch.bfloat16 or v.shape!=shapes[k] or v.device!=device or not torch.isfinite(v).all() for k,v in weights.items()):
+        raise ValueError('Attention weight finite/device/shape/BF16 contract differs')
+
+
+def make_native_owner(weights,*,source):
+    _validate_weights(weights)
+    owner=SimpleNamespace(_vit_f8=False,vit_heads=16,vit_hd=72,vit_scale=72**-.5,_bridge_source=Path(source),
+        _vit_qkv_w_cur=weights['qkv.weight'],_vit_qkv_b_cur=weights['qkv.bias'],_vit_proj_w_cur=weights['proj.weight'],_vit_proj_b_cur=weights['proj.bias'])
+    for name,fn in load_native_methods(source).items():setattr(owner,name,MethodType(fn,owner))
+    return owner
+
+
+def make_official_attention(vision,weights,*,device):
+    import torch
+    _validate_weights(weights)
+    owner=vision._ViTAttention(dim=1152,num_heads=16,qkv_bias=True,qk_norm=False,attn_drop=0.,proj_drop=0.,seperate_qv_bias=False).to(device=device,dtype=torch.bfloat16)
+    if (set(owner.state_dict())!=set(weights) or owner.q_bias is not None or not isinstance(owner.q_norm,torch.nn.Identity)
+            or not isinstance(owner.k_norm,torch.nn.Identity) or (owner.num_heads,owner.head_dim,owner.scale)!=(16,72,72**-.5)
+            or any(isinstance(m,torch.nn.Dropout) and m.p!=0 for m in owner.modules())):raise ValueError('Actual official attention parameter/head/scale/drop/bias routing differs')
+    owner.load_state_dict(weights,strict=True);owner.eval()
+    for p in owner.parameters():p.requires_grad_(False)
+    if any(not _same(value,weights[key]) for key,value in owner.state_dict().items()):raise ValueError('Actual official attention loaded parameter values differ')
+    return owner
+
+
+def file_record(path):
+    p=Path(path).resolve();s=p.stat();return {'path':str(p),'bytes':s.st_size,'mtime_ns':s.st_mtime_ns}
+
+
+def _module(path,name):
+    spec=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m
+
+
+def admit_before_weights(manifest,*,engine,runtime,torch_git,reduction_flag,current_native,current_prefix,factory):
+    if manifest.get('kind')!='hy_actual_vit_attention_bridge_inputs' or engine not in ('official','native'):raise ValueError('R39 input kind/engine differs')
+    task=Path(manifest['task_root']).resolve();root=task/'results/hy-vit-prefix-318174'
+    roles={'SOURCE_GIT_COMMIT','inputs.json','official/result.json','official/operator_outputs.safetensors','native/result.json','native/operator_outputs.safetensors'}
+    records=manifest.get('R38_records',{})
+    if set(records)!=roles:raise ValueError('R38 actual record roles differ')
+    for role,record in records.items():
+        expected=root/role
+        if Path(record['path']).resolve()!=expected or file_record(expected)!=record:raise ValueError('R38 record path/stat changed')
+    if (root/'SOURCE_GIT_COMMIT').read_text().strip()!='311c66d06c20224dd0a11ce6108fb4cb2ac76c62':raise ValueError('R38 actual source marker differs')
+    prefix_record=manifest['frozen_prefix'];frozen=task/'snapshots/round038/code/examples/vla_autotune/hy_trace/frozen_vit_prefix.py'
+    if Path(prefix_record['path']).resolve()!=frozen or file_record(frozen)!=prefix_record:raise ValueError('R38 frozen prefix namespace/path/stat differs')
+    if frozen.read_bytes()!=Path(current_prefix).read_bytes():raise ValueError('R38 frozen prefix driver source changed')
+    current=task/'snapshots/round039/code/flash_rt/models/hyvla/pipeline_thor.py'
+    if Path(current_native).resolve()!=current or Path(manifest['current_native']['path']).resolve()!=current or file_record(current)!=manifest['current_native']:
+        raise ValueError('Current native source path/stat differs')
+    reports={e:json.loads((root/e/'result.json').read_text()) for e in ('official','native')};inputs=json.loads((root/'inputs.json').read_text())
+    prefix=_module(frozen,'hy_bridge_frozen_R38_prefix')
+    native38=task/'snapshots/round038/code/flash_rt/models/hyvla/pipeline_thor.py'
+    historical=prefix.admit_before_weights(inputs,native_source=native38,factory=lambda old:old)
+    expected_sources=prefix._source_records(inputs)
+    if current.read_bytes()!=native38.read_bytes():raise ValueError('Current native source differs from R38 actual implementation')
+    for e,count in (('official',124),('native',42)):
+        r=reports[e];state=r.get('observations',{})
+        if (r.get('kind')!='hy_actual_frozen_vit_prefix' or r.get('status')!='prefix_capture_complete' or r.get('engine')!=e
+                or r.get('job_id')!='318174' or r.get('source_revision')!='311c66d06c20224dd0a11ce6108fb4cb2ac76c62'
+                or r.get('input_manifest')!=inputs or r.get('source_records')!=expected_sources or r.get('checkpoint')!=historical['checkpoint']
+                or r.get('full_model_constructed') is not False or r.get('blocks_constructed')!=4 or r.get('weight_read_events')!=51
+                or r.get('raw_proof')!={'tensors':count,'block_chain_exact':True,'residual_chains_exact':True,'actual_endpoint_bridge_exact':True}
+                or state.get('complete') is not True or state.get('cleanup',{}).get('passed') is not True):raise ValueError('R38 prefix source/header/checkpoint/cleanup differs')
+        if e=='official' and state.get('camera_block_indices')!=[[0,1,2,3]]*3:raise ValueError('R38 actual official call coverage differs')
+        if e=='native' and (state.get('control_block_indices')!=[0,1,2,3] or state.get('observed_block_indices')!=[0,1,2,3]
+                or state.get('block4_called') is not False or state.get('normal_vit_forward_return_reached') is not False
+                or r.get('comparison',{}).get('first_different_stage')!='block0.attention'):raise ValueError('R38 actual native boundary/call proof differs')
+    if reports[engine].get('runtime')!=runtime or reports[engine].get('torch_git_version')!=torch_git or reports[engine].get('bf16_reduced_precision_reduction')!=reduction_flag:
+        raise ValueError('R38/current attention runtime/Git/flags differ')
+    return factory(prefix,reports)
+
+
+def admit_legacy_header(report,*,task,job,engine,checkpoint,runtime,reduction_flag):
+    if (job not in ('309182','309409') or engine not in ('official','native')
+            or report.get('kind')!='diagnostic_frozen_block0_operators_not_recorded_block0_or_action_acceptance'
+            or report.get('job_id')!=job or report.get('engine')!=engine or report.get('torch')!=runtime['torch'] or report.get('cuda')!=runtime['cuda']
+            or report.get('gpu')!='NVIDIA A800-SXM4-80GB' or report.get('model_constructed') is not False or report.get('performance_measurement') is not False
+            or report.get('bf16_reduced_precision_reduction')!=reduction_flag or Path(report['checkpoint']).resolve()!=Path(checkpoint['path']).resolve()
+            or report.get('checkpoint_stat')!={k:checkpoint[k] for k in ('bytes','mtime_ns')}
+            or Path(report['official_trace']).resolve()!=Path(task)/'results/hy-trace-308690/official/baseline'):
+        raise ValueError('Legacy context source/input/runtime/checkpoint binding differs')
+
+
+def capture_and_cut(engine,owner,norm1,weights,*,references,old_context=None,old_reference=None,synchronize):
+    raw={};observations={'actual':None,'cuts':None};phase='actual';I=None
+    try:
+        actual,state,live=capture_actual(engine,owner,norm1,synchronize=synchronize)
+        raw.update(actual);observations['actual']=state;phase='actual_anchor'
+        validate_capture(actual,state,engine=engine,references=references)
+        if engine=='native':
+            phase='cuts'
+            cuts,cut_state=projection_cuts(live,old_context,weights,native_reference=references['post'],synchronize=synchronize)
+            raw.update(cuts);observations['cuts']=cut_state;phase='analysis'
+            I,_=interaction(cuts)
+        proof=validate_bundle(raw,engine=engine,actual_state=state,references=references,cut_state=observations['cuts'],
+            old_context=old_context,old_reference=old_reference,interaction_array=I)
+        return raw,observations,I,proof
+    except BaseException as error:
+        partial=getattr(error,'bridge_partial',None)
+        if partial is not None:
+            raw.update(partial[0])
+            if phase=='actual':observations['actual']=partial[1]
+            elif phase=='cuts':observations['cuts']=partial[1]
+        observations['failure_phase']=phase;error.bridge_partial=(raw,observations);raise
+
+
+def write_failure(output,error,*,raw=None,observations=None,interaction_array=None):
+    from safetensors.torch import save_file
+    retained=dict(raw or {});state=dict(observations or {});partial=getattr(error,'bridge_partial',None)
+    if partial is not None:retained.update(partial[0]);state.update(partial[1])
+    failures=[]
+    if retained:
+        try:save_file({k:v.contiguous() for k,v in retained.items()},str(Path(output)/'unqualified_partial.safetensors'))
+        except BaseException as secondary:failures.append('raw evidence write failed: '+str(secondary));error.add_note(failures[-1])
+    if interaction_array is not None:
+        try:save_file({'projection_interaction':interaction_array.contiguous()},str(Path(output)/'unqualified_interaction.safetensors'))
+        except BaseException as secondary:failures.append('interaction evidence write failed: '+str(secondary));error.add_note(failures[-1])
+    record={'status':'unqualified_vit_attention_bridge_failure','qualified':False,'error_type':type(error).__name__,'error':str(error),
+        'observations':state,'captured_raw_roles':list(retained),'evidence_write_errors':failures}
+    try:(Path(output)/'failure.json').write_text(json.dumps(record,indent=2,allow_nan=False)+'\n')
+    except BaseException as secondary:error.add_note('failure metadata write failed: '+str(secondary))
+
+
+def admit_official_bridge(report,raw,*,job_id,source_revision,runtime,torch_git,reduction_flag,checkpoint,inputs,source_records,references,factory):
+    obs=report.get('observations',{})
+    if (report.get('kind')!='hy_actual_vit_attention_context_projection_bridge' or report.get('status')!='bridge_complete'
+            or report.get('engine')!='official' or report.get('job_id')!=job_id or report.get('source_revision')!=source_revision
+            or report.get('runtime')!=runtime or report.get('torch_git_version')!=torch_git or report.get('bf16_reduced_precision_reduction')!=reduction_flag
+            or report.get('checkpoint')!=checkpoint or report.get('input_manifest')!=inputs or report.get('source_records')!=source_records
+            or report.get('weight_read_events')!=4 or len(report.get('selected_checkpoint_keys',[]))!=4
+            or set(report['selected_checkpoint_keys'])!={PREFIX+k for k in attention_keys()} or report.get('full_model_constructed') is not False
+            or report.get('attention_module_constructed') is not True or obs.get('cuts') is not None):
+        raise ValueError('Official actual bridge predecessor source/runtime/header differs')
+    proof=validate_bundle(raw,engine='official',actual_state=obs.get('actual',{}),references=references)
+    if report.get('raw_proof')!=proof:raise ValueError('Official actual bridge predecessor raw proof differs')
+    return factory()
+
+
+def publish_capture(output,raw,report,*,references,old_context=None,old_reference=None,interaction_array=None):
+    from safetensors.torch import save_file
+    obs=report['observations'];proof=validate_bundle(raw,engine=report['engine'],actual_state=obs['actual'],references=references,
+        cut_state=obs.get('cuts'),old_context=old_context,old_reference=old_reference,interaction_array=interaction_array)
+    if report.get('raw_proof',proof)!=proof:raise ValueError('Bridge raw proof differs before publication')
+    save_file({k:v.contiguous() for k,v in raw.items()},str(Path(output)/'operator_outputs.safetensors'))
+    if report['engine']=='native':save_file({'projection_interaction':interaction_array.contiguous()},str(Path(output)/'projection_interaction.safetensors'))
+    temp=Path(output)/'result.json.tmp';temp.write_text(json.dumps(report,indent=2,allow_nan=False)+'\n');temp.replace(Path(output)/'result.json')
+
+
+LEGACY={'309182':('hy-frozen-attention-309182','ddbb5faa2ce76ee4fe1cf78016bd60f210f88c0c'),
+    '309409':('hy-sdpa-backends-309409','d78ecfb07fc91fadff427d01ab44a8682639628b')}
+
+
+def _load_legacy(manifest,*,task,reports,checkpoint,qkv):
+    import torch
+    from safetensors import safe_open
+    records=manifest.get('legacy_records',{});expected={}
+    for job,(folder,_) in LEGACY.items():
+        expected[job+'.source']=task/'results'/folder/'SOURCE_GIT_COMMIT'
+        for engine in ('official','native'):
+            for role,name in (('report','result.json'),('raw','operator_outputs.safetensors')):expected[f'{job}.{engine}.{role}']=task/'results'/folder/engine/name
+    if set(records)!=set(expected):raise ValueError('Legacy context record roles incomplete')
+    for role,path in expected.items():
+        if Path(records[role]['path']).resolve()!=path or file_record(path)!=records[role]:raise ValueError('Legacy context record path/stat differs')
+    result={}
+    for job,(_,source) in LEGACY.items():
+        if expected[job+'.source'].read_text().strip()!=source:raise ValueError('Legacy context actual source marker differs')
+        for engine in ('official','native'):
+            report=json.loads(expected[f'{job}.{engine}.report'].read_text())
+            admit_legacy_header(report,task=task,job=job,engine=engine,checkpoint=checkpoint,runtime=reports[engine]['runtime'],
+                reduction_flag=reports[engine]['bf16_reduced_precision_reduction'])
+            role='attention_flash_per_camera' if engine=='official' else 'attention_sdpa_combined'
+            with safe_open(str(expected[f'{job}.{engine}.raw']),framework='pt',device='cpu') as sf:
+                previous=sf.get_tensor('qkv_per_camera');context=sf.get_tensor(role)
+            if (not _same(previous,qkv) or context.dtype!=torch.bfloat16 or context.shape!=(18,196,1152)
+                    or not torch.isfinite(context).all()):raise ValueError('Legacy actual-QKV/context dtype/shape/finite bridge differs')
+            result[job+'.'+engine]=context
+    return result
+
+
+def load_inputs(manifest,*,engine,runtime,torch_git,reduction_flag):
+    import torch
+    from safetensors.torch import load_file
+    task=Path(manifest['task_root']).resolve();root=task/'results/hy-vit-prefix-318174'
+    current_native=Path(__file__).resolve().parents[3]/'flash_rt/models/hyvla/pipeline_thor.py'
+    def consume(prefix,reports):
+        old_inputs=json.loads((root/'inputs.json').read_text())
+        base=prefix.load_inputs(old_inputs,engine=engine,runtime=runtime,torch_git=torch_git)
+        historical=base['history_manifest'];raws={e:load_file(str(root/e/'operator_outputs.safetensors')) for e in ('official','native')}
+        for e in ('official','native'):
+            ref=json.loads(Path(historical['records']['runtime.'+e]['path']).read_text())
+            if (reports[e]['runtime']!=ref['runtime'] or reports[e]['torch_git_version']!=ref['torch_git_version']
+                    or reports[e]['bf16_reduced_precision_reduction']!=ref['bf16_reduced_precision_reduction']):raise ValueError('R38 prefix historical runtime/flags binding differs')
+        old_ref=json.loads(Path(historical['records']['runtime.official']['path']).read_text())
+        prefix.admit_prior_official(reports['official'],raws['official'],base['gold'],job_id='318174',source_revision='311c66d06c20224dd0a11ce6108fb4cb2ac76c62',
+            runtime=old_ref['runtime'],torch_git=old_ref['torch_git_version'],checkpoint=base['checkpoint'],input_manifest=old_inputs,
+            source_records=prefix._source_records(old_inputs),factory=lambda:None)
+        prefix.validate_raw(raws['native'],engine='native')
+        imports=reports['official'].get('official_imports',{})
+        if imports!={k:old_inputs['source_files']['official_'+k] for k in ('modeling','video')}:raise ValueError('R38 actual official imports differ')
+        refs={};layouts={}
+        for e in ('official','native'):
+            values={};info={}
+            for name,key in (('norm1','norm1'),('qkv','qkv'),('post','attention')):
+                if e=='official':values[name]=tuple(raws[e][f'camera{i}.block0.'+key] for i in range(3))
+                else:values[name]=raws[e]['block0.'+key]
+            names=[f'camera{i}.block0.norm1' for i in range(3)] if e=='official' else ['block0.norm1']
+            observed=[reports[e]['observations']['layouts'][key] for key in names]
+            B=6 if e=='official' else 18
+            if any(v!={'shape':[B,196,1152],'dtype':'torch.bfloat16','live_stride':[225792,1152,1],'storage_offset':0} for v in observed):
+                raise ValueError('R38 actual observed norm1 layout differs from fixed context')
+            refs[e]=values;layouts[e]=tuple(observed) if e=='official' else observed[0]
+        for key in ('norm1','qkv'):
+            if not _same(torch.cat(refs['official'][key],0),refs['native'][key]):raise ValueError('R38 common actual norm1/QKV values differ')
+        legacy=_load_legacy(manifest,task=task,reports=reports,checkpoint=base['checkpoint'],qkv=refs['native']['qkv'])
+        return {'prefix':prefix,'R38_reports':reports,'R38_inputs':old_inputs,'checkpoint':base['checkpoint'],'directory_checkpoint':base['directory_checkpoint'],
+            'native_source':current_native,'references':refs,'norm1_layouts':layouts,'legacy_contexts':legacy}
+    return admit_before_weights(manifest,engine=engine,runtime=runtime,torch_git=torch_git,reduction_flag=reduction_flag,
+        current_native=current_native,current_prefix=Path(__file__).with_name('frozen_vit_prefix.py'),factory=consume)
+
+
+def restore_norm1(values,layouts,*,engine,device):
+    tensors=values if engine=='official' else (values,);metadata=layouts if engine=='official' else (layouts,);out=[]
+    if engine not in ('official','native') or len(tensors)!=(3 if engine=='official' else 1) or len(metadata)!=len(tensors):
+        raise ValueError('Actual norm1 camera/layout coverage differs')
+    for value,layout in zip(tensors,metadata):
+        restored=value.to(device=device)
+        if _layout(restored)!=layout:raise ValueError('Actual R38 norm1 layout/offset restoration failed; no artifact-layout fallback')
+        out.append(restored)
+    return tuple(out) if engine=='official' else out[0]
+
+
+def _source_records(manifest,admitted):
+    return {'driver':file_record(__file__),'native':manifest['current_native'],'frozen_R38_prefix':manifest['frozen_prefix'],
+        'R38_components':admitted['R38_reports']['official']['source_records']}
+
+
+def run(args,runtime,torch_git,reduction_flag):
+    import sys
+    import torch
+    from safetensors import safe_open
+    from safetensors.torch import load_file
+    manifest=json.loads(args.inputs.read_text());task=Path(manifest['task_root']).resolve();root=task/'results'/('hy-vit-attention-bridge-'+os.environ['SLURM_JOB_ID'])
+    if (args.inputs.resolve()!=root/'inputs.json' or args.output.resolve()!=root/args.engine
+            or (root/'SOURCE_GIT_COMMIT').read_text().strip()!=args.source_revision):raise ValueError('R39 job/source/input/output root differs')
+    admitted=load_inputs(manifest,engine=args.engine,runtime=runtime,torch_git=torch_git,reduction_flag=reduction_flag)
+    sources=_source_records(manifest,admitted);prefix=admitted['prefix'];refs=admitted['references'][args.engine];old_context=old_reference=None
+    if args.engine=='native':
+        if args.official_bridge is None or args.official_bridge.resolve()!=root/'official':raise ValueError('Native bridge requires same-job actual official predecessor')
+        old_report=json.loads((args.official_bridge/'result.json').read_text());old_raw=load_file(str(args.official_bridge/'operator_outputs.safetensors'))
+        ref=admitted['R38_reports']['official']
+        admit_official_bridge(old_report,old_raw,job_id=os.environ['SLURM_JOB_ID'],source_revision=args.source_revision,runtime=ref['runtime'],torch_git=ref['torch_git_version'],
+            reduction_flag=ref['bf16_reduced_precision_reduction'],checkpoint=admitted['checkpoint'],inputs=manifest,source_records=sources,
+            references=admitted['references']['official'],factory=lambda:None)
+        old_context=torch.cat([old_raw[f'camera{i}.context'] for i in range(3)],0);old_reference=torch.cat([old_raw[f'camera{i}.api'] for i in range(3)],0)
+        if any(n=='hy_vla' or n.startswith('hy_vla.') for n in sys.modules):raise ValueError('Native bridge must not import old Hy/FA2 package')
+    args.output.mkdir(parents=True,exist_ok=False);raw={};observations={};I=None
+    try:
+        vision,video=prefix._official_modules(admitted['R38_inputs']) if args.engine=='official' else (None,None)
+        with torch.inference_mode(),torch.autocast(device_type='cuda',enabled=False):
+            with safe_open(admitted['checkpoint']['path'],framework='pt',device='cpu') as sf:weights=read_attention_weights(sf,device='cuda')
+            norm1=restore_norm1(refs['norm1'],admitted['norm1_layouts'][args.engine],engine=args.engine,device='cuda')
+            owner=make_official_attention(vision,weights,device='cuda') if args.engine=='official' else make_native_owner(weights,source=admitted['native_source'])
+            raw,observations,I,proof=capture_and_cut(args.engine,owner,norm1,weights,references=refs,old_context=old_context,old_reference=old_reference,synchronize=torch.cuda.synchronize)
+        context=torch.cat([raw[f'camera{i}.context'] for i in range(3)],0) if args.engine=='official' else raw['context']
+        bridges={job:_difference(context,value) for name,value in admitted['legacy_contexts'].items() for job,e in (name.split('.'),) if e==args.engine}
+        report={'kind':'hy_actual_vit_attention_context_projection_bridge','status':'bridge_complete','engine':args.engine,'job_id':os.environ['SLURM_JOB_ID'],
+            'source_revision':args.source_revision,'runtime':runtime,'torch_git_version':torch_git,'bf16_reduced_precision_reduction':reduction_flag,
+            'input_manifest':manifest,'source_records':sources,'checkpoint':admitted['checkpoint'],'directory_checkpoint':admitted['directory_checkpoint'],
+            'weight_read_events':4,'selected_checkpoint_keys':[PREFIX+k for k in weights],'full_model_constructed':False,'full_prefix_constructed':False,
+            'attention_module_constructed':args.engine=='official','performance_measurement':False,'observations':observations,'raw_proof':proof,
+            'legacy_context_bridges':bridges,'input_layout_scope':'ActualR38recordednorm1strideandoffsetrestored;NEWcontextlayoutsobservedhere,notretroactiveR38captures',
+            'scope':'Oneblock0norm1handoff/4weights/localprojectioncuts,notpolicycombination/newbackend/kernel/default/robot/speed/generalizationqualification.'}
+        if args.engine=='native':
+            report.update(context_difference=_difference(raw['context'],old_context),interaction_formula='(O6-O18)-(N6-N18)',
+                old_corner_is_outcome_not_hard_gate=True,official_predecessor={n:file_record(args.official_bridge/n) for n in ('result.json','operator_outputs.safetensors')})
+        publish_capture(args.output,raw,report,references=refs,old_context=old_context,old_reference=old_reference,interaction_array=I)
+        print(json.dumps({'engine':args.engine,'raw_tensors':len(raw),'weight_read_events':4,'old_corner_exact':proof.get('cuts',{}).get('old_corner_exact'),
+            'interaction_nonzero':proof.get('interaction_stats',{}).get('nonzero_elements')}),flush=True)
+    except BaseException as error:
+        write_failure(args.output,error,raw=raw,observations=observations,interaction_array=I);raise
+    return 0
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
+    parser.add_argument('--engine',choices=('official','native'),required=True);parser.add_argument('--inputs',type=Path,required=True)
+    parser.add_argument('--official-bridge',type=Path);parser.add_argument('--source-revision',required=True);parser.add_argument('--output',type=Path,required=True)
+    args=parser.parse_args(argv);_module(Path(__file__).with_name('diagnose.py'),'hy_bridge_step_guard').require_step()
+    import platform,sys
+    import numpy as np
+    import torch
+    if len(args.source_revision)!=40 or any(c not in '0123456789abcdef' for c in args.source_revision):raise ValueError('Exact R39 source commit required')
+    if tuple(torch.cuda.get_device_capability())!=(8,0) or 'A800' not in torch.cuda.get_device_name():raise RuntimeError('Actual attention bridge requires admitted A800')
+    torch.set_num_threads(2);torch.manual_seed(17);torch.backends.cuda.matmul.allow_tf32=False;torch.backends.cudnn.allow_tf32=False
+    torch.backends.cudnn.benchmark=False;torch.backends.cudnn.deterministic=True
+    runtime={'python':platform.python_version(),'executable':sys.executable,'torch':torch.__version__,'cuda':torch.version.cuda,'numpy':np.__version__}
+    return run(args,runtime,torch.version.git_version,torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction)
+
+
+if __name__=='__main__':raise SystemExit(main())

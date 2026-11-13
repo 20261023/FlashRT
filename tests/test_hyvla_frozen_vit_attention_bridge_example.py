@@ -1,5 +1,10 @@
 import importlib.util
+import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 from types import MethodType,SimpleNamespace
 
 import pytest
@@ -273,3 +278,217 @@ def test_native_17_raw_and_one_interaction_bind_actual_contexts_before_completio
         proof=call();assert proof['tensors']==17 and proof['interaction_exact'] and proof['cuts']['native_control_and_restoration_exact']
     else:
         with pytest.raises(ValueError,match='bundle|raw|context|interaction|coverage|role'):call()
+
+
+def r39_manifest(bridge,tmp_path):
+    from test_hyvla_frozen_vit_prefix_example import input_manifest
+    old_spec=importlib.util.spec_from_file_location('fixture_R38_prefix',ROOT/'examples/vla_autotune/hy_trace/frozen_vit_prefix.py')
+    old=importlib.util.module_from_spec(old_spec);old_spec.loader.exec_module(old)
+    inputs,native38=input_manifest(old,tmp_path)
+    folder=tmp_path/'snapshots/round038/code/examples/vla_autotune/hy_trace';folder.mkdir(parents=True)
+    for name in ('frozen_vit_prefix.py','merger_stages.py','proj1_camera_ablation.py','frozen_eager_attention.py'):
+        shutil.copyfile(ROOT/'examples/vla_autotune/hy_trace'/name,folder/name)
+    current=tmp_path/'snapshots/round039/code/flash_rt/models/hyvla/pipeline_thor.py';current.parent.mkdir(parents=True);shutil.copyfile(native38,current)
+    prefix_file=folder/'frozen_vit_prefix.py';r38=tmp_path/'results/hy-vit-prefix-318174';r38.mkdir(parents=True)
+    (r38/'SOURCE_GIT_COMMIT').write_text('311c66d06c20224dd0a11ce6108fb4cb2ac76c62\n');(r38/'inputs.json').write_text(json.dumps(inputs))
+    sources={'driver':bridge.file_record(prefix_file),**inputs['source_files']}
+    checkpoint=json.loads(Path(inputs['history_manifest']['path']).read_text())['checkpoint']
+    for engine,runtime,git,count in (('official',{'torch':'old'},'a'*40,124),('native',{'torch':'new'},'b'*40,42)):
+        f=r38/engine;f.mkdir();(f/'operator_outputs.safetensors').write_bytes(b'actual raw not read in metadata-only fixture')
+        state={'complete':True,'cleanup':{'passed':True},'camera_block_indices':[[0,1,2,3]]*3} if engine=='official' else {
+            'complete':True,'cleanup':{'passed':True},'control_block_indices':[0,1,2,3],'observed_block_indices':[0,1,2,3],
+            'normal_vit_forward_return_reached':False,'block4_called':False}
+        report={'kind':'hy_actual_frozen_vit_prefix','status':'prefix_capture_complete','engine':engine,'job_id':'318174',
+            'source_revision':'311c66d06c20224dd0a11ce6108fb4cb2ac76c62','runtime':runtime,'torch_git_version':git,
+            'bf16_reduced_precision_reduction':True,'input_manifest':inputs,'checkpoint':checkpoint,'source_records':sources,
+            'full_model_constructed':False,'blocks_constructed':4,'weight_read_events':51,'observations':state,
+            'raw_proof':{'tensors':count,'block_chain_exact':True,'residual_chains_exact':True,'actual_endpoint_bridge_exact':True},
+            'comparison':{'first_different_stage':'block0.attention'} if engine=='native' else None}
+        (f/'result.json').write_text(json.dumps(report))
+    records={str(p.relative_to(r38)):bridge.file_record(p) for p in r38.rglob('*') if p.is_file()}
+    return {'kind':'hy_actual_vit_attention_bridge_inputs','task_root':str(tmp_path),'R38_records':records,
+        'frozen_prefix':bridge.file_record(prefix_file),'current_native':bridge.file_record(current)},current
+
+
+@pytest.mark.parametrize('bad',['none','old_raw_stat','copied_namespace','helper_source','current_source','runtime','checkpoint','source_marker'])
+def test_real_disk_R38_namespace_source_runtime_and_stats_precede_attention_weight_consumer(bridge,tmp_path,bad):
+    manifest,current=r39_manifest(bridge,tmp_path);r38=tmp_path/'results/hy-vit-prefix-318174'
+    if bad=='old_raw_stat':(r38/'official/operator_outputs.safetensors').write_bytes(b'changed')
+    if bad=='copied_namespace':
+        copied=tmp_path/'snapshots/round039/code/examples/vla_autotune/hy_trace/frozen_vit_prefix.py';copied.parent.mkdir(parents=True)
+        shutil.copyfile(manifest['frozen_prefix']['path'],copied);manifest['frozen_prefix']=bridge.file_record(copied)
+    if bad=='helper_source':
+        p=Path(manifest['frozen_prefix']['path']);p.write_text('# changed protected driver');manifest['frozen_prefix']=bridge.file_record(p)
+    if bad=='current_source':current.write_text('# different math');manifest['current_native']=bridge.file_record(current)
+    if bad in ('runtime','checkpoint','source_marker'):
+        if bad=='source_marker':(r38/'SOURCE_GIT_COMMIT').write_text('wrong source');manifest['R38_records']['SOURCE_GIT_COMMIT']=bridge.file_record(r38/'SOURCE_GIT_COMMIT')
+        else:
+            f=r38/'native/result.json';r=json.loads(f.read_text())
+            if bad=='runtime':r['runtime']={'torch':'other'}
+            else:r['checkpoint']['bytes']=18
+            f.write_text(json.dumps(r));manifest['R38_records']['native/result.json']=bridge.file_record(f)
+    consumed=[]
+    def consumer(prefix,reports):
+        # This call actually consumes __file__ from the loaded module's
+        # namespace: an R39 copy would fail the unmodified R38 source guard.
+        inputs=json.loads((r38/'inputs.json').read_text())
+        derived=Path(prefix.__file__).resolve().parents[3]/'flash_rt/models/hyvla/pipeline_thor.py'
+        prefix.admit_before_weights(inputs,native_source=derived,factory=lambda m:None)
+        consumed.append('four-weight consumer');return prefix,reports
+    call=lambda:bridge.admit_before_weights(manifest,engine='native',runtime={'torch':'new'},torch_git='b'*40,reduction_flag=True,
+        current_native=current,current_prefix=ROOT/'examples/vla_autotune/hy_trace/frozen_vit_prefix.py',factory=consumer)
+    if bad=='none':
+        prefix,reports=call();assert consumed==['four-weight consumer'] and 'round038' in str(prefix.__file__)
+        assert reports['official']['engine']=='official' and reports['native']['raw_proof']['tensors']==42
+    else:
+        with pytest.raises(ValueError,match='R38|source|record|path|namespace|runtime|checkpoint|prefix'):call()
+        assert not consumed
+
+
+def test_real_attention_factories_load_all_four_physical_parameters_without_other_modules(bridge):
+    import torch.nn as nn
+    class VendorAttention(nn.Module):
+        def __init__(self,*,dim,num_heads,qkv_bias,qk_norm,attn_drop,proj_drop,seperate_qv_bias):
+            super().__init__();assert (dim,num_heads,qkv_bias,qk_norm,attn_drop,proj_drop,seperate_qv_bias)==(1152,16,True,False,0.,0.,False)
+            self.num_heads=num_heads;self.head_dim=72;self.scale=72**-.5;self.q_bias=None;self.q_norm=nn.Identity();self.k_norm=nn.Identity()
+            self.qkv=nn.Linear(1152,3456);self.proj=nn.Linear(1152,1152)
+    shapes={'qkv.weight':(3456,1152),'qkv.bias':(3456,),'proj.weight':(1152,1152),'proj.bias':(1152,)}
+    weights={k:torch.full((),(i+1)/8,dtype=torch.bfloat16).expand(s) for i,(k,s) in enumerate(shapes.items())}
+    old=bridge.make_official_attention(SimpleNamespace(_ViTAttention=VendorAttention),weights,device='cpu')
+    native=bridge.make_native_owner(weights,source=NATIVE)
+    assert set(old.state_dict())==set(weights) and all(torch.equal(v,weights[k]) and v.dtype==torch.bfloat16 for k,v in old.state_dict().items())
+    assert all(not m.training for m in old.modules()) and native._vit_qkv_w_cur is weights['qkv.weight']
+    assert native._vit_proj_b_cur is weights['proj.bias'] and native._vit_f8 is False
+
+
+def test_help_and_allocation_guard_before_R38_or_weight_reads(tmp_path):
+    env={k:v for k,v in os.environ.items() if not k.startswith('SLURM_')}
+    r=subprocess.run([sys.executable,str(SCRIPT),'--help'],env=env,text=True,capture_output=True)
+    assert r.returncode==0 and '--official-bridge' in r.stdout and '--inputs' in r.stdout
+    r=subprocess.run([sys.executable,str(SCRIPT),'--engine','native','--inputs','/missing','--source-revision','a'*40,'--output',str(tmp_path/'unused')],env=env,text=True,capture_output=True)
+    assert r.returncode!=0 and 'allocated GPU srun' in r.stderr and not (tmp_path/'unused').exists()
+
+
+@pytest.mark.parametrize('bad',['none','job','trace_path','runtime','checkpoint','flag'])
+def test_legacy_context_header_has_exact_source_input_and_runtime_binding(bridge,tmp_path,bad):
+    checkpoint={'path':str(tmp_path/'weights/model.safetensors'),'bytes':17,'mtime_ns':29};runtime={'torch':'2.11.0+cu128','cuda':'12.8'}
+    report={'kind':'diagnostic_frozen_block0_operators_not_recorded_block0_or_action_acceptance','engine':'native','job_id':'309409',
+        'torch':'2.11.0+cu128','cuda':'12.8','gpu':'NVIDIA A800-SXM4-80GB','model_constructed':False,'performance_measurement':False,
+        'official_trace':str(tmp_path/'results/hy-trace-308690/official/baseline'),'checkpoint':checkpoint['path'],
+        'checkpoint_stat':{'bytes':17,'mtime_ns':29},'bf16_reduced_precision_reduction':True}
+    if bad=='job':report['job_id']='309182'
+    if bad=='trace_path':report['official_trace']=str(tmp_path/'results/other')
+    if bad=='runtime':report['torch']='other'
+    if bad=='checkpoint':report['checkpoint_stat']['bytes']+=1
+    if bad=='flag':report['bf16_reduced_precision_reduction']=False
+    call=lambda:bridge.admit_legacy_header(report,task=tmp_path,job='309409',engine='native',checkpoint=checkpoint,runtime=runtime,reduction_flag=True)
+    if bad=='none':call()
+    else:
+        with pytest.raises(ValueError,match='legacy|Legacy|context|input|runtime|checkpoint'):call()
+
+
+def test_cut_failure_retains_already_captured_API_fields_and_both_observation_states(bridge,tmp_path,monkeypatch):
+    from safetensors.torch import load_file
+    raw,actual,refs=actual_schema(bridge,'native');live=torch.zeros((),dtype=torch.bfloat16).expand(18,196,1152)
+    monkeypatch.setattr(bridge,'capture_actual',lambda *a,**kw:(raw,actual,live))
+    def broken(*a,**kw):
+        error=RuntimeError('cut failed after API succeeded');error.bridge_partial=({'cuts.N18.input':live},{'complete':False,'cleanup':{'passed':True},'captured':'cut phase'})
+        raise error
+    monkeypatch.setattr(bridge,'projection_cuts',broken)
+    with pytest.raises(RuntimeError,match='cut failed') as caught:
+        bridge.capture_and_cut('native',None,None,{},references=refs,old_context=live,old_reference=refs['post'],synchronize=lambda:None)
+    partial,state=caught.value.bridge_partial
+    assert len(partial)==8 and 'api' in partial and 'cuts.N18.input' in partial
+    assert state['actual']['complete'] and state['cuts']['complete'] is False
+    bridge.write_failure(tmp_path,caught.value)
+    assert len(load_file(str(tmp_path/'unqualified_partial.safetensors')))==8
+    failed=json.loads((tmp_path/'failure.json').read_text());assert failed['qualified'] is False and failed['observations']['actual']['complete']
+    assert not (tmp_path/'result.json').exists()
+
+
+def test_external_actual_API_anchor_failure_blocks_all_cuts_and_retains_capture(bridge,monkeypatch):
+    raw,actual,refs=actual_schema(bridge,'native');live=raw['context'];refs['post']=torch.ones_like(refs['post'])
+    monkeypatch.setattr(bridge,'capture_actual',lambda *a,**kw:(raw,actual,live))
+    called=[]
+    def forbidden(*a,**kw):called.append(True);raise AssertionError('cuts must not run')
+    monkeypatch.setattr(bridge,'projection_cuts',forbidden)
+    with pytest.raises(ValueError,match='reference|anchor') as caught:
+        bridge.capture_and_cut('native',None,None,{},references=refs,old_context=live,old_reference=refs['post'],synchronize=lambda:None)
+    assert not called and len(caught.value.bridge_partial[0])==7
+
+
+def test_failure_evidence_IO_does_not_replace_the_primary_error(bridge,tmp_path,monkeypatch):
+    import safetensors.torch
+    error=ValueError('primary anchor failure');error.bridge_partial=({'api':torch.zeros(1,dtype=torch.bfloat16)},{'actual':{'complete':False}})
+    def fail(*a,**kw):raise OSError('evidence write failed')
+    monkeypatch.setattr(safetensors.torch,'save_file',fail)
+    bridge.write_failure(tmp_path,error)
+    result=json.loads((tmp_path/'failure.json').read_text())
+    assert result['qualified'] is False and result['error_type']=='ValueError' and result['error']=='primary anchor failure'
+    assert result['evidence_write_errors'] and any('evidence write failed' in note for note in error.__notes__)
+
+
+@pytest.mark.parametrize('bad',['none','job','source','runtime','keys','cleanup','anchor'])
+def test_same_job_actual_old_attention_predecessor_is_required_before_native_weights(bridge,bad):
+    raw,state,refs=actual_schema(bridge,'official');checkpoint={'path':'fixture','bytes':17}
+    report={'kind':'hy_actual_vit_attention_context_projection_bridge','status':'bridge_complete','engine':'official','job_id':'9','source_revision':'c'*40,
+        'runtime':{'torch':'old'},'torch_git_version':'a'*40,'bf16_reduced_precision_reduction':True,'checkpoint':checkpoint,
+        'input_manifest':{'identity':'fixture'},'source_records':{'driver':{}},'weight_read_events':4,
+        'selected_checkpoint_keys':['model.dual_tower.vlm.model.visual.vision_tower.blocks.0.attn.'+k for k in ('qkv.weight','qkv.bias','proj.weight','proj.bias')],
+        'full_model_constructed':False,'attention_module_constructed':True,'observations':{'actual':state,'cuts':None},
+        'raw_proof':{'tensors':21,'R38_norm1_qkv_exact':True,'API_control_projection_self_exact_R38':True}}
+    if bad=='job':report['job_id']='8'
+    if bad=='source':report['source_revision']='d'*40
+    if bad=='runtime':report['runtime']={'torch':'other'}
+    if bad=='keys':report['selected_checkpoint_keys'][-1]='other.weight'
+    if bad=='cleanup':state['cleanup']['passed']=False
+    if bad=='anchor':refs['post']=(torch.ones_like(refs['post'][0]),*refs['post'][1:])
+    called=[]
+    call=lambda:bridge.admit_official_bridge(report,raw,job_id='9',source_revision='c'*40,runtime={'torch':'old'},torch_git='a'*40,
+        reduction_flag=True,checkpoint=checkpoint,inputs={'identity':'fixture'},source_records={'driver':{}},references=refs,factory=lambda:called.append('native four-weight reader'))
+    if bad=='none':call();assert called==['native four-weight reader']
+    else:
+        with pytest.raises(ValueError,match='bridge|capture|reference|anchor|cleanup|source|runtime|predecessor'):call()
+        assert not called
+
+
+def test_raw_publication_failure_never_creates_completed_bridge_report(bridge,tmp_path,monkeypatch):
+    import safetensors.torch
+    raw,state,refs=actual_schema(bridge,'official');report={'engine':'official','observations':{'actual':state,'cuts':None}}
+    def broken(*a,**kw):raise OSError('bridge raw IO failed')
+    monkeypatch.setattr(safetensors.torch,'save_file',broken)
+    with pytest.raises(OSError,match='raw IO'):bridge.publish_capture(tmp_path,raw,report,references=refs)
+    assert not (tmp_path/'result.json').exists()
+
+
+@pytest.mark.parametrize('bad',['none','missing_layout','offset'])
+def test_norm1_view_restoration_requires_all_three_actual_camera_layouts(bridge,bad):
+    values=tuple(torch.full((6,196,1152),i/8,dtype=torch.bfloat16) for i in range(3))
+    layouts=tuple({'shape':[6,196,1152],'dtype':'torch.bfloat16','live_stride':[225792,1152,1],'storage_offset':0} for _ in range(3))
+    if bad=='missing_layout':layouts=layouts[:1]
+    if bad=='offset':layouts[1]['storage_offset']=4
+    call=lambda:bridge.restore_norm1(values,layouts,engine='official',device='cpu')
+    if bad=='none':assert all(torch.equal(x,y) for x,y in zip(call(),values))
+    else:
+        with pytest.raises(ValueError,match='layout|offset|camera|coverage'):call()
+
+
+@pytest.mark.parametrize('registration',['context_pre','projection_post'])
+def test_partial_official_hook_installation_is_transactional_and_keeps_original_error(bridge,monkeypatch,registration):
+    owner,inputs=tiny_owner(bridge,'official');owner._attention_bridge_active=False
+    existing_qkv=owner.qkv.register_forward_hook(lambda m,a,out:None)
+    existing_proj=owner.proj.register_forward_pre_hook(lambda m,a:None)
+    before={id(m):(set(m._forward_hooks),set(m._forward_pre_hooks)) for m in owner.modules()}
+    expected=owner(inputs[0]).detach().clone();injected=RuntimeError('partial hook installation failed')
+    method='register_forward_pre_hook' if registration=='context_pre' else 'register_forward_hook'
+    def fail(*a,**kw):raise injected
+    monkeypatch.setattr(owner.proj,method,fail)
+    with pytest.raises(RuntimeError,match='partial hook') as caught:bridge.capture_actual('official',owner,inputs,synchronize=lambda:None)
+    assert caught.value is injected
+    raw,state=caught.value.bridge_partial;assert not state['complete'] and state['cleanup']['passed'] is True
+    assert owner._attention_bridge_active is False
+    assert all((set(m._forward_hooks),set(m._forward_pre_hooks))==before[id(m)] for m in owner.modules())
+    keys=set(raw)
+    for _ in range(2):assert torch.equal(owner(inputs[0]),expected)
+    assert set(raw)==keys  # No old observer closure may consume later forwards.
+    existing_qkv.remove();existing_proj.remove()
