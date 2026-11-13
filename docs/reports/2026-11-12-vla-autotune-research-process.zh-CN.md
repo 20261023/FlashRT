@@ -650,7 +650,7 @@ R37的组合停止决定继续有效：不恢复Expert×PROJ2搜索、不按case
 
 ### 8.14 R39结果前追加：把实际context与输出投影拆开，不强迫旧角恢复
 
-R39尚未冻结或提交。针对R38“QKV以前一致、投影后2139个差异”的边界，下一问题不是再搜backend或策略组合，而是：**实际attention context已经不同吗；在同一context值上改变投影分组又有什么影响，两者有无局部有限差分交互？**
+本节在R39提交前固定于 `e058161a`，不按后来结果改写预测。针对R38“QKV以前一致、投影后2139个差异”的边界，下一问题不是再搜backend或策略组合，而是：**实际attention context已经不同吗；在同一context值上改变投影分组又有什么影响，两者有无局部有限差分交互？**
 
 只读block0 `attn.qkv.{weight,bias}` 与 `attn.proj.{weight,bias}` 四个BF16张量，STD header已核实合计10626048字节。旧实际 `_ViTAttention` 类也已在R38绑定的原源文件中确认；不能用一个相似循环替代。旧进程执行原API三次camera6，新进程执行原native两个方法combined18，从R38实际norm1交接开始，不重算上游norm或加载整prefix。
 
@@ -672,6 +672,8 @@ N18必须先EXACT当前native端点，失败立即阻止其他切口。其余三
 仍限单A800、20分钟、旧→新两进程，无warmup／profile／时延目标、无新环境／依赖／build／hash。任一自身API／QKV／自值／恢复硬门失败即未获准，保存已采API和切口partial及原异常；不丢frame／camera救完成。R37的策略组合停止规则继续生效，本轮不追PE、不扩后23层、不改生产默认／精度／runtime／sampler／原质量门。
 
 已知未补项也保留：完整`load_inputs→legacy→run`仍无端到端CPU成功链测试；若I已在内部计算、但晚期bundle qualification抛错，失败载荷可能没有这份FP64缓存，四个BF16投影输出仍保留，可不重跑GPU而在CPU精确重算。该失败不生成complete，也不能因此免除正常成功报告所需的完整39数组审计。
+
+**提交状态追加：**`319502` 已由持久回执确认，冻结 `round039/e058161a`，单A800、20分钟、旧→新两进程串行。84项专项、1291项所选回归及隔离导出通过，另有41个subtests／2个skips；裸全仓仍有原20个收集错误。hook半安装泄漏已用第二／第三个注册故障反例RED→GREEN修正，原异常／已有hooks／active flag及后续普通forward均验证。回归曾因`/tmp`配额写盘失败，改用本计划全新临时目录后同选集通过，未删研究数据／改门。真实纯元数据准入确认原round038 namespace与来源绑定，未导入Torch／读权重／使用GPU；此处尚无R39数值结论，真实API锚点和39数组审计仍待执行／核验。
 
 ## 9. 研究工具本身也要接受反例和修正
 
