@@ -714,6 +714,31 @@ O6“旧角恢复”是结果前允许失败的**结果项**，不是为了通�
 
 相等LSE不能证明分数／概率相同，不等LSE也不能单独区分QK与softmax归约；它若可安全获取，也只是进一步收窄解释。当前没有新GPU作业，不恢复R37组合、不追PE、不扩后层、不改变默认／runtime／精度／sampler／原门限。
 
+### 8.16 R40结果前追加：零权重、同实际QKV的row-LSE观测
+
+R40尚未冻结或提交，没有LSE实测结果。R39将首个投影后差异收窄到实际context，并排除了该输入上投影分组6／18及Torch版本升级的必要性；它仍未说明context计算的哪一阶段产生差异。下一步只增加一个已有kernel可返回的行标量：**自然对数softmax LSE**，不开发或切换kernel，不重扫backend。
+
+精确版本官方源码支持可观测性：外部`flash_attn 2.7.4.post1`公共接口的`return_attn_probs=True`返回context、FP32 LSE和空S_dmask，dropout=0时底层`return_softmax`仍为False；新Torch2.11的已有Flash算子返回九项，0为context、1为LSE，无需开启debug mask。主会话另用系统Python核对了已安装旧wrapper的签名、版本、AST分支与binary stat，未导入Torch／FA2或读权重／使用GPU。**源码可行与stat一致不等于已安装二进制及实际输出获准**。
+
+四个预定目标仅为O6／O18／N6／N18。实际QKV值、camera／frame／head轴序、stride／offset必须保持；旧G18明确是新分组控制，不冒称R39原API形式。每个目标的plain与LSE-capture context均须EXACT对应R39实际context，才解释LSE。缺接口／schema漂移、padding或context不一致即未获准停止，不换backend或安装依赖补救。
+
+| 可能观察到什么 | 可以支持的判断 | 不能推出什么 |
+|---|---|---|
+| 旧／新存储后的FP32 LSE全部数值或位型相同 | 该行归一化摘要在相应等值定义下相同 | 不证明scores、概率、内部row_sum、PV或context舍入相同，也不排除QK／softmax内部差异 |
+| 旧／新部分LSE不同 | 归一化侧存在可观察的行标量差异 | 不单独区分QK累加、scale、exp、归约、log或FP32存储舍入；不证明这些行导致559个context差异 |
+| group6与18的LSE相同或不同 | 该固定输入下分组对行摘要的结果 | 不能从已有context相同预设LSE必同，也不能泛化成任意shape的行分组定律 |
+| 与CPU FP64数学参考有不同距离 | 相对该明确定义数学参考的端点距离 | 不排名kernel“正确性”，不当作机器人质量、政策误差解释比例或新的验收容差 |
+
+真实LSE预期FP32 `[B,16,196]`，不把196补成256。逻辑head_dim=72用于scale，内部rounded96不改变该逻辑。每组18帧统一后有56448行；context行差异必须先按`[B,N,H,D]→[B,H,N,D]`对齐，再与LSE交叉计数，不能拿flatten后碰巧等长的数组相比较。数值EXACT与实际int32位比较分别报告，包含signed zero，不使用hash。
+
+**零权重约束包括trace里的learned权重。** 不调用旧R39完整`load_inputs`递归，因为它会经R38／Merger reader读Gold trace权重。只复用原snapshot namespace中的纯元数据guard和非权重validators，按角色白名单读取166个R38、38个R39数组及原FP64 I。新完整磁盘CPU成功链核验205次非权重读取，额外learned role、QKV篡改、错误layout都在API consumer前拒绝。原checkpoint／配置仅核对identity／stat，不get_tensor。
+
+计划每engine保存6个BF16＋2个FP32数组，共16个实际数组；再存一个CPU FP64数学LSE参考，共17个。参考将BF16 Q/K提升为FP64，使用实际FP32 scale再提升后的数值做稳定logsumexp，不复现融合kernel的FP32／Tensor Core次序。独立参考公式复核仅容许FP64机器舍入差（绝不用于放宽实际context的EXACT门）。所有raw、调用metadata、只读控制、scope和cleanup均须独立审计；LSE相等／不等均是结果项。
+
+源码中Torch声明`UNFUSE_FMA`、softmax存在条件算术分支，仅动机化“FMA／exp2舍入可能有关”的假设，不证明已安装binary分支或559个差异原因；本轮不改flag、不重建。仍限单A800、20分钟、旧→新两进程，无完整模型、warmup／profile／时延目标。失败时保留已经取得的context／LSE和FP64参考，不把缺数组运行写成complete；R37组合停止决定与所有生产默认／精度／runtime／sampler／原质量门不变。
+
+版本绑定来源：[FA2接口](https://github.com/Dao-AILab/flash-attention/blob/5231d95fe13733fb534c01895f7ea88c6a6c7793/flash_attn/flash_attn_interface.py#L812-L862)、[Torch2.11 schema](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/native/native_functions.yaml#L15193-L15198)、[返回LSE的softmax归一化](https://github.com/Dao-AILab/flash-attention/blob/e2743ab5b3803bb672b16437ba98a3b1d4576c50/csrc/flash_attn/src/softmax.h#L169-L185)、[Torch构建声明](https://github.com/pytorch/pytorch/blob/70d99e998b4955e0049d13a98d77ae1b14db1f45/aten/src/ATen/CMakeLists.txt#L329-L334)。
+
 ## 9. 研究工具本身也要接受反例和修正
 
 | 问题 | 容易出现的错误解释 | 实际处理与影响 |
@@ -728,6 +753,8 @@ O6“旧角恢复”是结果前允许失败的**结果项**，不是为了通�
 | R38观察完成后的Gold锚点／最终同步失败 | “拒绝complete就足够，不必保留已采数组” | 失败仍须保留未获准raw与cleanup／layout状态；注入锚点、同步及证据写盘失败，保持原异常与`qualified=False`，绝不生成成功报告；修正发生在GPU提交前 |
 | R39第二／第三个hook安装失败 | “把三个注册调用放进列表赋值，finally就能统一移除” | 实际列表赋值要等全部右侧成功，先前handle可能丢失并误报cleanup成功；两种注册故障反例RED→GREEN，改为每成功一次立即记录handle，并验证已有hooks／active flag及之后普通forward不受旧observer影响 |
 | R39回归写临时safetensors出现磁盘配额错误 | “剩余全局空间就说明没有存储限制，或把7项写盘失败当成模型回归” | `/tmp`挂载启用usrquota且仍有全局空间／inode；不删原始产物、不改配额、不改测试，改用本计划独立新临时目录后同选集通过。原失败名／错误与处置另留观察摘要，不冒充恢复了已被复验覆盖的原完整stdout |
+| R40把ATen schema中的Tensor当成每个Python槽位都必为Tensor对象 | “九个返回的声明类型已经足以构造真实fixture” | 对照同Git CUDA实现与随包meta：dense cum_seq_q/k是未定义Tensor，Python为None；只在这两个槽位支持并记录，context／LSE／debug仍必须满足原硬门。真实meta占位贯穿parser和完整validator的正例RED→GREEN，不靠空Tensor fixture掩盖契约 |
+| R40解析不支持的LSE返回时丢失刚取得的数组 | “parser抛错前没有资格，所以不必先保存返回” | 非空debug、padded／NaN LSE故障反例RED→GREEN：资格校验前按原shape／dtype快照context和LSE，保存未获准返回metadata及after-QKV；不归一化或裁剪异常数据，次级快照失败只能附注原异常，不生成complete |
 
 这些修正提高的是证据可信度，不是模型质量。RED→GREEN说明特定回归反例被覆盖；它不是跨设备、所有输入或全部主流程的证明。独立审查提供第二视角，但主执行者仍负责核查结果和最终原始审计。
 

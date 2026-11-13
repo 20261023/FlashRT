@@ -966,3 +966,53 @@ partials and preserve the original exception even when evidence writes fail.
 New actual contexts are separately compared with retained309182/309409 contexts;
 a mismatch never triggers another backend search. No performance, robot,
 generalization, default or explained-policy-error-fraction qualification follows.
+
+### Weightless actual-QKV row-LSE observation
+
+`hy_trace/frozen_vit_lse.py` observes only existing Flash LSE returns on R39's
+actual BF16 QKV. It reads **zero learned checkpoint or trace-weight tensors**.
+R39's original namespace is retained for metadata-only guards and validators;
+its full tensor loader is deliberately NOT called, since that recursively reads
+Gold Merger weights. A role-allowlisted reader checks the entire header before
+any tensor read, admitting only166R38/38R39 BF16 arrays plus the saved FP64
+interaction. A full real-disk CPU admission test audits all205 nonweight reads
+and rejects learned roles, source changes and malformed observed layouts before
+the API consumer. This is not a claim of old/new CUDA API parity.
+
+Only groups6 and18 are observed. Old actual camera6 QKV views and native actual
+combined18 QKV layout/offset are restored; old combined18 is explicitly a NEW
+grouping control, while native camera6 uses slices of the original buffer. Both
+plain and LSE-capture contexts must EXACT their own R39 context before LSE has
+interpretive standing. No arbitrary contiguous-input, backend, precision, flag,
+runtime or dependency fallback is provided.
+
+Old `flash_attn 2.7.4.post1` uses public `return_attn_probs=False/True` with
+dropout0. Installed wrapper AST must keep `return_softmax and dropout_p > 0`;
+the empty `S_dmask` is NOT a probability matrix. New AUTO is controlled against
+version-bound `aten::_scaled_dot_product_flash_attention.default`, nine returns,
+debugFalse. Exact installed schema/signature/module/binary stat checks are
+required; source metadata is not proof of a compiled branch or a kernel cause.
+Dense native `cum_seq_q/k` are undefined Tensor placeholders exposed as Python
+`None` at positions2/3; this does not make context/LSE/debug optional. Defined
+RNG/unused tensors have metadata recorded without reading uninitialized values.
+Logical head_dim72 sets the scale, not the internal rounded96.
+
+Each engine retains8arrays: QKV before/after, control/capture contexts and FP32
+`[18,16,196]` LSE at both groupings. One CPU FP64 mathematical LSE reference
+(with FP32 scale promoted to FP64) makes17total arrays; it does not emulate
+fused Tensor Core/FP32 accumulation order. LSE comparisons keep numerical and
+actual int32 bit-pattern equality separate, including signed zero, without
+hashing. Camera/frame/head metrics and context-any-channel row cross-tabs use
+explicit B/H/N/D mapping. Reference distances are not kernel correctness rankings
+or a replacement quality gate. Equal stored LSE does not prove equal scores or
+probabilities; different LSE cannot identify QK versus softmax/exp/log rounding
+or explain policy-error fractions. These are outcomes, not forced passes.
+
+Partial control/capture outputs, LSE and a computed FP64 reference remain
+unqualified evidence after late failure; raw precedes atomic completion JSON.
+Returned context/LSE snapshots precede parser qualification, retaining original
+shape/dtype/layout and NaNs under failure-only roles. Snapshot failures are notes
+on the original parser error, never a reason to hide it or qualify the capture.
+Unsupported schema/API, changed context, mutation or missing arrays stops the
+observation. No model/prefix/policy/PE/more-blocks, kernel build, profiler, warmup
+or speed/default/robot/generalization qualification is introduced.
