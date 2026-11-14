@@ -1,5 +1,9 @@
 # VLA execution backend: FlashRT + Euler / ProbeFlow
 
+For learning the implementation from first principles, start with the
+[Chinese source-reading guide](vla_backend_learning.zh-CN.md): layers, one full
+request, model-specific paths, sampling, graph/cache ownership and source exercises.
+
 This is the experimental execution layer for model-level VLA optimization.
 It separates **model execution** from **sampling policy**. The
 [runtime-backed experiment layer](vla_autotune.md) adds persistent campaigns,

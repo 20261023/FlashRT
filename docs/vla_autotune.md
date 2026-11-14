@@ -1,5 +1,8 @@
 # Runtime-backed VLA experiment loop
 
+If you want to understand the execution backend before reading the experiment
+controller, start with the [Chinese learning guide](vla_backend_learning.zh-CN.md).
+
 `flash_rt.vla.autotune` is a small controller/worker layer above the
 [execution backend](vla_backend.md), not a new inference engine or serving daemon.
 See [measured iteration notes](vla_autotune_experiments.md) for scoped outcomes,
