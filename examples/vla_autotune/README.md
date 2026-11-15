@@ -5,6 +5,28 @@ model, hardware path or numerical profile is qualified. Keep model weights,
 fixtures and generated outputs outside the source tree. Experiments must use
 an immutable source snapshot and explicitly named local inputs/checkpoints.
 
+## Selected methods versus author Native latency
+
+`latency_comparison.py` validates evidence labels and statistics for the four-model
+latency comparison. **Official Native means the author's original execution
+stack**, never FlashRT or this project's Torch-graph pipeline. Published numbers
+with a different GPU/input/sampling/statistical/timing protocol are context-only;
+the helper refuses to manufacture a speedup ratio from them. Missing values are
+NR, not zero latency. Hy's current semantic-BF16 Euler10 graph is a baseline until
+its new tradeoff campaign actually selects a winner; FastWAM's retained point is
+Euler20 after the expanded workload rejected13/14/16.
+
+`official_hyvla_latency.py` is an allocation-only timing wrapper around the
+unmodified author `HyVLA` APIs: original `prepare_images/state/language` followed
+by original `policy.model.sample_actions` with fixed noise, then completed CPU
+raw action output. It does not construct a FlashRT model, reuse action-queue hits
+or time an observed low-level operator as a full request. Author code is exported
+from a fixed Git revision and import paths/load completeness are checked. One
+untimed NFE control restores its observer before formal warmups/samples. This is
+an official-implementation self-test with an explicit host-to-CPU boundary, not
+an author-published latency or a robot-quality result. Cold load and warmup remain
+separate; raw arrays are written before a completed JSON result.
+
 ## HyVLA recorded-oracle validation
 
 **Current optimization goal (2026-11-13):** use the shared v2 tradeoff contract
