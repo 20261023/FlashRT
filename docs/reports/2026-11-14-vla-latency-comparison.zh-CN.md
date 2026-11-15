@@ -1,20 +1,29 @@
 # 四模型延迟对比：本项目已选方法与官方 Native
 
-**状态：首批A800结果已返回，2026-11-15更新。** 作业`326641`以`COMPLETED 0:0`
-结束，四个本项目配置及Hy作者实现均有完整计时结果。π0／π0.5／FastWAM作者实现的
-同卡补测作业为`326708`，尚待结果；文献数字只作参考，不用于异卡加速比。
+**状态：仅剩π0.5官方Native补跑，2026-11-15更新。** `326641`完整结束；`326708`
+完成π0／FastWAM作者实现及三个本项目配对点，但π0.5因checkpoint省略共享embedding别名
+而在严格加载处失败。已改用共享权重感知的严格safetensors loader，仅补跑π0.5作业`326869`。
+文献数字只作参考，不用于异卡加速比；FastWAM官方编译路径实测更快，如实保留。
 
-## A800实测大表（首批；前三个Native行仍待补齐）
+## A800实测大表（π0.5 Native待定向补齐）
 
-以下全部实测在同一张 **NVIDIA A800-SXM4-80GB**、同一allocation `326641`内完成。
-每个方法8次warmup，两次独立进程测量后合并原始样本；统计单位均为毫秒。
+全部使用 **NVIDIA A800-SXM4-80GB**。每个模型的项目／Native配对在同一张卡、同一
+allocation内完成：π0／FastWAM为`326708`，Hy为`326641`；没有跨allocation相除。
+每个方法8次warmup。表内均为毫秒；Native“10步”仅指默认采样步数，其他输入几何按本轮固定。
 
-| 模型 | 本项目固定方法 | 本项目Median / Mean / P95 | 官方Native同卡Median / Mean / P95 | 本轮样本数（项目／Native） | 官方文献参考，非同卡基线 |
-|---|---|---:|---:|---:|---|
-| π0 | FlashRT FP16 Euler2，H50、3view | **25.9319 / 25.9351 / 26.2221** | 待`326708` | 100／待测 | 73 ms，RTX4090、Euler10 |
-| π0.5 | FlashRT BF16 Euler8，H50、3view | **38.7992 / 38.6828 / 39.1345** | 待`326708` | 80／待测 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
-| FastWAM | 本项目Torch graph BF16 Euler20，H32、shift5、cached-T5 | **249.7167 / 249.6970 / 250.8006** | 待`326708` | 160／待测 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
-| Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | **804.2853 / 802.2074 / 810.7750** | 140／140 | 作者未报告完整推理延迟 |
+| 模型 | 本项目固定方法 | 本项目Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | 每点样本数 | 官方文献参考，非同卡基线 |
+|---|---|---:|---:|---:|---:|---|
+| π0 | FlashRT FP16 Euler2，H50、3view | **26.1164 / 26.1463 / 26.4021** | JAX BF16：**69.3703 / 69.4761 / 70.1619** | Euler2 BF16：**48.3255 / 48.3931 / 48.9294** | 50 | 73 ms，RTX4090、Euler10 |
+| π0.5 | FlashRT BF16 Euler8，H50、3view | **38.4207 / 38.4679 / 38.7339**（`326708`） | 待`326869` | Euler8：待`326869` | 40 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
+| FastWAM | 本项目Torch graph BF16 Euler20，H32、shift5、cached-T5 | **249.8313 / 250.1130 / 251.4323** | 作者compiled：**85.2719 / 85.3118 / 85.5855** | Euler20 compiled：**141.3885 / 141.4799 / 142.3182** | 80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
+| Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | 140 | 作者未报告完整推理延迟 |
+
+**FastWAM不能宣称加速：** 相同20步、BF16、H32、cached-T5下，作者原生compiled约
+141.39 ms，本项目Torch graph约249.83 ms，当前项目方法反而约慢 **1.77×**。
+保留的Euler20只是既有项目候选范围内的选择，不代表击败作者编译实现；不改历史选择记录。
+
+π0即使都用2步，仍是作者BF16与项目FP16，不是纯后端或等质量对比；10步与2步之差也不能
+全部算作后端收益。这里只并列真实延迟，不把原本没有证明的Euler2质量等价补写出来。
 
 Hy同卡中位数延迟比为 **6.4895×**（804.2853÷123.9355）。这是记录边界内的整套实现
 延迟比，不是纯kernel收益，也不是机器人质量等价证明。双方均为3路相机×6帧、Euler10、
@@ -25,7 +34,10 @@ FA2 2.7.4.post1，本项目为既有Torch2.11执行栈。双方预处理及文�
 FastWAM −0.1459%、Hy −2.3852%；作者Hy −0.3714%。这些是固定配置的重复测量，
 没有借此新增质量胜点；Hy仍只标基线。
 
-源码：[本项目冻结提交c065ba04](https://github.com/20261023/FlashRT/tree/c065ba04de2e57a93c672ed54e25a019ea38e839)，
+首批源码：[c065ba04](https://github.com/20261023/FlashRT/tree/c065ba04de2e57a93c672ed54e25a019ea38e839)；
+π0／Fast配对源码：[46f846da](https://github.com/20261023/FlashRT/tree/46f846da9f5a2ff23e06b691229259d224ed8354)；
+[OpenPI作者源码dd5](https://github.com/Physical-Intelligence/openpi/tree/dd5c5ca93ce229017477a75fdda9f16654ab91ef)，
+[FastWAM作者源码7faa](https://github.com/yuantianyuan01/FastWAM/tree/7faa71108368fbb3b6885649f112af607427a2d4)，
 [Hy作者源码af57](https://github.com/Tencent-Hunyuan/Hy-Embodied-0.5-VLA/tree/af57e7507ec5964b52fdf6296741e553cbcd3288)。
 
 ## 1. 术语与测量目标
@@ -35,9 +47,9 @@ FastWAM −0.1459%、Hy −2.3852%；作者Hy −0.3714%。这些是固定配置
 - 主表采用A800上作者原实现与本项目方法的实际计时；作者论文／仓库数字另作参考。
 - 不预设本项目更快，不把不同GPU、输入、步数或计时边界的数字直接相除成“加速比”。
 
-## 2. 已核实选择与待执行点
+## 2. 已核实选择与首批复测（326641）
 
-| 模型 | 本轮固定方法 | 已有选择依据与限制 | 新A800延迟 |
+| 模型 | 本轮固定方法 | 已有选择依据与限制 | 首批A800中位数 |
 |---|---|---|---|
 | π0 | FlashRT FP16 Euler2，3view、chunk50、Orbax/JAX权重loader | `307979`保留Euler2；loader不是Native JAX执行；未证明Euler2等价默认Euler10质量 | 25.9319 ms median |
 | π0.5 | FlashRT BF16 Euler8，3view、chunk50 | `308244`四请求数值代理范围内选择，不是泛化／机器人质量保证 | 38.7992 ms median |
@@ -97,7 +109,22 @@ NR表示来源未报告，不能用当前默认配置补填历史条件。
 
 `326641`的10份结果与全部动作／延迟数组已回传，并从原始样本复算上方统计量。
 四个v2 campaign的8个固定点全部入账为validated，仅表示各自固定配置replay作用域；
-不将reference角色当作独立准确性证明。`326708`补测完成前，不填前三个模型的Native延迟或比值。
+不将reference角色当作独立准确性证明。`326708`的π0／FastWAM结果已补入主表；π0.5首轮
+失败未被填成0 ms或用论文值替换，等待定向补测`326869`。
+
+### 输入与边界明细
+
+| 模型 | Batch／图像 | 状态／文本 | 输出／步数 |
+|---|---|---|---|
+| π0 | B1；3×224×224 RGB uint8，无历史 | 已准备FP32 state[8]；每次作者原tokenizer/resize/pad，本项目可缓存prompt | CPU raw[50,32]，public7；Native BF16 Euler10及2，项目FP16 Euler2 |
+| π0.5 | B1；3×224×224 RGB uint8，无历史 | 已准备FP32 state[8]；H50权重的discrete state prompt，作者max token200，项目exact prompt | CPU raw[50,32]，public7；Native BF16 Euler10及8，项目BF16 Euler8 |
+| FastWAM | B1；2×224×224水平拼接，FP32[1,3,224,448] | FP32 proprio[1,8]、cached-T5[1,128,4096]及bool mask[1,128]；不含现场T5编码 | CPU FP32[1,32,7]；shift5，Native compiled Euler10及20，项目Euler20 graph |
+| Hy | B1；3路×6帧原始uint8[6,480,640,3]，预处理到224×224 | FP32 normalized state[20]及任务字符串；固定noise[40,32] | CPU raw[40,32]，public20；双方Euler10；40位置为20relative＋20absolute |
+
+所有计时均以完整CPU动作返回为结束，不用异步enqueue时间充当推理时间；不含权重加载、
+冷编译、warmup或fixture磁盘IO。π0／π0.5的作者行使用原始模型及原始Policy/model transforms，
+但用本轮三图槽／H50／frontend-ready state边界，不冒充作者机器人部署默认完整入口。
+作者π0冷JIT首调用约31.38 s；FastWAM作者compile首调用约82.66 s，均未混入稳态毫秒统计。
 
 ### 6.1 已确认的同卡补测
 
@@ -106,7 +133,8 @@ NR表示来源未报告，不能用当前默认配置补填历史条件。
 同一allocation内各补一个本项目已选配置计时，以便同卡配对，而不是用异卡论文数字相除。
 π0官方BF16与本项目FP16仍有精度差异，不能把整套方案的差异称为纯后端收益。
 
-π0.5复用当前LeRobot格式H50权重，加载原作者OpenPI类时只剥离最外层`model.`键名前缀；
+π0.5复用当前LeRobot格式H50权重，通过临时最外层`model.`加载命名空间及共享权重感知的
+严格safetensors loader加载原作者类，不忽略缺失推理参数、不留下随机embedding；
 神经／采样实现不改。使用H50、原始三图槽和该权重的discrete-state输入设置，不能混称
 官方`pi05_libero`默认H10部署。作者所需`transformers_replace`放在新任务overlay，不改旧环境。
 FastWAM保留作者自己的compile默认路径，显式cached-T5、shift5，与本项目相同输入几何。
