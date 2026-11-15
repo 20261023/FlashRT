@@ -1,0 +1,59 @@
+vla-model-impl-map: a FlashRT agent skill adapted from ApxInf
+
+This skill is a MODIFIED version of the ApxInf "analyze-model-impl" skill.
+
+Provenance
+  Upstream project : ApxInf, https://github.com/infinigence/ApxInf
+  Upstream commit  : b05b40990387e8c48e7d6267a790664981a665e4
+  Upstream files   : skills/analyze-model-impl/SKILL.md
+                       (git blob f82f756c946ea32677bfd64e03a05eef60b31acc, 9902 bytes)
+                     skills/analyze-model-impl/agents/openai.yaml
+                       (git blob 5aa28a8db835943ea9527534c1255005fa7a4879, 345 bytes)
+  Fetched          : 2026-11-15, by blob SHA through the GitHub API; the local
+                     hash of each file was checked against its blob SHA.
+  Verbatim copies  : third_party/agent-skills/apxinf/skills/analyze-model-impl/
+
+License
+  ApxInf upstream license is Apache-2.0. LICENSE.txt in this folder is the
+  verbatim upstream ApxInf LICENSE file (git blob
+  261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64). FlashRT's own modifications are
+  also distributed under the Apache License, Version 2.0.
+
+Applicable upstream NOTICE text
+  The upstream ApxInf license remains Apache-2.0 (see LICENSE).
+  (The rest of ApxInf's NOTICE covers vendored MUSA and MLX code, none of
+  which is part of this skill.)
+
+Changes made by FlashRT (2026-11-15)
+  - Renamed analyze-model-impl to vla-model-impl-map. Rewrote the description
+    for FlashRT VLA models and added Chinese trigger words.
+  - Replaced the ApxInf-specific execution chain (Python AutoPolicy, Rust
+    AutoModel/ModelRunner, crates/apxinf-*, C ABI adapters) with FlashRT's
+    chain:
+      * BackendConfig and registry.validate_config/load_backend;
+      * frontends under flash_rt/frontends/torch/;
+      * model pipelines under flash_rt/models/<model>/;
+      * torch ops versus fvk pybind bindings in csrc/bindings.cpp;
+      * GemmRunner/CachedGemmRunner (cuBLASLt);
+      * SDPA and FA2 backend selection;
+      * CMake architecture gates.
+  - Renamed the table columns: "Rust op" / "C ABI / vendor call" / "Selected
+    CUDA kernel" became "Python module/function" / "torch op or fvk binding" /
+    "Selected kernel/backend". Added a leading "Stage" column.
+  - Added stage-id tagging against flash_rt/vla/autotune/stages.py (seams,
+    PROFILE_KEYS, stage-map gaps). Positioned the map as the static half of
+    stage attribution.
+  - Added snapshot-candidate scoping (map the snapshot's source_dir), recording
+    of dispatch environment variables, and FlashRT graph-cache and host-sync
+    guidance.
+  - Changed the report location rule from "follow AGENTS.md" to FlashRT's
+    ignored devlocal/<feat>/reports/ directory. Added optional decision-log
+    recording.
+  - Removed the LLM prefill/decode, expert-routing and output-head specifics
+    that do not apply to these VLA models. The method is kept: verify every
+    claim against code, separate load from repeated execution, make frequency
+    explicit, do not invent kernel symbols, and do not claim runtime
+    validation from static analysis.
+  - Moved the FlashRT per-model entry points to
+    references/flashrt-execution-paths.md.
+  - agents/openai.yaml was rewritten for this skill.

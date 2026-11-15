@@ -1,0 +1,77 @@
+vla-operator-gate: a FlashRT agent skill adapted from ApxInf
+
+This skill is a MODIFIED version of the ApxInf "l3-reference-testing" skill.
+
+Provenance
+  Upstream project : ApxInf, https://github.com/infinigence/ApxInf
+  Upstream commit  : b05b40990387e8c48e7d6267a790664981a665e4
+  Upstream file    : skills/l3-reference-testing/SKILL.md
+                       (git blob e1ca0fc07fe66d84988504b39e2992973fdab86b, 4178 bytes)
+  Metric source    : crates/apxinf-cuda-new/native/adapters/gemm/reference.cpp
+                     (compare_reference) at the same commit. It was read as data
+                     to state the exact definition of "max scaled element error".
+                     No code was copied.
+  Fetched          : 2026-11-15, through the GitHub API. The SKILL.md was checked
+                     against its blob SHA.
+  Verbatim copy    : third_party/agent-skills/apxinf/skills/l3-reference-testing/
+
+License
+  ApxInf upstream license is Apache-2.0. LICENSE.txt in this folder is the
+  verbatim upstream ApxInf LICENSE file (git blob
+  261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64). FlashRT's own modifications are
+  also distributed under the Apache License, Version 2.0.
+
+Applicable upstream NOTICE text
+  The upstream ApxInf license remains Apache-2.0 (see LICENSE).
+  (The rest of ApxInf's NOTICE covers vendored MUSA and MLX code, none of
+  which is part of this skill.)
+
+Other credited ideas (no text copied)
+  The oracle / eager same-dtype baseline / candidate triple and the
+  conditioning ("gate validity", INCONCLUSIVE verdict) idea come from the
+  torchtitan kernel-numerics-verifier skill:
+    https://github.com/pytorch/torchtitan
+    commit 631d544b1f6794ecfeca734a7bba861e03ddd5e3
+    .claude/skills/kernel-numerics-verifier/SKILL.md
+    license BSD-3-Clause
+  FlashRT re-expressed these ideas in its own words. That skill is vendored
+  unmodified, with its own LICENSE.txt and NOTICE, at
+  .agents/skills/kernel-numerics-verifier/, and this skill points to it for the
+  full conditioning procedure.
+
+Changes made by FlashRT (2026-11-15)
+  - Renamed l3-reference-testing to vla-operator-gate. Rewrote the description
+    and added Chinese trigger words.
+  - Replaced the ApxInf L3 semantic API, crates/apxinf-cuda-new, Rust tests and
+    test-new.sh with FlashRT call sites:
+      * torch ops and fvk bindings;
+      * StageCapture fixtures (flash_rt/vla/autotune/tools/capture.py,
+        artifacts.py);
+      * KernelArtifact candidates from ForgeKernel/KernelAgent, and
+        patch/port kernels.
+  - Changed the fixture rule. ApxInf checks fixtures into the repository;
+    FlashRT keeps tensor fixtures in the ignored devlocal/ directory, records
+    their sha256, and regenerates seeded draws in tests. This follows FlashRT's
+    .gitignore (*.npz, *.bin).
+  - Kept the oracle contract: exact typed inputs, decoded quantized values with
+    the same scales, an independent public-meaning implementation, and every
+    numerics-relevant operand. Kept the coverage rules: run every compatible
+    candidate, fail on a silent skip, reject NaN/Inf. Kept the immutable
+    thresholds 0.08 / 0.05 / 0.9999 as the default operator gate.
+  - Added:
+      * the eager same-dtype native baseline and gate validity / INCONCLUSIVE;
+      * a second input draw;
+      * CUDA Graph capture and replay parity;
+      * the sentinel check for in-place and windowed writes;
+      * the KernelAgent adapter tolerances
+        (tools/external/kernelagent.py: rel-L2 2e-3, cosine 0.99999, relaxed
+        against the native error);
+      * the distinction from the model-level controller --quality-gate;
+      * independence from the generator's own test;
+      * where tests live (devlocal while iterating, then a flat tests/ file in
+        the candidate worktree's patch);
+      * recording the verdict through flash_rt.vla.autotune.decisions with an
+        explicit actor.
+  - Added references/gate-checklist.md (metric definitions, oracle recipes per
+    op_kind, graph parity procedure, test skeleton, report template) and
+    agents/openai.yaml.

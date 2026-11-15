@@ -77,16 +77,48 @@ def _quality(actions, request_ids, reference, gate, *, baseline_reference=False)
             'interpretation': 'Fixed-input numerical proxy only; not closed-loop task success'}
 
 
+def _describe_dataflow(record, backend):
+    """Diagnostic cost ledger; its failure must not void a valid measurement."""
+    try:
+        from .dataflow import describe_dataflow
+        record['dataflow'] = describe_dataflow(backend)
+    except Exception as error:
+        record['dataflow'] = None
+        record['dataflow_failure'] = f'{type(error).__name__}: {error}'
+
+
+def _verify_expected_source(candidate, expected_source, import_root):
+    """Prove the imported flash_rt is the candidate's snapshot (before any backend import)."""
+    from .snapshots import check_candidate_source, snapshot_id, verify_source, SourceIdentityError
+    if not isinstance(expected_source, dict):
+        raise SourceIdentityError('expected_source must be a snapshot manifest dict')
+    try:
+        expected_id = snapshot_id(candidate.source_ref, candidate.patch_ref)
+    except ValueError as error:
+        raise SourceIdentityError(f'Candidate refs do not name a snapshot: {error}') from error
+    if expected_source.get('snapshot_id') != expected_id:
+        raise SourceIdentityError(f'Source manifest {expected_source.get("snapshot_id")!r} is not the '
+                                  f'candidate snapshot {expected_id}')
+    identity = verify_source(expected_source, import_root=import_root)
+    check_candidate_source(expected_source, candidate.source_ref, candidate.patch_ref)
+    return identity
+
+
 def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
                    warmup=3, repeats=10, reference=None, quality_gate=None,
                    baseline_reference=False, backend_factory=None, device_info=None,
-                   synchronize=None, profile=True, campaign_instance_id=None):
+                   synchronize=None, profile=True, campaign_instance_id=None,
+                   expected_source=None, source_import_root=None):
     """Run a complete serial request measurement and retain all raw samples.
 
     Fixture file IO and per-request host copies are outside the timing boundary.
     Frontend input processing/transfers/model/routing/output return are inside.
     An injected backend/device boundary supports CPU contract tests; the real
     factory is only entered within Slurm. Output directories cannot be rerun.
+    With ``expected_source`` (a snapshot manifest) the imported flash_rt tree
+    is verified before the backend is imported or loaded; the result is then
+    schema 3 and carries ``source_identity``. ``source_import_root`` overrides
+    the import root (tests); by default it is the parent of ``flash_rt``.
     """
     if isinstance(warmup, bool) or not isinstance(warmup, int) or warmup < 0:
         raise ValueError('warmup must be a nonnegative integer')
@@ -96,13 +128,16 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
     output.mkdir(parents=True, exist_ok=True)
     with (output / 'attempt.json').open('x') as stream:
         json.dump({'attempt_id': attempt_id, 'candidate_id': candidate.candidate_id}, stream)
-    record = {'schema_version': 2, 'candidate_id': candidate.candidate_id,
+    record = {'schema_version': 2 if expected_source is None else 3,
+              'candidate_id': candidate.candidate_id,
               'attempt_id': attempt_id, 'comparison_id': comparison_id,
               'workload_id': candidate.workload_id, 'candidate': candidate.to_dict(),
               'campaign_instance_id': campaign_instance_id or f'standalone-{uuid4()}',
               'job_id': (device_info or {}).get('job_id') if backend_factory is not None else os.environ.get('SLURM_JOB_ID')}
     backend = None
     try:
+        if expected_source is not None:
+            record['source_identity'] = _verify_expected_source(candidate, expected_source, source_import_root)
         if workload.workload_id != candidate.workload_id or workload.model != candidate.backend.model:
             raise ValueError('Candidate model/workload does not match the input manifest')
         if repeats < len(workload):
@@ -183,8 +218,7 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
                       quality=_quality(actions, ids, reference, quality_gate,
                                        baseline_reference=baseline_reference),
                       stage_metrics=None)
-        from .dataflow import describe_dataflow
-        record['dataflow'] = describe_dataflow(backend)
+        _describe_dataflow(record, backend)
         if profile:
             try:
                 from .profiling import profile_request
@@ -192,12 +226,15 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
             except Exception as error:
                 record['profiling_failure'] = f'{type(error).__name__}: {error}'
     except Exception as error:
-        kind = ('oom' if 'OutOfMemory' in type(error).__name__ else
+        from .snapshots import SourceIdentityError
+        kind = ('source_identity' if isinstance(error, SourceIdentityError) else
+                'oom' if 'OutOfMemory' in type(error).__name__ else
                 'setup' if isinstance(error, (ImportError, FileNotFoundError)) else
                 'unsupported_or_input' if isinstance(error, (ValueError, NotImplementedError)) else 'execution')
         record = {key: record[key] for key in ('schema_version', 'candidate_id', 'attempt_id',
                                               'comparison_id', 'workload_id', 'candidate',
-                                              'campaign_instance_id', 'job_id')}
+                                              'campaign_instance_id', 'job_id', 'source_identity')
+                  if key in record}
         record.update(state='failed', failure={'kind': kind, 'message': str(error).strip() or type(error).__name__,
                                                'exception': type(error).__name__})
         (output / 'failure.txt').write_text(traceback.format_exc())
@@ -230,6 +267,7 @@ def main(argv=None):
     parser.add_argument('--quality-gate', help='JSON string with an explicit numerical proxy gate')
     parser.add_argument('--baseline-reference', action='store_true')
     parser.add_argument('--no-profile', action='store_true')
+    parser.add_argument('--source-manifest', help='Snapshot manifest; verify the imported source tree first')
     args = parser.parse_args(argv)
     from .schema import Candidate
     candidate = Candidate.from_dict(json.loads(Path(args.candidate).read_text()))
@@ -238,7 +276,9 @@ def main(argv=None):
                             campaign_instance_id=args.campaign_instance_id,
                             warmup=args.warmup, repeats=args.repeats, reference=args.reference,
                             quality_gate=json.loads(args.quality_gate) if args.quality_gate else None,
-                            baseline_reference=args.baseline_reference, profile=not args.no_profile)
+                            baseline_reference=args.baseline_reference, profile=not args.no_profile,
+                            expected_source=(json.loads(Path(args.source_manifest).read_text())
+                                             if args.source_manifest else None))
     print(json.dumps(record, indent=2), flush=True)
     return 0 if record['state'] == 'measured' else 1
 

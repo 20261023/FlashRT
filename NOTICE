@@ -8,3 +8,58 @@ subject to their applicable licenses and attribution notices.
 
 This NOTICE is informational and does not modify the Apache License, Version
 2.0.
+
+--------------------------------------------------------------------------------
+Third-party agent skills
+--------------------------------------------------------------------------------
+Agent skills for the VLA autotune pipeline live in .agents/skills/. Files taken
+from the projects below are listed with git blob SHAs in
+third_party/agent-skills/manifest.json and the per-project VENDOR.md files;
+python3 third_party/agent-skills/verify_vendor.py re-checks them.
+
+ApxInf, https://github.com/infinigence/ApxInf
+Commit b05b40990387e8c48e7d6267a790664981a665e4, Apache License 2.0.
+  - Archived verbatim: third_party/agent-skills/apxinf/ (4 skills, AGENTS.md
+    stored as AGENTS.upstream.md, doc/agentic-optimization-workflow.md,
+    LICENSE, NOTICE).
+  - Adapted (modified) into .agents/skills/vla-model-impl-map,
+    vla-operator-gate, vla-copy-drift-audit, vla-port-workflow; each carries
+    LICENSE.txt and a NOTICE listing its changes.
+  Applicable upstream NOTICE text:
+    The upstream ApxInf license remains Apache-2.0 (see LICENSE).
+
+ForgeKernel, https://github.com/OpenBMB/ForgeKernel
+Commit b2c8ae8510e02c28576808910a6b8827721ab7dc, Apache License 2.0.
+  - Vendored unmodified: .agents/skills/forge-start/ (from
+    integrations/claude-code/forge-start: SKILL.md, scripts/).
+  - Archived verbatim: third_party/agent-skills/forgekernel/ (skills/README.md,
+    7 internal skills' SKILL.md, LICENSE, NOTICE).
+  Applicable upstream NOTICE text:
+    ForgeKernel
+    Copyright 2026 The ForgeKernel Authors
+
+    This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+TensorRT-LLM, https://github.com/NVIDIA/TensorRT-LLM
+Commit ef83ce246944131336e657681a951fa1c786bc6d, Apache License 2.0.
+  - Vendored unmodified: .agents/skills/perf-torch-cuda-graphs,
+    perf-torch-sync-free, perf-nsight-systems, perf-nsight-compute-analysis,
+    perf-workload-profiling, kernel-triton-writing (from .claude/skills/).
+  - Root LICENSE: third_party/agent-skills/tensorrt-llm/LICENSE. No upstream
+    NOTICE file exists at this commit.
+  Copyright (c) 2011-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+torchtitan, https://github.com/pytorch/torchtitan
+Commit 631d544b1f6794ecfeca734a7bba861e03ddd5e3, BSD 3-Clause License.
+  - Vendored unmodified: .agents/skills/kernel-numerics-verifier/.
+  - Archived verbatim: third_party/agent-skills/torchtitan/ (LICENSE and
+    torchtitan/rl/.claude/skills/inference_perf_hillclimb/SKILL.md, stored
+    under a dot-claude directory).
+  (c) Meta Platforms, Inc. and affiliates.
+
+AITune, https://github.com/ai-dynamo/aitune
+Commit 1d3a4236ad8f458669d5633715b6956125f2289c, Apache License 2.0.
+  - Vendored unmodified: .agents/skills/aitune-inspect, aitune-tune,
+    aitune-benchmark, aitune-validate (from .claude/skills/).
+  - Root LICENSE and COPYRIGHT: third_party/agent-skills/aitune/.
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.

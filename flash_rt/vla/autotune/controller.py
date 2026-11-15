@@ -3,9 +3,11 @@
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 import re
 from statistics import median
+import sys
 import time
 
 from .ledger import CampaignLedger
@@ -26,8 +28,48 @@ def _save_json(path, record):
     temporary.replace(path)
 
 
+def _absolute(value, name):
+    if not isinstance(value, (str, os.PathLike)) or not os.path.isabs(os.fspath(value)):
+        raise ValueError(f'Snapshot campaigns require an absolute {name}, got {value!r}')
+    return os.fspath(value)
+
+
+def _load_snapshots(store, points):
+    """Ready manifests for every point, keyed by snapshot id, sharing one harness tree."""
+    from .snapshots import check_commit, check_patch_ref, is_ready, load_manifest, manifest_path, snapshot_id
+    manifests, point_ids = {}, []
+    for _, candidate in points:
+        check_commit(candidate.source_ref, f'{candidate.candidate_id} source_ref', error=ValueError)
+        check_patch_ref(candidate.patch_ref, error=ValueError)
+        identifier = snapshot_id(candidate.source_ref, candidate.patch_ref)
+        if identifier not in manifests:
+            manifest = load_manifest(store, identifier)
+            if not is_ready(manifest):
+                raise ValueError(f'Snapshot {identifier} is not ready (native {manifest["native"]["status"]}); '
+                                 'adopt or build its native extensions first')
+            if manifest['base_commit'] != candidate.source_ref or manifest['patch_ref'] != candidate.patch_ref:
+                raise ValueError(f'Snapshot {identifier} manifest does not match {candidate.candidate_id}')
+            manifests[identifier] = manifest
+        point_ids.append(identifier)
+    harness = {manifest['harness_tree'] for manifest in manifests.values()}
+    if len(harness) != 1:
+        raise ValueError(f'All campaign snapshots must share one harness tree, got {sorted(harness)}')
+    paths = {identifier: str(Path(manifest_path(store, identifier)).resolve()) for identifier in manifests}
+    return manifests, point_ids, harness.pop(), paths
+
+
 def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_path,
-                        output_root, warmup=3, repeats=10, quality_gate=None):
+                        output_root, warmup=3, repeats=10, quality_gate=None,
+                        snapshot_store=None, python=None, extra_pythonpath=None):
+    """Write the ledger attempt group, then plan.json.
+
+    Without ``snapshot_store`` the plan is schema 2 and every attempt runs the
+    allocation's own checkout. With it (snapshot mode, schema 3) every point
+    must carry a 40-hex source_ref and null/sha256 patch_ref whose snapshot
+    manifest is ready; attempts then run from those snapshots.
+    """
+    if snapshot_store is None and (python is not None or extra_pythonpath):
+        raise ValueError('python/extra_pythonpath are only meaningful with snapshot_store')
     if type(warmup) is not int or warmup < 0 or type(repeats) is not int or repeats < 1:
         raise ValueError('Campaign requires warmup >= 0 and repeats > 0 integer budgets')
     if quality_gate is not None:
@@ -55,6 +97,20 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
     entries = []
     points = [('reference', baseline), *[('candidate', candidate) for candidate in candidates],
               ('bookend', baseline)]
+    snapshot_mode = snapshot_store is not None
+    if snapshot_mode:
+        snapshot_store = _absolute(snapshot_store, 'snapshot store')
+        workload_path, output_root = _absolute(workload_path, 'workload path'), _absolute(output_root, 'output root')
+        if python is not None:
+            python = _absolute(python, 'runtime python')
+        extra_pythonpath = [_absolute(path, 'extra PYTHONPATH entry') for path in (extra_pythonpath or [])]
+        for path in extra_pythonpath:
+            if os.path.exists(os.path.join(path, 'flash_rt', '__init__.py')):
+                raise ValueError(f'extra PYTHONPATH entry contains another flash_rt package: {path}')
+        for _, candidate in points:
+            if not isinstance(candidate, Candidate):
+                raise TypeError('Expected Candidate records')
+        manifests, point_snapshots, harness_tree, manifest_paths = _load_snapshots(snapshot_store, points)
     candidate_records = {}
     initialization = []
     # Validate the ENTIRE proposal list before persisting any prefix of it.
@@ -69,15 +125,25 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
         candidate_records[candidate.candidate_id] = candidate_record
         attempt_id = f'{comparison_id}-{index:03d}-{role}'
         initialization.append((candidate, comparison_id, attempt_id))
-        entries.append({'role': role, 'attempt_id': attempt_id, 'candidate': candidate_record})
+        if snapshot_mode:
+            entries.append({'role': role, 'attempt_id': attempt_id, 'snapshot_id': point_snapshots[index],
+                            'candidate': candidate_record})
+        else:
+            entries.append({'role': role, 'attempt_id': attempt_id, 'candidate': candidate_record})
     with CampaignLedger(root / 'ledger.sqlite') as ledger:
-        ledger.initialize_attempts(initialization)
+        ledger.initialize_attempts(initialization, **(
+            {'snapshots': list(manifests.values())} if snapshot_mode else {}))
         instance_id = ledger.instance_id
-    plan = {'schema_version': 2, 'comparison_id': comparison_id,
+    plan = {'schema_version': 3 if snapshot_mode else 2, 'comparison_id': comparison_id,
             'campaign_instance_id': instance_id,
             'workload_path': str(workload_path), 'output_root': str(output_root),
             'warmup': warmup, 'repeats': repeats, 'quality_gate': quality_gate,
             'entries': entries}
+    if snapshot_mode:
+        plan['harness'] = {'autotune_tree': harness_tree}
+        plan['runtime'] = {'python': python, 'extra_pythonpath': extra_pythonpath}
+        plan['snapshots'] = {identifier: {**manifest, 'manifest_path': manifest_paths[identifier]}
+                             for identifier, manifest in manifests.items()}
     _save_json(plan_path, plan)
     return plan
 
@@ -175,12 +241,18 @@ def wait_campaign(root, client, *, interval=15, timeout=3600, sleep=None, clock=
 def ingest_campaign(root, results_dir, *, job_finished=False):
     root, results_dir = Path(root), Path(results_dir)
     plan = json.loads((root / 'plan.json').read_text())
-    if plan.get('schema_version') != 2:
+    if plan.get('schema_version') not in (2, 3):
         raise ValueError('Legacy campaign/results lack bound execution identity; retain historical evidence, use new attempts to qualify')
     scope = (plan.get('quality_gate') or {}).get('scope', 'numerical_replay')
     with CampaignLedger(root / 'ledger.sqlite') as ledger:
         if plan['campaign_instance_id'] != ledger.instance_id:
             raise ValueError('Plan campaign instance does not match ledger')
+        if plan['schema_version'] == 3:
+            # The ledger is the authority; a plan whose snapshots drifted is refused.
+            planned = {identifier: {key: value for key, value in record.items() if key != 'manifest_path'}
+                       for identifier, record in plan.get('snapshots', {}).items()}
+            if planned != ledger.snapshots():
+                raise ValueError('Plan snapshots do not match the snapshots registered in the ledger')
         records_by_attempt = {}
         # Preflight every supplied envelope before importing any group prefix.
         for entry in plan['entries']:
@@ -243,6 +315,11 @@ def main(argv=None):
     create.add_argument('--quality-gate')
     create.add_argument('--proposals', help='Optional JSON list of human/agent Candidate records')
     create.add_argument('--enumerate', action='store_true')
+    create.add_argument('--snapshot-store', help='Snapshot mode (plan schema 3): run each point from its '
+                        'ready source snapshot in this store')
+    create.add_argument('--python', help='Snapshot mode: absolute worker interpreter path')
+    create.add_argument('--extra-pythonpath', action='append', default=None,
+                        help='Snapshot mode: absolute extra PYTHONPATH entry (repeatable)')
     submit = commands.add_parser('submitting')
     submit.add_argument('--root', required=True)
     queued = commands.add_parser('queued')
@@ -266,16 +343,22 @@ def main(argv=None):
     ingest.add_argument('--job-finished', action='store_true')
     args = parser.parse_args(argv)
     if args.command == 'init':
-        baseline = Candidate.from_dict(json.loads(Path(args.baseline).read_text()))
-        points = ([point for point in enumerate_candidates(baseline)
-                   if encode_backend(point.backend) != encode_backend(baseline.backend)]
-                  if args.enumerate else [])
-        if args.proposals:
-            points.extend(Candidate.from_dict(record) for record in json.loads(Path(args.proposals).read_text()))
-        output = initialize_campaign(args.root, comparison_id=args.comparison_id, baseline=baseline,
-                                     candidates=points, workload_path=args.workload, output_root=args.output_root,
-                                     warmup=args.warmup, repeats=args.repeats,
-                                     quality_gate=json.loads(args.quality_gate) if args.quality_gate else None)
+        try:
+            baseline = Candidate.from_dict(json.loads(Path(args.baseline).read_text()))
+            points = ([point for point in enumerate_candidates(baseline)
+                       if encode_backend(point.backend) != encode_backend(baseline.backend)]
+                      if args.enumerate else [])
+            if args.proposals:
+                points.extend(Candidate.from_dict(record) for record in json.loads(Path(args.proposals).read_text()))
+            output = initialize_campaign(args.root, comparison_id=args.comparison_id, baseline=baseline,
+                                         candidates=points, workload_path=args.workload,
+                                         output_root=args.output_root, warmup=args.warmup, repeats=args.repeats,
+                                         quality_gate=json.loads(args.quality_gate) if args.quality_gate else None,
+                                         snapshot_store=args.snapshot_store, python=args.python,
+                                         extra_pythonpath=args.extra_pythonpath)
+        except ValueError as error:  # Includes SnapshotError (e.g. a snapshot that is not materialized).
+            print(json.dumps({'error': type(error).__name__, 'message': str(error)}), file=sys.stderr)
+            return 2
     elif args.command == 'submitting':
         mark_submitting(args.root)
         output = {'state': 'submitting'}
@@ -303,4 +386,4 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

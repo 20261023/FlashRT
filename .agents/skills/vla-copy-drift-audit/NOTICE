@@ -1,0 +1,59 @@
+vla-copy-drift-audit: a FlashRT agent skill adapted from ApxInf
+
+This skill is a MODIFIED version of the ApxInf "copy-drift-audit" skill.
+
+Provenance
+  Upstream project : ApxInf, https://github.com/infinigence/ApxInf
+  Upstream commit  : b05b40990387e8c48e7d6267a790664981a665e4
+  Upstream file    : skills/copy-drift-audit/SKILL.md
+                       (git blob fde0e504564e39c158e0145170c39df52bad90cf, 14723 bytes)
+  Fetched          : 2026-11-15, by blob SHA through the GitHub API; the local
+                     hash was checked against the blob SHA.
+  Verbatim copy    : third_party/agent-skills/apxinf/skills/copy-drift-audit/
+
+License
+  ApxInf upstream license is Apache-2.0. LICENSE.txt in this folder is the
+  verbatim upstream ApxInf LICENSE file (git blob
+  261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64). FlashRT's own modifications are
+  also distributed under the Apache License, Version 2.0.
+
+Applicable upstream NOTICE text
+  The upstream ApxInf license remains Apache-2.0 (see LICENSE).
+  (The rest of ApxInf's NOTICE covers vendored MUSA and MLX code, none of
+  which is part of this skill.)
+
+Changes made by FlashRT (2026-11-15)
+  - Renamed copy-drift-audit to vla-copy-drift-audit. Rewrote the
+    description and added Chinese trigger words.
+  - Replaced the ApxInf scope (crates/apxinf-model/src/<backend>_<family>
+    copied from <family>, model-family boundary scripts, ops-contract
+    surface) with three FlashRT targets:
+      (a) a patch/port candidate whose snapshot base_commit is older than the
+          current baseline;
+      (b) vendored upstream reference code (training/_vendor/openpi_pi0_pytorch,
+          csrc/attention/*_src, the FastWAM upstream pin, hy_trace observers);
+      (c) third_party/agent-skills and the adapted vla-* skills.
+  - Generalized the watermark symbols (P, S, A, B, C, plus T instead of M) to
+    FlashRT add commits, recorded upstream pins and snapshot bases. Added stop
+    conditions for a missing upstream pin and a non-ancestor base. Added the
+    rule to fetch upstream content as data into empty devlocal directories.
+  - Kept the method unchanged:
+      * one import watermark per file, never --follow, never the last edit;
+      * semantic-review-only files;
+      * git merge-file -p probes and their exit-code meaning;
+      * dispositions absorbed / absorb-now / decline / pending;
+      * reverse findings;
+      * hunk-by-hunk absorption and no whole-file copy;
+      * the clean / drift pending / blocked verdict;
+      * "a text audit is not numerical proof".
+  - Relaxed the upstream "do not add a script or CI gate" rule only as far as
+    third_party/agent-skills/verify_vendor.py goes (integrity at the pin), and
+    stated that limit explicitly.
+  - Added FlashRT consequences:
+      * a rebased patch is a new candidate (new patch_ref, snapshot, operator
+        gate, campaign);
+      * pin bumps update manifest, VENDOR.md and NOTICE together;
+      * the decision log is used with an explicit actor.
+  - Replaced the PI0.5-on-MUSA worked example with FlashRT target spellings in
+    references/flashrt-targets.md. Changed the report location to
+    devlocal/<feat>/reports/. Added agents/openai.yaml.

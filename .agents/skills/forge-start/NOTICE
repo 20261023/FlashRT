@@ -1,0 +1,42 @@
+forge-start
+===========
+
+Third-party agent skill vendored into FlashRT.
+
+Status: vendored unmodified
+
+Upstream project:    ForgeKernel
+Upstream repository: https://github.com/OpenBMB/ForgeKernel
+Upstream path:       integrations/claude-code/forge-start
+Upstream commit:     b2c8ae8510e02c28576808910a6b8827721ab7dc
+Fetched:             2026-11-15
+License:             Apache-2.0. Complete terms in LICENSE.txt (verbatim copy of the
+                     upstream root LICENSE, blob d645695673349e3947e8e5ae42332d0ac3164cd7, 11358 bytes).
+
+Applicable upstream notices
+---------------------------
+ForgeKernel
+Copyright 2026 The ForgeKernel Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+(Verbatim from the first four lines of the upstream NOTICE. Its FlashInfer-Bench and
+SOL-ExecBench sections cover only src/forgekernel/card_template/eval/leaderboard.py,
+which is not vendored, so they do not apply here.)
+
+Local modifications
+-------------------
+None. Every upstream file listed below is byte-identical to the upstream git blob
+(verified with git hash-object). FlashRT only added this NOTICE and LICENSE.txt.
+
+Upstream files intentionally not vendored (upstream unit tests for the scripts):
+  integrations/claude-code/forge-start/tests/test_deploy.py@b2c8ae8510e0 (blob c1c7aab35c1b4faa4b17a04c0dffca051c7a6654, 4323 bytes)
+  integrations/claude-code/forge-start/tests/test_start.py@b2c8ae8510e0 (blob 21f0bd64176454d131154033e06abbcabaa54a03, 2545 bytes)
+
+Files (git blob SHA, bytes, path relative to this folder)
+----------------------------------------------------------
+68ea8b12aae253be4fe1273a8235116fcb4bc631   15770  SKILL.md
+fc8a8abdcb7e8b93b752b0bca7d37422717a0ca0    5802  scripts/deploy.py
+b61913d9f2ebb9fded2e89f1b8dc3cfbd6d53ef2    5382  scripts/start.py
+
+Re-verify: python3 third_party/agent-skills/verify_vendor.py

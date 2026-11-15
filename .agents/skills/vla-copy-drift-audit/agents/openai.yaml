@@ -1,0 +1,4 @@
+interface:
+  display_name: "VLA Copy Drift Audit"
+  short_description: "Audit candidate, vendor and skill copies for drift"
+  default_prompt: "Use $vla-copy-drift-audit to audit this copy against its moved baseline or upstream, using one import watermark per file and git merge-file probes, and write an adjudicated drift report under devlocal."

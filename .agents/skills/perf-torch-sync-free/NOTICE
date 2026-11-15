@@ -1,0 +1,38 @@
+perf-torch-sync-free
+====================
+
+Third-party agent skill vendored into FlashRT.
+
+Status: vendored unmodified
+
+Upstream project:    TensorRT-LLM
+Upstream repository: https://github.com/NVIDIA/TensorRT-LLM
+Upstream path:       .claude/skills/perf-torch-sync-free
+Upstream commit:     ef83ce246944131336e657681a951fa1c786bc6d
+Fetched:             2026-11-15
+License:             Apache-2.0. Complete terms in LICENSE.txt (verbatim copy of the
+                     upstream root LICENSE, blob 0b58d015e42efd81c98a44b91bb2a6dd7293e9f2, 40678 bytes).
+
+Applicable upstream notices
+---------------------------
+Copyright (c) 2011-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+(First line of the upstream root LICENSE. TensorRT-LLM has no NOTICE file at this
+commit; its ATTRIBUTIONS-CPP-*.md and ATTRIBUTIONS-Python.md list third-party
+dependencies of the TensorRT-LLM library, not of .claude/skills, so they do not apply.
+Per-file SPDX headers inside the vendored files are kept as they are.)
+
+Local modifications
+-------------------
+None. Every upstream file listed below is byte-identical to the upstream git blob
+(verified with git hash-object). FlashRT only added this NOTICE and LICENSE.txt.
+
+Validator note: frontmatter key `tags`. Kept unmodified on purpose.
+
+Files (git blob SHA, bytes, path relative to this folder)
+----------------------------------------------------------
+30ab16bd340d10474b08327e678e1cedcd5c9776   10091  SKILL.md
+2dee697aeca61cd8fabc0194f4d3dd76008bcb38   15932  references/sync-patterns.md
+39facbc77cf9aa7df17a4c0381588304ccc7c913    7001  scripts/verify_workload.py
+
+Re-verify: python3 third_party/agent-skills/verify_vendor.py

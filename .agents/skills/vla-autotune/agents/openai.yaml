@@ -1,0 +1,4 @@
+interface:
+  display_name: "VLA Autotune"
+  short_description: "Stage-aware VLA autotune loop for FlashRT"
+  default_prompt: "Use $vla-autotune to plan and run the next autotune iteration for this VLA model."

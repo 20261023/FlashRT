@@ -21,11 +21,13 @@ NVIDIA GPUs, AMD GPUs, and Ascend NPUs, with CUDA, HIP, and AscendC backends.
 The flagship integration today is **VLA control** — production frontends for Pi0, Pi0.5, GROOT N1.6, GROOT N1.7, and Pi0-FAST, validated on LIBERO where applicable. The same kernel set also powers BAGEL world-model research paths, Higgs Audio v3 TTS, Wan2.2 / Motus video-policy paths, and **single-stream LLM inference** with Qwen3.6-27B NVFP4 long-context serving. The pattern is workload-shaped (small-batch realtime), not model-class-shaped.
 
 **Experimental model/sampler backend:** [`flash_rt.vla`](docs/vla_backend.md)
-
-**学习与源码理解：**[VLA后端中文学习指南](docs/vla_backend_learning.zh-CN.md) — 从一次`infer`理解分层、四模型适配、采样、CUDA Graph与性能／质量边界。
 separates FlashRT execution from Euler/ProbeFlow selection for model-level
 optimization. Newly adapted paths are source integrations, not runtime-validated
 performance claims; see the linked support and input/output boundaries.
+
+**学习与源码理解：**[VLA后端中文学习指南](docs/vla_backend_learning.zh-CN.md) — 从一次`infer`看懂分层、四个模型、采样器、CUDA Graph，以及性能和误差怎么看。
+
+**Agent 驱动的 autotune：**[VLA autotune pipeline](docs/vla_autotune_pipeline.zh-CN.md) — 工具池、按游选工具、worktree 对比、skill（入口 `.agents/skills/vla-autotune`）和“谁主导”的决策记录。
 
 ## Demos
 

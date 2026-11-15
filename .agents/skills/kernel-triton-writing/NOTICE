@@ -1,0 +1,48 @@
+kernel-triton-writing
+=====================
+
+Third-party agent skill vendored into FlashRT.
+
+Status: vendored unmodified
+
+Upstream project:    TensorRT-LLM
+Upstream repository: https://github.com/NVIDIA/TensorRT-LLM
+Upstream path:       .claude/skills/kernel-triton-writing
+Upstream commit:     ef83ce246944131336e657681a951fa1c786bc6d
+Fetched:             2026-11-15
+License:             Apache-2.0. Complete terms in LICENSE.txt (verbatim copy of the
+                     upstream root LICENSE, blob 0b58d015e42efd81c98a44b91bb2a6dd7293e9f2, 40678 bytes).
+
+Applicable upstream notices
+---------------------------
+Copyright (c) 2011-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+(First line of the upstream root LICENSE. TensorRT-LLM has no NOTICE file at this
+commit; its ATTRIBUTIONS-CPP-*.md and ATTRIBUTIONS-Python.md list third-party
+dependencies of the TensorRT-LLM library, not of .claude/skills, so they do not apply.
+Per-file SPDX headers inside the vendored files are kept as they are.)
+
+Local modifications
+-------------------
+None. Every upstream file listed below is byte-identical to the upstream git blob
+(verified with git hash-object). FlashRT only added this NOTICE and LICENSE.txt.
+
+Validator note: frontmatter key `tags` (outside name/description/license/allowed-tools/metadata). Kept unmodified on purpose.
+
+Files (git blob SHA, bytes, path relative to this folder)
+----------------------------------------------------------
+1c1739b85159a9ea44a809e338d74526ddf54929   15233  SKILL.md
+f57ebb2a430aca112b26a3db5d239bfd589bb8e4   10382  references/api-core.md
+db920415ef5d24de7b39957fe3a41eed266cc21e   12123  references/api-language.md
+3f74cfb5c42e70e8736d0647ff26e13c8b6feac7    7892  references/concepts-semantics.md
+d8d5ec17cf769f2d299870bf11b48a4017da5fe5    4428  references/operator-routing.md
+8bed0f81f27b80e7c01e19a0af333bf3e182fdde   11758  references/patterns-advanced.md
+d08f98e95f2ce7d0bfb54bed7fec3099055bc1ff    8812  references/patterns-basic.md
+ffd59dafc3f0b2abeaac0a873673e59b9fd241a0   10665  references/patterns-fusion.md
+770026823a4902ae3f141ac968c2b3a3ceb2ebcd   12553  references/patterns-gemm.md
+214ca6483a6c5a6dddea7ac4d9fd1dda2e1947b6   10767  references/troubleshooting.md
+df97ad0411e9cdba0fa2b7d3f8f2eac08587776a     684  scripts/__init__.py
+2bc8881d3d1141e92b45547942ed4bd8c46e9260    9626  scripts/benchmark_kernel.py
+9d316ea29e771620a4c1f5153c16b0e7edd52a6f   12615  scripts/verify_kernel.py
+
+Re-verify: python3 third_party/agent-skills/verify_vendor.py

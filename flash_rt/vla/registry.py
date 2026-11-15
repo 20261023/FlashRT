@@ -71,23 +71,35 @@ def describe_backend(config: BackendConfig) -> dict:
     }
 
 
+# CUDA capability -> hardware label (also used by the CPU-only autotune tool
+# registry to filter tools by capability without importing Torch).
+_CUDA_TARGETS = {(8, 0): 'cuda_sm80', (8, 7): 'rtx_sm87', (8, 9): 'rtx_sm89',
+                 (11, 0): 'thor', (12, 0): 'rtx_sm120'}
+
+
 def _cuda_target(requested):
     import torch
     if not torch.cuda.is_available() or getattr(torch.version, 'hip', None):
         raise RuntimeError('This first VLA backend requires an NVIDIA CUDA device')
     capability = tuple(torch.cuda.get_device_capability())
-    targets = {(8, 0): 'cuda_sm80', (8, 7): 'rtx_sm87', (8, 9): 'rtx_sm89',
-               (11, 0): 'thor', (12, 0): 'rtx_sm120'}
-    if capability not in targets:
+    if capability not in _CUDA_TARGETS:
         raise ValueError(f'No VLA backend path for CUDA capability {capability}')
-    actual = targets[capability]
+    actual = _CUDA_TARGETS[capability]
     if requested != 'auto' and requested != actual:
         raise ValueError(f'Requested hardware={requested!r}, current device is {actual!r}')
     return actual
 
 
-def load_backend(config: BackendConfig) -> VLABackend:
-    """Construct the requested backend; never substitute another model/method."""
+def validate_config(config: BackendConfig) -> dict:
+    """Run every CPU-only check load_backend applies before touching a device.
+
+    Pure validation: capability blocker, framework/precision, option names and
+    values, FastWAM sampler/option contract and pi05 environment conflicts. No
+    Torch import, no checkpoint access, no hardware probe (``hardware`` is
+    checked against the actual device only by load_backend). Returns the
+    model's capability spec. Raises exactly what load_backend would raise, in
+    the same order.
+    """
     spec = _CAPABILITIES[config.model]
     if 'blocker' in spec:
         raise NotImplementedError(spec['blocker'])
@@ -141,6 +153,19 @@ def load_backend(config: BackendConfig) -> VLABackend:
                 ('FLASHRT_PI05_DECODER_KERNEL', ('auto', 'cublaslt'))):
             if name in os.environ and os.environ[name] not in allowed:
                 raise ValueError(f'The BF16 VLA backend conflicts with {name}={os.environ[name]}')
+        # The frontend lets this variable override the option; refuse a silent override.
+        env_mode = os.environ.get('FLASHRT_PI05_STATE_PROMPT_MODE')
+        requested = config.options.get('state_prompt_mode', 'exact')
+        if env_mode is not None and env_mode != requested:
+            raise ValueError(f'The VLA backend option state_prompt_mode={requested} conflicts with '
+                             f'FLASHRT_PI05_STATE_PROMPT_MODE={env_mode}')
+    return spec
+
+
+def load_backend(config: BackendConfig) -> VLABackend:
+    """Construct the requested backend; never substitute another model/method."""
+    spec = validate_config(config)
+    precision = spec['precision']
     decoder = None
     if config.model in ('pi0', 'pi05'):
         from .processing import load_action_decoder

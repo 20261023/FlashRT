@@ -1,0 +1,46 @@
+aitune-validate
+===============
+
+Third-party agent skill vendored into FlashRT.
+
+Status: vendored unmodified
+
+Upstream project:    AITune
+Upstream repository: https://github.com/ai-dynamo/aitune
+Upstream path:       .claude/skills/aitune-validate
+Upstream commit:     1d3a4236ad8f458669d5633715b6956125f2289c
+Fetched:             2026-11-15
+License:             Apache-2.0. Complete terms in LICENSE.txt (verbatim copy of the
+                     upstream root LICENSE, blob 895657b9a966424100865826cff85a6a1b4c8bb9, 10140 bytes).
+
+Applicable upstream notices
+---------------------------
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+(Verbatim upstream COPYRIGHT file; AITune has no NOTICE file at this commit.)
+
+Local modifications
+-------------------
+None. Every upstream file listed below is byte-identical to the upstream git blob
+(verified with git hash-object). FlashRT only added this NOTICE and LICENSE.txt.
+
+Validator note: YAML comment lines (SPDX header) inside the frontmatter. Kept unmodified on purpose.
+
+Files (git blob SHA, bytes, path relative to this folder)
+----------------------------------------------------------
+c5195c5c2a9d1c7fc31ad773b0bf377dee0b1bef    1216  SKILL.md
+
+Re-verify: python3 third_party/agent-skills/verify_vendor.py

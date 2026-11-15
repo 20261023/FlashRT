@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import math
+import re
 
 from flash_rt.sampling import ProbeFlowConfig
 from flash_rt.vla.config import BackendConfig
@@ -19,8 +20,14 @@ _PROBEFLOW_FIELDS = {
 }
 _CANDIDATE_FIELDS = {
     'candidate_id', 'backend', 'workload_id', 'parent_id', 'hypothesis',
-    'origin', 'patch_ref', 'source_ref',
+    'origin', 'patch_ref', 'source_ref', 'tool', 'stage',
 }
+_PROVENANCE_ID = re.compile(r'[a-z0-9][a-z0-9_.-]*')
+_SOURCE_IDENTITY_FIELDS = (
+    'snapshot_id', 'source_dir', 'flash_rt_file', 'base_commit', 'patch_ref', 'head_commit',
+    'head_tree', 'head_parent', 'harness_tree', 'tracked_clean', 'unexpected_files',
+    'extensions', 'python', 'env',
+)
 
 
 def _json_value(value):
@@ -107,6 +114,8 @@ class Candidate:
     origin: str = 'human'
     patch_ref: str | None = None
     source_ref: str | None = None
+    tool: str | None = None
+    stage: str | None = None
 
     def __post_init__(self):
         for name in ('candidate_id', 'workload_id'):
@@ -120,14 +129,24 @@ class Candidate:
         _text(self.hypothesis, 'hypothesis')
         if self.origin not in ('human', 'search', 'agent'):
             raise ValueError('origin must be human, search or agent')
+        for name in ('tool', 'stage'):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not _PROVENANCE_ID.fullmatch(value)):
+                raise ValueError(f'{name} must be None or match ^[a-z0-9][a-z0-9_.-]*$')
 
     def to_dict(self) -> dict:
-        return {
+        record = {
             'candidate_id': self.candidate_id, 'backend': encode_backend(self.backend),
             'workload_id': self.workload_id, 'parent_id': self.parent_id,
             'hypothesis': self.hypothesis, 'origin': self.origin,
             'patch_ref': self.patch_ref, 'source_ref': self.source_ref,
         }
+        # Optional provenance is emitted only when set so that the canonical
+        # JSON of every pre-existing candidate (ledger identity) is unchanged.
+        for name in ('tool', 'stage'):
+            if getattr(self, name) is not None:
+                record[name] = getattr(self, name)
+        return record
 
     @classmethod
     def from_dict(cls, record: dict) -> Candidate:
@@ -149,24 +168,67 @@ def _nonnegative(value, name):
         raise ValueError(f'{name} must be finite and nonnegative')
 
 
+def validate_source_identity(identity, candidate: Candidate) -> None:
+    """A complete, clean source identity for the candidate's own snapshot."""
+    # Imported lazily: ``python -m flash_rt.vla.autotune.snapshots`` must not
+    # find its module pre-imported by this package's __init__.
+    from .snapshots import check_commit, check_patch_ref, check_snapshot_id, snapshot_id
+    _object(identity, 'source_identity')
+    missing = [name for name in _SOURCE_IDENTITY_FIELDS if name not in identity]
+    if missing:
+        raise ValueError(f'source_identity is missing fields: {missing}')
+    check_snapshot_id(identity['snapshot_id'], error=ValueError)
+    for name in ('source_dir', 'flash_rt_file'):
+        _text(identity[name], f'source_identity.{name}', nonempty=True)
+    for name in ('base_commit', 'head_commit', 'head_tree', 'harness_tree'):
+        check_commit(identity[name], f'source_identity.{name}', error=ValueError)
+    if identity['head_parent'] is not None:
+        check_commit(identity['head_parent'], 'source_identity.head_parent', error=ValueError)
+    check_patch_ref(identity['patch_ref'], error=ValueError)
+    if identity['tracked_clean'] is not True or identity['unexpected_files'] != []:
+        raise ValueError('source_identity must prove a clean tree without unexpected files')
+    extensions = _object(identity['extensions'], 'source_identity.extensions')
+    for relpath, digest in extensions.items():
+        if not isinstance(digest, str) or len(digest) != 64 or digest.strip('0123456789abcdef'):
+            raise ValueError(f'source_identity extension {relpath} must have a 64-hex sha256')
+    _object(identity['python'], 'source_identity.python')
+    env = _object(identity['env'], 'source_identity.env')
+    if not all(isinstance(value, str) for value in env.values()):
+        raise ValueError('source_identity.env values must be strings')
+    if (identity['base_commit'] != candidate.source_ref or identity['patch_ref'] != candidate.patch_ref
+            or identity['snapshot_id'] != snapshot_id(candidate.source_ref, candidate.patch_ref)):
+        raise ValueError('source_identity does not describe the candidate source_ref/patch_ref snapshot')
+
+
 def validate_result(record: dict) -> None:
     """Reject partial/fabricated samples; leave all additional metrics untouched.
 
     Quality is evidence scoped by the caller, not an inferred task-success
     claim. A failed record carries a failure instead of a timing measurement.
+    Schema 3 is schema 2 plus a verified ``source_identity`` (snapshot mode);
+    a failed schema 3 record may carry none, e.g. when verification failed.
     """
     _object(record, 'result')
-    if type(record.get('schema_version')) is not int or record['schema_version'] not in (1, 2):
-        raise ValueError('schema_version must be 1 (historical) or 2 (bound execution)')
+    if type(record.get('schema_version')) is not int or record['schema_version'] not in (1, 2, 3):
+        raise ValueError('schema_version must be 1 (historical), 2 (bound execution) or 3 (bound source snapshot)')
     for name in ('candidate_id', 'attempt_id', 'comparison_id', 'workload_id'):
         _text(record.get(name), name, nonempty=True)
-    if record['schema_version'] == 2:
+    candidate = None
+    if record['schema_version'] in (2, 3):
         _text(record.get('campaign_instance_id'), 'campaign_instance_id', nonempty=True)
         candidate = Candidate.from_dict(record.get('candidate'))
         if candidate.candidate_id != record['candidate_id'] or candidate.workload_id != record['workload_id']:
             raise ValueError('Result candidate envelope identifiers do not match')
         if record.get('job_id') is not None:
             _text(record['job_id'], 'job_id', nonempty=True)
+    if record['schema_version'] == 3:
+        identity = record.get('source_identity')
+        if record.get('state') == 'measured':
+            if identity is None:
+                raise ValueError('measured schema_version 3 results require source_identity')
+            validate_source_identity(identity, candidate)
+        elif identity is not None:
+            _object(identity, 'source_identity')  # Partial evidence is allowed on failure.
     state = record.get('state')
     if state not in ('measured', 'failed'):
         raise ValueError('result state must be measured or failed')

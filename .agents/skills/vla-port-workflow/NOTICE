@@ -1,0 +1,72 @@
+vla-port-workflow: a FlashRT agent skill adapted from ApxInf
+
+This skill is a MODIFIED version of the ApxInf "model-port-workflow" skill.
+
+Provenance
+  Upstream project : ApxInf, https://github.com/infinigence/ApxInf
+  Upstream commit  : b05b40990387e8c48e7d6267a790664981a665e4
+  Upstream file    : skills/model-port-workflow/SKILL.md
+                       (git blob 388aed6842a8abf7de234fb4f4b578817421275c, 14001 bytes)
+  Fetched          : 2026-11-15, by blob SHA through the GitHub API; the local
+                     hash was checked against the blob SHA.
+  Verbatim copy    : third_party/agent-skills/apxinf/skills/model-port-workflow/
+
+License
+  ApxInf upstream license is Apache-2.0. LICENSE.txt in this folder is the
+  verbatim upstream ApxInf LICENSE file (git blob
+  261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64). FlashRT's own modifications are
+  also distributed under the Apache License, Version 2.0.
+
+Applicable upstream NOTICE text
+  The upstream ApxInf license remains Apache-2.0 (see LICENSE).
+  (The rest of ApxInf's NOTICE covers vendored MUSA and MLX code, none of
+  which is part of this skill.)
+
+Changes made by FlashRT (2026-11-15)
+  - Renamed model-port-workflow to vla-port-workflow. Rewrote the description
+    and added Chinese trigger words.
+  - Narrowed the scope. ApxInf ports whole LLM/VLM/VLA model families into
+    ApxInf crates. FlashRT's port lane brings one method, kernel or backend
+    into a FlashRT-native path for a given model, stage and GPU, and ends by
+    handing off a snapshot candidate to the patch lane (vla-patch-candidate)
+    with registry tool and stage ids.
+  - Replaced the ApxInf required reading (doc/porting-workflow.md,
+    adding-a-new-model.md, model-layer-architecture.md,
+    model-execution-wiring.md, mlx-backend.md, adding-new-kernels.md) with
+    FlashRT's documents:
+      * docs/adding_new_model.md §0, §4.3 and §4.4;
+      * docs/kernel_fusion.md and docs/kernel_catalog.md;
+      * docs/vla_autotune.md;
+      * the tool registry entry;
+      * the vla-model-impl-map report.
+  - Replaced the Rust module-ownership table (Model/Blocks, ModelRunner,
+    weights, LlmTrait, VlaRuntime) with FlashRT placement: registry,
+    frontend, pipeline_<hw>, csrc binding plus CMake gate, and the
+    autotune-harness exclusion. Noted that an upstream source_dir sits
+    outside snapshot identity.
+  - Removed the MLX, CPU-reference, LLM chat-template and tuning-recipe
+    specifics.
+  - Kept the method:
+      * a confirmed preflight tuple;
+      * private reference capture;
+      * semantic inventory;
+      * the execution ledger (columns preserved);
+      * coverage classification;
+      * named scaffolds with exit criteria;
+      * eager/graph parity, repeated replay, changed-input propagation,
+        stable addresses and the host-transfer audit;
+      * the functional versus optimization status split;
+      * a product-only diff;
+      * the hands-off/hands-on stop conditions;
+      * "a partial foundation is not completion".
+  - Added:
+      * the operator gate (vla-operator-gate) for every new device path;
+      * the kernel lane option;
+      * snapshot build commands;
+      * decision-log recording with an explicit actor;
+      * the PatchProposal/candidate hand-off;
+      * the current port and port-like registry tools (quant.int8_pi05,
+        fusion.hy_rope_qknorm_kvwrite, cache.fastwam_text_crossattn_kv) with
+        their verified blockers.
+  - Moved the preflight, ledger and capture-acceptance checklists to
+    references/port-checklists.md. Added agents/openai.yaml.

@@ -65,6 +65,11 @@ def profile_request(backend, request, *, event_factory=None, synchronize=None):
                 _replace_item(stack, pipe._velocity_graphs, key,
                               _TimedGraph(graph, 'velocity', intervals, event_factory))
         elif backend.config.model == 'hyvla':
+            # ViT + merger graph (hyvla_thor._vit_merge replays g["graph"]).
+            for entry in getattr(frontend, '_vit_graph_cache', {}).values():
+                if entry.get('graph') is not None:
+                    _replace_item(stack, entry, 'graph', _TimedGraph(
+                        entry['graph'], 'vision', intervals, event_factory))
             for entry in frontend._graph_cache.values():
                 _replace_item(stack, entry, 'prefix_graph', _TimedGraph(
                     entry['prefix_graph'], 'prefix', intervals, event_factory))
@@ -73,7 +78,9 @@ def profile_request(backend, request, *, event_factory=None, synchronize=None):
                                   _TimedGraph(graph, 'velocity', intervals, event_factory))
         elif backend.config.model == 'fastwam':
             pipe = frontend.pipeline
-            for name, stage in (('prepare_condition', 'condition_vae_video_prefill'),
+            # infer() calls self._prepare_condition directly (the public
+            # prepare_condition wraps it too), so the private method is timed.
+            for name, stage in (('_prepare_condition', 'condition_vae_video_prefill'),
                                 ('_evaluate_clock_velocity', 'velocity')):
                 original = getattr(pipe, name)
                 def timed(*args, _original=original, _stage=stage, **kwargs):

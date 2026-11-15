@@ -9,6 +9,7 @@ import sqlite3
 from uuid import uuid4
 
 from .schema import Candidate, _json_value, _text, validate_result
+from .snapshots import check_snapshot_id, is_ready, snapshot_id, validate_manifest
 
 
 _TRANSITIONS = {
@@ -59,6 +60,10 @@ class CampaignLedger:
                 )''')
                 db.execute('''CREATE TABLE IF NOT EXISTS campaign_metadata (
                     key TEXT PRIMARY KEY, value TEXT NOT NULL
+                )''')
+                db.execute('''CREATE TABLE IF NOT EXISTS snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    record_json TEXT NOT NULL
                 )''')
                 db.execute('INSERT OR IGNORE INTO campaign_metadata(key, value) VALUES (?, ?)',
                            ('instance_id', str(uuid4())))
@@ -118,6 +123,76 @@ class CampaignLedger:
             raise KeyError(candidate_id)
         return Candidate.from_dict(json.loads(row['record_json']))
 
+    @staticmethod
+    def _snapshot_payload(manifest):
+        validate_manifest(manifest)
+        if not is_ready(manifest):
+            raise ValueError(f'Snapshot {manifest["snapshot_id"]} is not ready (native state '
+                             f'{manifest["native"]["status"]})')
+        return _canonical(manifest)
+
+    @staticmethod
+    def _check_snapshot_rows(db, payloads):
+        """Return the snapshots still to insert; reject changed or mixed-harness records."""
+        stored = {row['snapshot_id']: row['record_json'] for row in db.execute('SELECT * FROM snapshots')}
+        harness = {json.loads(record)['harness_tree'] for record in stored.values()}
+        harness.update(json.loads(payload)['harness_tree'] for payload in payloads.values())
+        if len(harness) > 1:
+            raise ValueError(f'All campaign snapshots must share one harness tree, got {sorted(harness)}')
+        missing = []
+        for identifier, payload in payloads.items():
+            if identifier not in stored:
+                missing.append((identifier, payload))
+            elif stored[identifier] != payload:
+                raise ValueError(f'Conflicting snapshot already registered: {identifier}')
+        return missing
+
+    def register_snapshot(self, manifest) -> None:
+        """Persist one ready snapshot manifest; identical re-registration is a no-op."""
+        payload = self._snapshot_payload(manifest)
+        with self._write() as db:
+            missing = self._check_snapshot_rows(db, {manifest['snapshot_id']: payload})
+            db.executemany('INSERT INTO snapshots(snapshot_id, record_json) VALUES (?, ?)', missing)
+
+    def get_snapshot(self, snapshot_id) -> dict:
+        check_snapshot_id(snapshot_id, error=ValueError)
+        row = self._connection().execute(
+            'SELECT record_json FROM snapshots WHERE snapshot_id = ?', (snapshot_id,)).fetchone()
+        if row is None:
+            raise KeyError(snapshot_id)
+        return json.loads(row['record_json'])
+
+    def snapshots(self) -> dict:
+        return {row['snapshot_id']: json.loads(row['record_json']) for row in self._connection().execute(
+            'SELECT snapshot_id, record_json FROM snapshots ORDER BY snapshot_id')}
+
+    @staticmethod
+    def _check_source_identity(record, candidate, snapshots):
+        """Schema 3: the executed tree must be the ledger's snapshot for this candidate."""
+        if not snapshots:
+            raise ValueError('Result claims a source snapshot but this campaign registered none')
+        identifier = snapshot_id(candidate.source_ref, candidate.patch_ref)
+        if identifier not in snapshots:
+            raise ValueError(f'Result candidate snapshot {identifier} is not registered in this campaign')
+        manifest = snapshots[identifier]
+        identity = record.get('source_identity')
+        if identity is None:
+            return  # Only failed records may lack evidence (enforced by validate_result).
+        if not isinstance(identity, dict):
+            raise ValueError('source_identity must be a dict')
+        expected = {
+            'snapshot_id': identifier, 'source_dir': manifest['source_dir'],
+            'base_commit': candidate.source_ref, 'patch_ref': candidate.patch_ref,
+            'head_commit': manifest['snapshot_commit'], 'head_tree': manifest['snapshot_tree'],
+            'harness_tree': manifest['harness_tree'], 'extensions': manifest['native']['artifacts'],
+            'tracked_clean': True, 'unexpected_files': [],
+        }
+        if manifest['patch_ref'] is not None:
+            expected['head_parent'] = manifest['base_commit']
+        for name, value in expected.items():
+            if name not in identity or _canonical(identity[name]) != _canonical(value):
+                raise ValueError(f'Result source_identity {name} does not match the registered snapshot')
+
     @property
     def instance_id(self):
         return self._connection().execute(
@@ -126,7 +201,7 @@ class CampaignLedger:
     def validate_execution_identity(self, record):
         """Bind a result to this persisted instance, constructor and confirmed job."""
         validate_result(record)
-        if record.get('schema_version') != 2:
+        if record.get('schema_version') not in (2, 3):
             raise ValueError('Legacy result has no bound execution identity; retain as historical evidence only')
         if record['campaign_instance_id'] != self.instance_id:
             raise ValueError('Result campaign instance does not match ledger')
@@ -141,6 +216,11 @@ class CampaignLedger:
             raise ValueError('Result job does not match confirmed attempt job')
         if record['state'] == 'measured' and record['gpu'].get('job_id') != attempt['job_id']:
             raise ValueError('Measured GPU job does not match confirmed attempt job')
+        snapshots = self.snapshots()
+        if record['schema_version'] == 3:
+            self._check_source_identity(record, Candidate.from_dict(candidate), snapshots)
+        elif snapshots:
+            raise ValueError('Snapshot campaign requires source-verified schema_version 3 results')
         return attempt
 
     def begin_attempt(self, candidate_id, comparison_id, attempt_id, *, job_id=None) -> dict:
@@ -160,14 +240,18 @@ class CampaignLedger:
                        (attempt_id, candidate_id, comparison_id, candidate.workload_id, job_id))
         return self.get_attempt(attempt_id)
 
-    def initialize_attempts(self, entries) -> list[dict]:
+    def initialize_attempts(self, entries, snapshots=None) -> list[dict]:
         """Register candidates and create an entire initial attempt group atomically.
 
         ``entries`` is a nonempty list of (Candidate, comparison_id, attempt_id).
+        ``snapshots`` (snapshot mode only) is a list of ready manifests; every
+        candidate must then name one of them by source_ref/patch_ref, and they
+        are registered in the same transaction as the attempts.
         Repeating the same group after a commit/publication interruption is
         allowed only while every row is still pristine proposed. Existing
-        attempt IDs must match the whole group exactly: partial/extra groups
-        reject instead of being extended, reset or silently reused. Unrelated
+        attempt IDs (and registered snapshot IDs) must match the whole group
+        exactly: partial/extra groups reject instead of being extended, reset
+        or silently reused. Unrelated
         registered candidates without attempts are allowed. Return detached
         attempt dictionaries in input order; no external plan is written here.
         """
@@ -196,6 +280,7 @@ class CampaignLedger:
                 raise ValueError(f'Conflicting candidate in initialization: {candidate.candidate_id}')
             candidates[candidate.candidate_id] = payload
             prepared.append((candidate.candidate_id, comparison_id, attempt_id, candidate.workload_id))
+        snapshot_payloads = self._prepare_snapshots(snapshots, candidates)
 
         with self._write() as db:
             existing = {row['attempt_id']: row for row in db.execute('SELECT * FROM attempts')}
@@ -222,8 +307,18 @@ class CampaignLedger:
                         row[name] is not None for name in
                         ('job_id', 'result_json', 'failure_kind', 'message')):
                     raise ValueError(f'Initialization attempt is no longer pristine proposed: {attempt_id}')
+            if existing:
+                # A retry must supply exactly the stored snapshot set; in particular
+                # a schema 2 retry (no snapshots) of a snapshot campaign is refused.
+                stored = {row['snapshot_id'] for row in db.execute('SELECT snapshot_id FROM snapshots')}
+                if stored != set(snapshot_payloads):
+                    raise ValueError('Initialization snapshot set must match the existing attempt group: '
+                                     f'stored {sorted(stored)}, supplied {sorted(snapshot_payloads)}')
+            missing_snapshots = self._check_snapshot_rows(db, snapshot_payloads)
             # Only after every candidate/attempt has been checked may any row
             # be inserted. _write rolls back even a mid-batch SQLite failure.
+            db.executemany('INSERT INTO snapshots(snapshot_id, record_json) VALUES (?, ?)',
+                           missing_snapshots)
             db.executemany('INSERT INTO candidates(candidate_id, record_json) VALUES (?, ?)',
                            missing_candidates)
             if not existing:
@@ -232,6 +327,24 @@ class CampaignLedger:
                 ) VALUES (?, ?, ?, ?, 'proposed')''', prepared)
             attempts = [self.get_attempt(attempt_id) for _, _, attempt_id, _ in prepared]
         return attempts
+
+    def _prepare_snapshots(self, snapshots, candidates):
+        if snapshots is None:
+            return {}
+        if not isinstance(snapshots, list) or not snapshots:
+            raise ValueError('snapshots must be None or a nonempty list of manifests')
+        payloads = {}
+        for manifest in snapshots:
+            payload = self._snapshot_payload(manifest)
+            if payloads.get(manifest['snapshot_id'], payload) != payload:
+                raise ValueError(f'Conflicting snapshot in initialization: {manifest["snapshot_id"]}')
+            payloads[manifest['snapshot_id']] = payload
+        for candidate_id, payload in candidates.items():
+            candidate = json.loads(payload)
+            identifier = snapshot_id(candidate['source_ref'], candidate['patch_ref'])
+            if identifier not in payloads:
+                raise ValueError(f'Candidate {candidate_id} has no snapshot {identifier} in this initialization')
+        return payloads
 
     @staticmethod
     def _attempt_dict(row):

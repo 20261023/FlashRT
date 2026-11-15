@@ -1,0 +1,916 @@
+{
+ "schema": 1,
+ "fetched": "2026-11-15",
+ "entries": [
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/aitune-benchmark/LICENSE.txt",
+   "blob": "895657b9a966424100865826cff85a6a1b4c8bb9",
+   "bytes": 10140,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": ".claude/skills/aitune-benchmark/SKILL.md",
+   "local_path": ".agents/skills/aitune-benchmark/SKILL.md",
+   "blob": "4f99ebda41b381a55f32df8d50841aef6557faff",
+   "bytes": 3795,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/aitune-inspect/LICENSE.txt",
+   "blob": "895657b9a966424100865826cff85a6a1b4c8bb9",
+   "bytes": 10140,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": ".claude/skills/aitune-inspect/SKILL.md",
+   "local_path": ".agents/skills/aitune-inspect/SKILL.md",
+   "blob": "bed7e35883a923aa169a0fb00c8681ecb03c8f08",
+   "bytes": 1776,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/aitune-tune/LICENSE.txt",
+   "blob": "895657b9a966424100865826cff85a6a1b4c8bb9",
+   "bytes": 10140,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": ".claude/skills/aitune-tune/SKILL.md",
+   "local_path": ".agents/skills/aitune-tune/SKILL.md",
+   "blob": "1bfd018f683d9f37d16970c62fec4411438f4e4b",
+   "bytes": 13680,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": ".claude/skills/aitune-tune/common-errors.md",
+   "local_path": ".agents/skills/aitune-tune/common-errors.md",
+   "blob": "546d2e5dae4f06c1eb65aade552c95a684d026d5",
+   "bytes": 998,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": ".claude/skills/aitune-tune/how-to-aot-tune.md",
+   "local_path": ".agents/skills/aitune-tune/how-to-aot-tune.md",
+   "blob": "4b23f4d88b526d13b4d8e5158fa4606d5b08d259",
+   "bytes": 1026,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": ".claude/skills/aitune-tune/how-to-jit-tune.md",
+   "local_path": ".agents/skills/aitune-tune/how-to-jit-tune.md",
+   "blob": "da46784d221936d4a7a859a88aaa754effb20407",
+   "bytes": 2697,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/aitune-validate/LICENSE.txt",
+   "blob": "895657b9a966424100865826cff85a6a1b4c8bb9",
+   "bytes": 10140,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": ".claude/skills/aitune-validate/SKILL.md",
+   "local_path": ".agents/skills/aitune-validate/SKILL.md",
+   "blob": "c5195c5c2a9d1c7fc31ad773b0bf377dee0b1bef",
+   "bytes": 1216,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/forge-start/LICENSE.txt",
+   "blob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+   "bytes": 11358,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "integrations/claude-code/forge-start/SKILL.md",
+   "local_path": ".agents/skills/forge-start/SKILL.md",
+   "blob": "68ea8b12aae253be4fe1273a8235116fcb4bc631",
+   "bytes": 15770,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "integrations/claude-code/forge-start/scripts/deploy.py",
+   "local_path": ".agents/skills/forge-start/scripts/deploy.py",
+   "blob": "fc8a8abdcb7e8b93b752b0bca7d37422717a0ca0",
+   "bytes": 5802,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "integrations/claude-code/forge-start/scripts/start.py",
+   "local_path": ".agents/skills/forge-start/scripts/start.py",
+   "blob": "b61913d9f2ebb9fded2e89f1b8dc3cfbd6d53ef2",
+   "bytes": 5382,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "torchtitan",
+   "repo": "pytorch/torchtitan",
+   "commit": "631d544b1f6794ecfeca734a7bba861e03ddd5e3",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/kernel-numerics-verifier/LICENSE.txt",
+   "blob": "6d1df98ff6031178472ac043e5b4e11ea39568b2",
+   "bytes": 1495,
+   "license": "BSD-3-Clause"
+  },
+  {
+   "project": "torchtitan",
+   "repo": "pytorch/torchtitan",
+   "commit": "631d544b1f6794ecfeca734a7bba861e03ddd5e3",
+   "upstream_path": ".claude/skills/kernel-numerics-verifier/SKILL.md",
+   "local_path": ".agents/skills/kernel-numerics-verifier/SKILL.md",
+   "blob": "24a5e8776347e6d8fc9dc8d50584f03e7ac49612",
+   "bytes": 5129,
+   "license": "BSD-3-Clause"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/kernel-triton-writing/LICENSE.txt",
+   "blob": "0b58d015e42efd81c98a44b91bb2a6dd7293e9f2",
+   "bytes": 40678,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/SKILL.md",
+   "local_path": ".agents/skills/kernel-triton-writing/SKILL.md",
+   "blob": "1c1739b85159a9ea44a809e338d74526ddf54929",
+   "bytes": 15233,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/api-core.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/api-core.md",
+   "blob": "f57ebb2a430aca112b26a3db5d239bfd589bb8e4",
+   "bytes": 10382,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/api-language.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/api-language.md",
+   "blob": "db920415ef5d24de7b39957fe3a41eed266cc21e",
+   "bytes": 12123,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/concepts-semantics.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/concepts-semantics.md",
+   "blob": "3f74cfb5c42e70e8736d0647ff26e13c8b6feac7",
+   "bytes": 7892,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/operator-routing.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/operator-routing.md",
+   "blob": "d8d5ec17cf769f2d299870bf11b48a4017da5fe5",
+   "bytes": 4428,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/patterns-advanced.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/patterns-advanced.md",
+   "blob": "8bed0f81f27b80e7c01e19a0af333bf3e182fdde",
+   "bytes": 11758,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/patterns-basic.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/patterns-basic.md",
+   "blob": "d08f98e95f2ce7d0bfb54bed7fec3099055bc1ff",
+   "bytes": 8812,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/patterns-fusion.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/patterns-fusion.md",
+   "blob": "ffd59dafc3f0b2abeaac0a873673e59b9fd241a0",
+   "bytes": 10665,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/patterns-gemm.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/patterns-gemm.md",
+   "blob": "770026823a4902ae3f141ac968c2b3a3ceb2ebcd",
+   "bytes": 12553,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/references/troubleshooting.md",
+   "local_path": ".agents/skills/kernel-triton-writing/references/troubleshooting.md",
+   "blob": "214ca6483a6c5a6dddea7ac4d9fd1dda2e1947b6",
+   "bytes": 10767,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/scripts/__init__.py",
+   "local_path": ".agents/skills/kernel-triton-writing/scripts/__init__.py",
+   "blob": "df97ad0411e9cdba0fa2b7d3f8f2eac08587776a",
+   "bytes": 684,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/scripts/benchmark_kernel.py",
+   "local_path": ".agents/skills/kernel-triton-writing/scripts/benchmark_kernel.py",
+   "blob": "2bc8881d3d1141e92b45547942ed4bd8c46e9260",
+   "bytes": 9626,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/kernel-triton-writing/scripts/verify_kernel.py",
+   "local_path": ".agents/skills/kernel-triton-writing/scripts/verify_kernel.py",
+   "blob": "9d316ea29e771620a4c1f5153c16b0e7edd52a6f",
+   "bytes": 12615,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/LICENSE.txt",
+   "blob": "0b58d015e42efd81c98a44b91bb2a6dd7293e9f2",
+   "bytes": 40678,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/SKILL.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/SKILL.md",
+   "blob": "9d064b12357224edf82ca0d45114aead01bc5272",
+   "bytes": 18526,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/references/advanced-profiling.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/references/advanced-profiling.md",
+   "blob": "6e0f71f7b08cec46f6e36165ed508be87d2e5419",
+   "bytes": 11910,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/references/bottleneck-guide.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/references/bottleneck-guide.md",
+   "blob": "ac41c0c9900b590c06d3a46a17080a48ef7ec172",
+   "bytes": 6672,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/references/cli-reference.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/references/cli-reference.md",
+   "blob": "27b1cb14120eca3c7918ab702d70902238792833",
+   "bytes": 12204,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/references/memory-analysis.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/references/memory-analysis.md",
+   "blob": "8fb6e8e32e73d7e6b139b2d4bffac044a3b5d16c",
+   "bytes": 6795,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/references/metrics-guide.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/references/metrics-guide.md",
+   "blob": "31ea64c82abe8ee5a274e5399c045251392fadff",
+   "bytes": 7736,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/references/python-report-api.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/references/python-report-api.md",
+   "blob": "2cef83d8d0d1b29bf555d2665f52d87f21c686bc",
+   "bytes": 7469,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/references/roofline-analysis.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/references/roofline-analysis.md",
+   "blob": "5204f905d7fb7f081e8b9e7f16394f1def1d2e15",
+   "bytes": 5767,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-compute-analysis/references/sections-guide.md",
+   "local_path": ".agents/skills/perf-nsight-compute-analysis/references/sections-guide.md",
+   "blob": "9e2a39cdf90daccd23af37a1907a5f89d69969f8",
+   "bytes": 9085,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/perf-nsight-systems/LICENSE.txt",
+   "blob": "0b58d015e42efd81c98a44b91bb2a6dd7293e9f2",
+   "bytes": 40678,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-systems/SKILL.md",
+   "local_path": ".agents/skills/perf-nsight-systems/SKILL.md",
+   "blob": "9061440a8e73756fef7c8f27f10321fe288ad39a",
+   "bytes": 14718,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-systems/references/app-preparation.md",
+   "local_path": ".agents/skills/perf-nsight-systems/references/app-preparation.md",
+   "blob": "440bd4ba2c84e2fb1eb62c9718ddd7057ec90e0a",
+   "bytes": 5922,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-systems/references/cli-post-collection.md",
+   "local_path": ".agents/skills/perf-nsight-systems/references/cli-post-collection.md",
+   "blob": "26cbaa98c61e7a6d3a10268d2b4ecdd68d8d7717",
+   "bytes": 6606,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-systems/references/cli-profiling.md",
+   "local_path": ".agents/skills/perf-nsight-systems/references/cli-profiling.md",
+   "blob": "b1a9b55b25182a57fc6c4b2ae7033db53d8f4d9e",
+   "bytes": 8890,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-systems/references/expert-systems.md",
+   "local_path": ".agents/skills/perf-nsight-systems/references/expert-systems.md",
+   "blob": "9274ddee1836261732215d0ce2beb4e90d53cbd4",
+   "bytes": 5256,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-systems/references/nvtx-analysis.md",
+   "local_path": ".agents/skills/perf-nsight-systems/references/nvtx-analysis.md",
+   "blob": "e3c6a58719f3bfe304705758a3e6a6f689d70814",
+   "bytes": 5670,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-systems/references/recipes-dl.md",
+   "local_path": ".agents/skills/perf-nsight-systems/references/recipes-dl.md",
+   "blob": "7bc19ec563a4d6c2912fa19edc6ae9abb835e02d",
+   "bytes": 6850,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-nsight-systems/references/stats-reports.md",
+   "local_path": ".agents/skills/perf-nsight-systems/references/stats-reports.md",
+   "blob": "2417d6e9b13dcc66136098bfef3dda1da0adc13d",
+   "bytes": 5796,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/perf-torch-cuda-graphs/LICENSE.txt",
+   "blob": "0b58d015e42efd81c98a44b91bb2a6dd7293e9f2",
+   "bytes": 40678,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-cuda-graphs/SKILL.md",
+   "local_path": ".agents/skills/perf-torch-cuda-graphs/SKILL.md",
+   "blob": "150121861a4422fb79dab8f33d13a9c6b0b42c5e",
+   "bytes": 24111,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-cuda-graphs/references/api-pytorch.md",
+   "local_path": ".agents/skills/perf-torch-cuda-graphs/references/api-pytorch.md",
+   "blob": "30a114a58395b4ea0dc2d6b5ab11ad666c6c9fb7",
+   "bytes": 7586,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-cuda-graphs/references/api-te-megatron.md",
+   "local_path": ".agents/skills/perf-torch-cuda-graphs/references/api-te-megatron.md",
+   "blob": "5035b0d06598b63fc9822cb83fd8cb6ab78b108d",
+   "bytes": 8362,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-cuda-graphs/references/patterns-compatibility.md",
+   "local_path": ".agents/skills/perf-torch-cuda-graphs/references/patterns-compatibility.md",
+   "blob": "8106e8e0a8aeb44c63f2e6c8cba98f3b0abed764",
+   "bytes": 4640,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-cuda-graphs/references/patterns-dynamic.md",
+   "local_path": ".agents/skills/perf-torch-cuda-graphs/references/patterns-dynamic.md",
+   "blob": "543d60cb3e105d1c9fd48dbded4d76f0a3fc69c2",
+   "bytes": 8123,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-cuda-graphs/references/troubleshooting.md",
+   "local_path": ".agents/skills/perf-torch-cuda-graphs/references/troubleshooting.md",
+   "blob": "dae4f1a5f3c779b0be8b6867fd565621e007ce06",
+   "bytes": 8474,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-cuda-graphs/scripts/verify_workload.py",
+   "local_path": ".agents/skills/perf-torch-cuda-graphs/scripts/verify_workload.py",
+   "blob": "23c15ddab60af3ad901ffb708c953587b66fd86a",
+   "bytes": 7017,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/perf-torch-sync-free/LICENSE.txt",
+   "blob": "0b58d015e42efd81c98a44b91bb2a6dd7293e9f2",
+   "bytes": 40678,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-sync-free/SKILL.md",
+   "local_path": ".agents/skills/perf-torch-sync-free/SKILL.md",
+   "blob": "30ab16bd340d10474b08327e678e1cedcd5c9776",
+   "bytes": 10091,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-sync-free/references/sync-patterns.md",
+   "local_path": ".agents/skills/perf-torch-sync-free/references/sync-patterns.md",
+   "blob": "2dee697aeca61cd8fabc0194f4d3dd76008bcb38",
+   "bytes": 15932,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-torch-sync-free/scripts/verify_workload.py",
+   "local_path": ".agents/skills/perf-torch-sync-free/scripts/verify_workload.py",
+   "blob": "39facbc77cf9aa7df17a4c0381588304ccc7c913",
+   "bytes": 7001,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": "LICENSE",
+   "local_path": ".agents/skills/perf-workload-profiling/LICENSE.txt",
+   "blob": "0b58d015e42efd81c98a44b91bb2a6dd7293e9f2",
+   "bytes": 40678,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-workload-profiling/SKILL.md",
+   "local_path": ".agents/skills/perf-workload-profiling/SKILL.md",
+   "blob": "60d04ee451da528c844b1d93aa98fba6a6f47731",
+   "bytes": 7859,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-workload-profiling/references/benchmarking-patterns.md",
+   "local_path": ".agents/skills/perf-workload-profiling/references/benchmarking-patterns.md",
+   "blob": "d5cdf636befbac8072de881871e22e4eb4449660",
+   "bytes": 5173,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-workload-profiling/references/nvtx-api.md",
+   "local_path": ".agents/skills/perf-workload-profiling/references/nvtx-api.md",
+   "blob": "b26b11c92026b34ab47fcda7348628482cb5ccf2",
+   "bytes": 2264,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": ".claude/skills/perf-workload-profiling/references/pytorch-profiler-api.md",
+   "local_path": ".agents/skills/perf-workload-profiling/references/pytorch-profiler-api.md",
+   "blob": "f0929c692ad196744383b4f6078e0d10900d6425",
+   "bytes": 2061,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": "COPYRIGHT",
+   "local_path": "third_party/agent-skills/aitune/COPYRIGHT",
+   "blob": "9031d2eca5569e269c71fc2f52109e619e8ea5fd",
+   "bytes": 654,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "AITune",
+   "repo": "ai-dynamo/aitune",
+   "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+   "upstream_path": "LICENSE",
+   "local_path": "third_party/agent-skills/aitune/LICENSE",
+   "blob": "895657b9a966424100865826cff85a6a1b4c8bb9",
+   "bytes": 10140,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "AGENTS.md",
+   "local_path": "third_party/agent-skills/apxinf/AGENTS.upstream.md",
+   "blob": "0b6c04e9b4fbdddfd483b7336f657f17b1baff44",
+   "bytes": 2459,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "LICENSE",
+   "local_path": "third_party/agent-skills/apxinf/LICENSE",
+   "blob": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+   "bytes": 11357,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "NOTICE",
+   "local_path": "third_party/agent-skills/apxinf/NOTICE",
+   "blob": "7bcf3b783517301c325d88a461784db92f6fd78a",
+   "bytes": 7324,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "doc/agentic-optimization-workflow.md",
+   "local_path": "third_party/agent-skills/apxinf/doc/agentic-optimization-workflow.md",
+   "blob": "ae33b07a02921b749f54fff8c248dab0940544d7",
+   "bytes": 8050,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "skills/analyze-model-impl/SKILL.md",
+   "local_path": "third_party/agent-skills/apxinf/skills/analyze-model-impl/SKILL.md",
+   "blob": "f82f756c946ea32677bfd64e03a05eef60b31acc",
+   "bytes": 9902,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "skills/analyze-model-impl/agents/openai.yaml",
+   "local_path": "third_party/agent-skills/apxinf/skills/analyze-model-impl/agents/openai.yaml",
+   "blob": "5aa28a8db835943ea9527534c1255005fa7a4879",
+   "bytes": 345,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "skills/copy-drift-audit/SKILL.md",
+   "local_path": "third_party/agent-skills/apxinf/skills/copy-drift-audit/SKILL.md",
+   "blob": "fde0e504564e39c158e0145170c39df52bad90cf",
+   "bytes": 14723,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "skills/l3-reference-testing/SKILL.md",
+   "local_path": "third_party/agent-skills/apxinf/skills/l3-reference-testing/SKILL.md",
+   "blob": "e1ca0fc07fe66d84988504b39e2992973fdab86b",
+   "bytes": 4178,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ApxInf",
+   "repo": "infinigence/ApxInf",
+   "commit": "b05b40990387e8c48e7d6267a790664981a665e4",
+   "upstream_path": "skills/model-port-workflow/SKILL.md",
+   "local_path": "third_party/agent-skills/apxinf/skills/model-port-workflow/SKILL.md",
+   "blob": "388aed6842a8abf7de234fb4f4b578817421275c",
+   "bytes": 14001,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "LICENSE",
+   "local_path": "third_party/agent-skills/forgekernel/LICENSE",
+   "blob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+   "bytes": 11358,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "NOTICE",
+   "local_path": "third_party/agent-skills/forgekernel/NOTICE",
+   "blob": "c0e04a577321b1135fabb75a11006fbce3288bbe",
+   "bytes": 1322,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "skills/README.md",
+   "local_path": "third_party/agent-skills/forgekernel/skills/README.md",
+   "blob": "7cd98b3041e35c52b50f6cb88cdab5f36efb5a31",
+   "bytes": 1442,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "skills/job-env-check/SKILL.md",
+   "local_path": "third_party/agent-skills/forgekernel/skills/job-env-check/SKILL.md",
+   "blob": "1fa710c82e0979b21f498c917067b42668ba1c82",
+   "bytes": 622,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "skills/lever-pricing/SKILL.md",
+   "local_path": "third_party/agent-skills/forgekernel/skills/lever-pricing/SKILL.md",
+   "blob": "ce9c7d6168f29bae551f2d84b7cbee0e9533ba89",
+   "bytes": 1278,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "skills/ncu-trace/SKILL.md",
+   "local_path": "third_party/agent-skills/forgekernel/skills/ncu-trace/SKILL.md",
+   "blob": "bdc8bb60ee48c17aa29fd32c6f8475811f6e2755",
+   "bytes": 6671,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "skills/orchestration/SKILL.md",
+   "local_path": "third_party/agent-skills/forgekernel/skills/orchestration/SKILL.md",
+   "blob": "48a05557230b9393a7eea34f5f4a57c1ce4e6125",
+   "bytes": 1090,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "skills/sass/SKILL.md",
+   "local_path": "third_party/agent-skills/forgekernel/skills/sass/SKILL.md",
+   "blob": "6fdc8c7b2ac948d631077dc2aad5dbd976846c78",
+   "bytes": 1433,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "skills/stall/SKILL.md",
+   "local_path": "third_party/agent-skills/forgekernel/skills/stall/SKILL.md",
+   "blob": "c4e751ce4968a7d02da161e62931a2e672caf824",
+   "bytes": 818,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "ForgeKernel",
+   "repo": "OpenBMB/ForgeKernel",
+   "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+   "upstream_path": "skills/timeline/SKILL.md",
+   "local_path": "third_party/agent-skills/forgekernel/skills/timeline/SKILL.md",
+   "blob": "a06f6d0e1afb72397cda1bb25814685196f7b1e2",
+   "bytes": 1119,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "TensorRT-LLM",
+   "repo": "NVIDIA/TensorRT-LLM",
+   "commit": "ef83ce246944131336e657681a951fa1c786bc6d",
+   "upstream_path": "LICENSE",
+   "local_path": "third_party/agent-skills/tensorrt-llm/LICENSE",
+   "blob": "0b58d015e42efd81c98a44b91bb2a6dd7293e9f2",
+   "bytes": 40678,
+   "license": "Apache-2.0"
+  },
+  {
+   "project": "torchtitan",
+   "repo": "pytorch/torchtitan",
+   "commit": "631d544b1f6794ecfeca734a7bba861e03ddd5e3",
+   "upstream_path": "LICENSE",
+   "local_path": "third_party/agent-skills/torchtitan/LICENSE",
+   "blob": "6d1df98ff6031178472ac043e5b4e11ea39568b2",
+   "bytes": 1495,
+   "license": "BSD-3-Clause"
+  },
+  {
+   "project": "torchtitan",
+   "repo": "pytorch/torchtitan",
+   "commit": "631d544b1f6794ecfeca734a7bba861e03ddd5e3",
+   "upstream_path": "torchtitan/rl/.claude/skills/inference_perf_hillclimb/SKILL.md",
+   "local_path": "third_party/agent-skills/torchtitan/torchtitan/rl/dot-claude/skills/inference_perf_hillclimb/SKILL.md",
+   "blob": "a6c69067f4b2df4b32a9abc742004e55b75d8dd2",
+   "bytes": 12426,
+   "license": "BSD-3-Clause"
+  }
+ ]
+}

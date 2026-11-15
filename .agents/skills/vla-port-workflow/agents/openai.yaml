@@ -1,0 +1,4 @@
+interface:
+  display_name: "VLA Port Workflow"
+  short_description: "Port a method or kernel into a native FlashRT path"
+  default_prompt: "Use $vla-port-workflow to port this method or kernel into a FlashRT-native, graph-capturable path: fix the preflight tuple, build the execution ledger, gate each new device path, run capture acceptance, and hand off a snapshot candidate with tool and stage ids."

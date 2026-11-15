@@ -1,0 +1,31 @@
+kernel-numerics-verifier
+========================
+
+Third-party agent skill vendored into FlashRT.
+
+Status: vendored unmodified
+
+Upstream project:    torchtitan
+Upstream repository: https://github.com/pytorch/torchtitan
+Upstream path:       .claude/skills/kernel-numerics-verifier
+Upstream commit:     631d544b1f6794ecfeca734a7bba861e03ddd5e3
+Fetched:             2026-11-15
+License:             BSD-3-Clause. Complete terms in LICENSE.txt (verbatim copy of the
+                     upstream root LICENSE, blob 6d1df98ff6031178472ac043e5b4e11ea39568b2, 1495 bytes).
+
+Applicable upstream notices
+---------------------------
+(c) Meta Platforms, Inc. and affiliates.
+
+(Copyright line of the upstream BSD 3-Clause LICENSE; torchtitan has no NOTICE file.)
+
+Local modifications
+-------------------
+None. Every upstream file listed below is byte-identical to the upstream git blob
+(verified with git hash-object). FlashRT only added this NOTICE and LICENSE.txt.
+
+Files (git blob SHA, bytes, path relative to this folder)
+----------------------------------------------------------
+24a5e8776347e6d8fc9dc8d50584f03e7ac49612    5129  SKILL.md
+
+Re-verify: python3 third_party/agent-skills/verify_vendor.py

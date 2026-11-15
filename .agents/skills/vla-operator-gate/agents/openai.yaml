@@ -1,0 +1,4 @@
+interface:
+  display_name: "VLA Operator Gate"
+  short_description: "Gate kernel candidates against an fp64 torch oracle"
+  default_prompt: "Use $vla-operator-gate to check every kernel candidate for this captured call site against an independent fp64 oracle and the eager production baseline, on two input draws and with CUDA Graph replay, and record the verdict in the decision log."

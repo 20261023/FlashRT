@@ -1,0 +1,37 @@
+perf-workload-profiling
+=======================
+
+Third-party agent skill vendored into FlashRT.
+
+Status: vendored unmodified
+
+Upstream project:    TensorRT-LLM
+Upstream repository: https://github.com/NVIDIA/TensorRT-LLM
+Upstream path:       .claude/skills/perf-workload-profiling
+Upstream commit:     ef83ce246944131336e657681a951fa1c786bc6d
+Fetched:             2026-11-15
+License:             Apache-2.0. Complete terms in LICENSE.txt (verbatim copy of the
+                     upstream root LICENSE, blob 0b58d015e42efd81c98a44b91bb2a6dd7293e9f2, 40678 bytes).
+
+Applicable upstream notices
+---------------------------
+Copyright (c) 2011-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+(First line of the upstream root LICENSE. TensorRT-LLM has no NOTICE file at this
+commit; its ATTRIBUTIONS-CPP-*.md and ATTRIBUTIONS-Python.md list third-party
+dependencies of the TensorRT-LLM library, not of .claude/skills, so they do not apply.
+Per-file SPDX headers inside the vendored files are kept as they are.)
+
+Local modifications
+-------------------
+None. Every upstream file listed below is byte-identical to the upstream git blob
+(verified with git hash-object). FlashRT only added this NOTICE and LICENSE.txt.
+
+Files (git blob SHA, bytes, path relative to this folder)
+----------------------------------------------------------
+60d04ee451da528c844b1d93aa98fba6a6f47731    7859  SKILL.md
+d5cdf636befbac8072de881871e22e4eb4449660    5173  references/benchmarking-patterns.md
+b26b11c92026b34ab47fcda7348628482cb5ccf2    2264  references/nvtx-api.md
+f0929c692ad196744383b4f6078e0d10900d6425    2061  references/pytorch-profiler-api.md
+
+Re-verify: python3 third_party/agent-skills/verify_vendor.py

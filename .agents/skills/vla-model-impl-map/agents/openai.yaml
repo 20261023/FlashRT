@@ -1,0 +1,4 @@
+interface:
+  display_name: "VLA Model Implementation Map"
+  short_description: "Map VLA stages to torch ops, fvk kernels and graphs"
+  default_prompt: "Use $vla-model-impl-map to trace this FlashRT VLA candidate's active configuration and produce an execution-ordered table of torch ops, fvk bindings, selected kernels and CUDA Graph details, with a stage id on every row."

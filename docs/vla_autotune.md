@@ -38,11 +38,43 @@ Candidate + workload + dataflow hypothesis + source/patch reference
 | `profiling` | An extra diagnostic request with graph/evaluator event intervals |
 | `dataflow` | Source-specific FLOPs/logical-weight accounting using actual runtime rows |
 | `controller` | Campaign creation/reopen, submission-state recording, ingestion and selection |
+| `snapshots` | Content-addressed patches and git-worktree source snapshots with identity verification (plan schema 3) |
+| `stages` | Per-model stage map (code seams, profiling keys) and diagnostic time attribution |
+| `tools` | Tool registry: builtin config tools, blocked methods with evidence, lever pricing, patch proposals, external adapters |
+| `decisions` | Append-only decision/experience log; every record names its actor (human, agent, human+agent, search) |
 
 The coding agent remains outside the measurement process. A proposal uses
-`origin="agent"`, `parent_id`, `hypothesis`, `patch_ref` and `source_ref`; human and
-deterministic-search proposals use the same interface. The initial search does
-not train a cost model, recursively call an LLM or author skills.
+`origin="agent"`, `parent_id`, `hypothesis`, `patch_ref` and `source_ref`, plus
+optional `tool` and `stage` provenance; human and deterministic-search proposals use
+the same interface. The controller does not train a cost model, call an LLM or author
+skills. The agent loop that does those things is described by repo-scoped skills.
+
+## Stage-aware pipeline (tools, snapshots, decisions, skills)
+
+The master procedure is `.agents/skills/vla-autotune/SKILL.md`. It covers:
+
+1. profiling and stage attribution (`python -m flash_rt.vla.autotune.stages attribute RESULT --rank`);
+2. choosing a tool per stage (`python -m flash_rt.vla.autotune.tools list --model M --hardware cuda_sm80 --stage S`);
+3. generating candidates in one of three lanes;
+4. measuring them with the existing reference / candidate / bookend campaign;
+5. recording each decision with its actor (`python -m flash_rt.vla.autotune.decisions`).
+
+The three candidate lanes:
+
+- **Config lane:** candidates share the campaign's code tree (plan schema 2, unchanged behaviour).
+- **Patch and port lanes:** each candidate runs from its own source snapshot.
+  1. `snapshots materialize` creates a detached worktree at a 40-hex `source_ref`, applies a `sha256:` `patch_ref`, and writes a manifest last.
+  2. `adopt-native` reuses prebuilt extensions only when native inputs are identical; otherwise `build-script` and `record-built` handle a rebuild.
+  3. `controller init --snapshot-store` writes plan schema 3.
+  4. `batch` re-verifies every snapshot and launches each attempt with that snapshot as cwd and as the only FlashRT on `PYTHONPATH`.
+  5. The worker verifies the imported source (commit, tree, parent, harness tree, clean tree, extension hashes) before it loads a model.
+  Patches may not touch `flash_rt/vla/autotune/` or add importable modules at the repository root, and every snapshot in a campaign must share one harness tree. This guards against accidental edits to the timing boundary or the quality metric. It is not a defence against deliberate tampering: candidate code under `flash_rt/` runs in the same process, and some of it is imported before source verification.
+- **Kernel lane:** this feeds the patch lane. `tools.capture` records a call site, the ForgeKernel or KernelAgent adapter writes the task and job script, and `harvest` applies the acceptance rule. The operator-level gate (`vla-operator-gate`) must pass before a model-level campaign.
+
+Skills live in `.agents/skills/` for Codex, and Claude Code reaches them through `.claude/skills/<name>` symlinks.
+
+- Third-party skills keep their upstream bytes, `LICENSE.txt` and `NOTICE`. Verbatim archives, provenance and a hash checker are in `third_party/agent-skills/`.
+- The Chinese overview is [vla_autotune_pipeline.zh-CN.md](vla_autotune_pipeline.zh-CN.md).
 
 ## Explicit workload
 
