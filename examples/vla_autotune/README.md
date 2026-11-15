@@ -27,6 +27,16 @@ an official-implementation self-test with an explicit host-to-CPU boundary, not
 an author-published latency or a robot-quality result. Cold load and warmup remain
 separate; raw arrays are written before a completed JSON result.
 
+`official_native_latency.py` adds direct author OpenPI JAX/PyTorch and FastWAM
+A800 measurements. Published results on other GPUs are reference material, not
+the main speed comparison. It records author-default and selected-matched Euler
+step counts separately. OpenPI uses its original model/Policy/model transforms;
+the resident LeRobot π0.5 checkpoint only needs its outer `model.` key namespace
+removed to load the author class. H50 and discrete-state settings are explicit.
+FastWAM uses the author's original compiled `infer_action` and cached T5 inputs.
+Cold compile/load is excluded and reported separately. These are author-source
+self-measurements in the recorded resident runtime, not replicas of paper timing.
+
 ## HyVLA recorded-oracle validation
 
 **Current optimization goal (2026-11-13):** use the shared v2 tradeoff contract
