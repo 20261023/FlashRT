@@ -1,8 +1,9 @@
 # FastWAM 架构、FlashRT 适配差距与 ApxInf 接入范围
 
 **范围：** 本文解释实际运行的 FastWAM LIBERO 配置，比较 π0／π0.5／Hy 的结构，
-区分已有计时与尚未测量的优化假设。ApxInf 新模型接入仍在进行，**本文不宣称
-FastWAM 或 DM0.5 已取得 ApxInf 端到端结果**。
+区分已有计时与尚未测量的优化假设。新增实跑已取得**FastWAM原生ApxInf研究实现
+完整public policy约215.34 ms**和**DM0.5作者default约277.66 ms**；DM0.5 ApxInf
+正式执行仍在进行。研究实现不等于公开引擎已有支持或完成部署验收。
 
 ## 1. 先纠正“FastWAM 适配后很慢”的范围
 
@@ -117,7 +118,8 @@ prefill与denoise，沿用作者已有的编译思路。Graph降低host重复提
 
 ## 5. 接下来最明确的原生接缝
 
-以下是源码支持的候选，不是已经取得收益的方法：
+以下针对FlashRT侧，是源码支持的候选，不是已经取得单项收益的方法。独立ApxInf
+候选已实现请求级文本KV并完成整体计时，但没有做单项消融，不能由此证明缓存收益：
 
 1. **请求级文本cross-attention K/V缓存。** 视频KV已有缓存；action context embedding
    以及各层context K/V和K-norm仍每NFE重算。应在append proprio之后按请求准备，
@@ -148,7 +150,8 @@ prefill与denoise，沿用作者已有的编译思路。Graph降低host重复提
 | π0.5，job229581 | BF16，H50/E10，143 prepared tokens；39.16 ms | prepared输入到动作，排除tokenization／state normalization／公共decoding |
 | Hy，job231955／233770 | raw-policy约268–271 ms；device core133.65 ms | 旧profile／环境；core不等于完整policy；不是本轮表内重新配对 |
 | π0独立matched | NR | 没有可核验独立记录 |
-| FastWAM／DM0.5新family | **NR，接入中** | 尚无新ApxInf完整执行结果 |
+| FastWAM新family，job329256 | **public policy 215.3437 ms** | 新增原生研究实现；不同allocation／NHWC接口，未完成部署验收，不算纯engine加速比 |
+| DM0.5新family | **NR，正式执行中** | 作者参考已取得，尚无可报告的新ApxInf完整结果 |
 
 旧Hy最终七组输出与官方一致，但旧FlashRT development对照仅1/7满足同一数值gate；
 不能据旧104.04 ms development点宣称公平纯engine比值。历史ApxInf约270.9 ms与
@@ -157,6 +160,24 @@ prefill与denoise，沿用作者已有的编译思路。Graph降低host重复提
 真正ApxInf接入需要family独立的权重映射、模型执行、请求／workspace／graph所有权
 及公共policy。仅包装Torch、只替换Linear或只测action core，必须按真实范围命名，
 不能填入“完整ApxInf”列。
+
+### 新原生FastWAM结果不是性能胜点
+
+本轮独立快照新增WanVAE38、VideoDiT30、ActionDiT30×20及whole-model graph，
+模型计算调用Rust安全CUDA接口；公共入口为AutoPolicy与现有ModelRunner binding。
+首次作业329215在I8输入文件解析处失败，改用FP32磁盘mask／native I8后，329256
+完成native及public policy各80次正式推理。不是Torch或TensorRT模型包装。
+
+graph提交到完成wall中位数212.5183 ms、prepared输入上传至CPU输出212.8693 ms、
+完整public policy215.3437 ms；只有最后一项进入主表。对应native／policy保存动作
+逐元素相同；与作者327380已保存参考相比，最坏relative L2为0.0116095123、最低
+cosine为0.9999326110，满足原八案例代理范围，不代表闭环、无损或未运行的算子门槛。
+
+此实现目前慢于作者compiled约142 ms和项目compiled约138 ms，保持研究接口和
+`deployable=False`，不替换已选方法。固定NHWC图像布局在计时前准备，历史接口为
+NCHW，且不是同allocation；不给纯engine比值。已有请求级文本KV缓存也不意味着
+整个执行栈一定更快。空间／attention原语目前为未调优组合，尚无新的阶段profile，
+不能把剩余差距定量归给其中一项。详细边界见[大表新增结果](2026-11-14-vla-latency-comparison.zh-CN.md#新增dm05作者参考与fastwam-apxinf实跑)。
 
 ## 7. 新加入的DM0.5具体是什么
 
@@ -172,11 +193,15 @@ prefill与denoise，沿用作者已有的编译思路。Graph降低host重复提
 - 源码Apache-2.0，权重使用Gemma许可。A800无原生FP8，作者TensorRT fast／FP8宣传
   路径不能未经实现和测量直接套用。
 
-先运行作者支持的default／vision SDPA参考，记录完整host输入到CPU动作与内部模型
-边界，再进行原生移植。未取得结果之前保持NR，不以预估延迟补表。
+作者default／vision SDPA／无Liger参考已由329331取得：四case／40份完整`[50,14]`
+FP32 CPU动作，policy中位数277.6579 ms，内部模型267.1751 ms，加载准备17.0973 s；
+实际使用两个suffix graph profile、无禁用项。源码／权重身份核对后才运行，首轮
+329232的PyArrow／NumPy导入失败保留，不改写为模型或质量失败。DM0.5原生ApxInf
+沿实际热态BF16 suffix算术分支继续执行；未取得结果之前仍保持NR。
 
 ## 8. 本文证据限制
 
 架构／工具能力核对基于拉取后的`e98653d4`代码；Fast延迟仍绑定`227993d5`的已保存
-正式样本。按照用户要求，没有为本文新增测试、smoke、profiling或额外评审。
-新模型实际推理计时属于正在进行的后续工作；不把其准备状态写成运行成功。
+正式样本。新增FastWAM原生ApxInf绑定独立源码快照／329256，DM0.5作者参考绑定
+03f7991／329331。按照用户要求，没有新增测试、smoke、profiling或额外评审；
+数值结论只来自已保存正式输出的算术。DM0.5 ApxInf仍在后续执行，不把准备状态写成成功。

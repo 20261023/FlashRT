@@ -1,13 +1,14 @@
 # 五模型延迟对比：本项目方法、官方 Native 与 ApxInf
 
-**状态：原四模型A800主对比已齐；DM0.5与新ApxInf接入进行中，2026-11-15。** 四个本项目已选配置与四个作者原实现均取得
+**状态：五个模型的作者A800参考已取得，FastWAM实验性原生ApxInf已实跑；DM0.5 ApxInf继续接入，2026-11-15。** 原四个本项目已选配置与四个作者原实现均取得
 实际延迟。附加的π0.5 Native8步点因二次编译触及进程总预算而未完成，明确保留NR；
 不为此再排作业，也不把已有10步结果或失败记录改写掉。文献数字只作参考，不用于异卡比值。
 
 新增DM0.5固定为`Dexmal/DM05`基础模型，三相机448×448、无历史、H50／公共14维、
 内部32维、10步；不是两图H10／7维LIBERO变体。官方default／vision SDPA参考首轮
-`329232`在模型加载前因依赖导入失败，无输出；新overlay固定兼容PyArrow后已提交
-`329331`正式计时，结果待返回。FastWAM与DM0.5的ApxInf需要新增原生family，不能把Torch包装改名填数。
+`329232`在模型加载前因依赖导入失败，无输出；新overlay固定兼容PyArrow后，
+`329331`以COMPLETED 0:0结束，取得40份完整输出。FastWAM原生ApxInf研究实现
+`329256`也以COMPLETED 0:0结束；这不是公开ApxInf原有family，不把Torch包装改名填数。
 详见[架构与ApxInf接入说明](2026-11-15-fastwam-architecture-and-apxinf.zh-CN.md)。
 
 **新增请求已完成：** 作业`327380`以COMPLETED 0:0结束，四个FlashRT基线列已补齐。
@@ -16,30 +17,80 @@ FastWAM保持20步／BF16／shift5／H32／八案例，接入prefill＋denoise�
 142.44 ms。这一轮略低3.36%，不外推为跨硬件／任务的普遍优势。
 
 机器可读：[CSV](2026-11-14-vla-latency-comparison.csv)／[JSON](2026-11-14-vla-latency-comparison.json)。
-共19条点记录：18条完成计时、1条未完成，保留旧Fast路径和旧Native对照的历史行；
-JSON另外保留作者文献参考与限制说明，不含私有输入／路径。尚未运行的新DM0.5／
-ApxInf项只进入主表及JSON状态，不伪造CSV测量行；实际结果返回后再追加。
+共21条点记录：20条完成计时、1条未完成，保留旧Fast路径和旧Native对照的历史行；
+新增两条分别为DM0.5作者完整policy和FastWAM ApxInf完整public policy。JSON另外保留
+内部模型／graph边界、作者文献参考与限制说明，不含私有输入／路径。未运行的DM0.5
+ApxInf仍只进入状态，不伪造测量行。
 
 ## A800实测大表
 
-全部使用 **NVIDIA A800-SXM4-80GB**。每个模型的项目／Native配对在同一张卡、同一
+全部使用 **NVIDIA A800-SXM4-80GB**。原四模型的主要项目／Native配对在同一张卡、同一
 allocation内完成：π0为`326708`，π0.5为`326869`，Hy为`326641`，Fast新路径和强对照均为`327380`。
 新增FlashRT列四行都来自`327380`；π0／π0.5／Hy这一列与各自旧主配对不是同allocation，
 只同为A800型号，不据此新增跨作业加速比。Fast三条当前路径在同一张卡同一作业内配对。
-每个方法8次warmup。表内均为毫秒；Native“10步”仅指默认采样步数，其他输入几何按本轮固定。
+原四模型及新增FastWAM ApxInf各八次warmup；DM0.5为每case五次，见下节。新增ApxInf
+`329256`、DM0.5作者`329331`是另外两个allocation，不冒称同卡配对。表内均为毫秒；
+Native“10步”仅指采样步数，其他输入几何按本轮固定。
 
-| 模型 | 本项目当前已选方法 | 本项目Median / Mean / P95 | FlashRT固定步数基线Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | ApxInf，本轮完整同口径 | 样本数（项目／FlashRT／Native） | 官方文献参考，非同卡基线 |
+| 模型 | 本项目当前已选方法 | 本项目Median / Mean / P95 | FlashRT固定步数基线Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | ApxInf完整路径，边界见注 | 样本数（项目／FlashRT／Native） | 官方文献参考，非同卡基线 |
 |---|---|---:|---:|---:|---:|---|---:|---|
 | π0 | FlashRT FP16 Euler2，H50、3view | **26.1164 / 26.1463 / 26.4021** | FP16 Euler10：**40.3384 / 40.4244 / 40.7971** | JAX BF16：**69.3703 / 69.4761 / 70.1619** | Euler2 BF16：**48.3255 / 48.3931 / 48.9294** | NR | 50／50／50 | 73 ms，RTX4090、Euler10 |
 | π0.5 | FlashRT BF16 Euler8，H50、3view | **39.2392 / 39.3056 / 39.5815** | BF16 Euler10：**41.9108 / 41.9764 / 42.3033** | 作者PyTorch compiled：**59.4795 / 59.5625 / 59.8169** | Euler8：**NR，二次编译触及预算** | NR；历史prepared边界39.16 ms另列 | 40／40／40 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
-| FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | **NR，原生接入中** | 80／80／80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
+| FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | 原生研究实现BF16/E20：**215.3437 / 215.5861 / 216.6183**，非性能胜点 | 80／80／80；Apx80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
 | Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | 相同E10配置重新计时：**121.2805 / 122.1176 / 128.2098** | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | NR；历史raw-policy约270.9 ms另列 | 140／70／140 | 作者未报告完整推理延迟 |
-| **DM0.5 base** | NR，未接入FlashRT | **NR** | **NR** | **NR，作者default作业329331待结果** | 同为10步，待实测 | **NR，原生接入中** | 0／0／0 | 不将其他GPU或LIBERO变体数字填为本例结果 |
+| **DM0.5 base** | NR，未接入FlashRT | **NR** | **NR** | 作者default／vision SDPA／无Liger：**277.6579 / 277.5912 / 278.9247** | 同左，10步 | **NR，原生接入中** | 0／0／40 | 不将其他GPU或LIBERO变体数字填为本例结果 |
 
 **ApxInf历史记录不回填本轮同口径列。** 已向旧会话询问并读取其原始报告：π0.5
 job229581的39.16 ms排除了tokenization／state normalization／公共decoding；Hy旧
 raw-policy约270.9 ms与device-core133.65 ms是两个边界。旧Hy与本轮semantic-BF16
 profile也不能不加说明直接配比。这些历史值的源码、环境与限制见上述独立说明。
+
+### 新增DM0.5作者参考与FastWAM ApxInf实跑
+
+**DM0.5，329331：** 原作者`DM05Exp._initialize_inference_runtime`与
+`_prepare_model_input → _predict`，BF16 mixed、三相机448×448、无历史、H50／14维CPU
+绝对动作、10步。四case分别变化seed／state／prompt，每case五次warmup、十次正式
+采样；40份`[50,14]` FP32输出全部有限，同case重复输出一致。prefix长882／876；
+实际suffix graph profile为2、禁用profile为0。完整policy中位数277.6579 ms，作者内部
+模型计时中位数267.1751 ms是另一个边界，不能拿后者冒充完整请求。加载准备17.0973 s
+单列；不含HTTP／base64／磁盘图像解码。旧环境保持只读，仅新overlay加入PyArrow23.0.1。
+
+可复用计时入口：[`official_dm05_latency.py`](../../examples/vla_autotune/official_dm05_latency.py)。
+发布文件与329331实际运行脚本SHA-256相同（`599d9e31…020cd7`），不是另写未运行的替代
+实现。运行前应固定并核验上述作者源码／权重版本；脚本不替使用者checkout源码或下载权重。
+在已分配的Slurm GPU step内，使用匹配的隔离作者环境执行：
+
+```bash
+python examples/vla_autotune/official_dm05_latency.py \
+  --source /path/to/fixed-opendm-checkout \
+  --checkpoint /path/to/DM05-base \
+  --output devlocal/dm05-author/run-unique --warmup 5 --repeats 10
+```
+
+输出目录必须不存在；其中的prepared tensor、noise和逐次动作是私有复现产物，不应发布。
+
+**FastWAM ApxInf，329256：** 独立Rust/CUDA family完成WanVAE38、VideoDiT30、
+ActionDiT30×Euler20，包含请求级文本cross-KV缓存，实际捕获whole-model graph。
+公共入口为`AutoPolicy → FastWamPolicy → 现有ModelRunner → Rust AutoModel`，不是
+Torch模型包装，且只支持本轮固定normalized／cached-T5／provided-noise研究接口。
+
+| 329256计时边界 | Median ms | Mean ms | P95 ms | 正式输出数 |
+|---|---:|---:|---:|---:|
+| whole-model graph提交到完成，非CUDA-event纯设备时间 | 212.5183 | 212.6541 | 213.0941 | 80 |
+| prepared输入上传＋graph＋完整CPU输出 | 212.8693 | 213.0180 | 213.7528 | 80，同上 |
+| 完整public policy，主表采用此行 | **215.3437** | **215.5861** | **216.6183** | 80 |
+
+八案例各十次正式输出；native和public policy对应动作逐元素相同。直接读取这些保存
+输出与作者`327380`的80份compiled20参考比较：最坏relative L2为**0.0116095123**、
+最低cosine为**0.9999326110**、最大绝对差0.05078125；最坏案例是context扰动。
+它满足原0.05／0.999数值代理范围，**不是逐元素等价、算子验收或闭环成功率证明**。
+
+ApxInf这次在policy外预先把normalized图像NCHW转成NHWC；历史项目输入为NCHW。
+二者都不含现场T5编码，但接口、allocation及运行时不同，所以不宣称纯engine加速比。
+当前ApxInf实验实现约215 ms，历史作者compiled约142 ms／项目compiled约138 ms；
+**未替代已选compiled路径，不称更快**。原生graph准备27.8555 s；public policy的加载／
+准备／八次warmup合计15.2050 s，两者不是相同冷计时边界。arena实际使用约4.28 GiB，
+不是总显存。未运行测试或额外评审，保持`deployable=False`及未完成正式功能验收的标记。
 
 新增FlashRT列指本fork当前可用的明确执行绑定，不是官方Native。FastWAM这一列仅为部分
 Linear换成FlashRT GEMM，其他算子仍使用上游Torch，不能冒充完整FlashRT移植；采用已有
@@ -214,7 +265,7 @@ Transformers4.53.2加作者原始`transformers_replace`任务overlay；FastWAM�
 | `326869` | FAILED 1:0，部分完成 | π0.5作者10步及同卡项目8步完成；附加作者8步二次编译未完成 |
 | `327380` | COMPLETED 0:0 | 四个FlashRT基线、Fast旧／新路径、作者compiled10／20，共8份点结果 |
 
-所有本轮作业均已结束；没有仍在占用GPU的任务。用户要求停止测试后未再运行pytest、smoke测试、
+上述原四模型配对作业均已结束；不代表后续DM0.5 ApxInf正式执行也已结束。用户要求停止测试后未再运行pytest、smoke测试、
 额外数值探针或评审；只执行实际计时、读取产物和统计汇总。本报告不声称新的闭环任务质量验证。
 
 ### 6.1 已确认的同卡补测
