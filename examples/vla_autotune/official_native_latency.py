@@ -57,13 +57,13 @@ def main(argv=None):
             weight_adapter='Original author Orbax checkpoint loader; BF16'
         else:
             from openpi.models_pytorch.pi0_pytorch import PI0Pytorch
-            from safetensors.torch import load_file
+            from safetensors.torch import load_model
             model=PI0Pytorch(config)
-            weights=load_file(str(args.checkpoint/'model.safetensors'),device='cpu')
-            model.load_state_dict({key.removeprefix('model.'):value for key,value in weights.items()},strict=True)
-            del weights
+            namespace=torch.nn.Module()
+            namespace.add_module('model',model)
+            load_model(namespace,str(args.checkpoint/'model.safetensors'),strict=True,device='cpu')
             model.paligemma_with_expert.to_bfloat16_for_selected_params('bfloat16')
-            weight_adapter='Resident LeRobot H50 checkpoint, only outer model. key prefix removed; original author model and mixed BF16/FP32 policy'
+            weight_adapter='Resident LeRobot H50 checkpoint; outer model. loading namespace only, safetensors shared-weight-aware strict load; original author model and mixed BF16/FP32 policy'
         policy=Policy(model,transforms=ModelTransformFactory()(config).inputs,
             is_pytorch=args.model=='pi05',pytorch_device='cuda')
         def call(index,steps):

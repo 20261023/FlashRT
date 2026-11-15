@@ -31,8 +31,9 @@ separate; raw arrays are written before a completed JSON result.
 A800 measurements. Published results on other GPUs are reference material, not
 the main speed comparison. It records author-default and selected-matched Euler
 step counts separately. OpenPI uses its original model/Policy/model transforms;
-the resident LeRobot π0.5 checkpoint only needs its outer `model.` key namespace
-removed to load the author class. H50 and discrete-state settings are explicit.
+the resident LeRobot π0.5 checkpoint uses a temporary outer `model.` loading
+namespace and strict shared-weight-aware safetensors loading for its tied embedding.
+H50 and discrete-state settings are explicit.
 FastWAM uses the author's original compiled `infer_action` and cached T5 inputs.
 Cold compile/load is excluded and reported separately. These are author-source
 self-measurements in the recorded resident runtime, not replicas of paper timing.
