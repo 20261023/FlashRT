@@ -2,6 +2,8 @@
   "date": "2026-11-15",
   "primary_four_model_comparison_complete": true,
   "all_optional_matched_step_points_complete": false,
+  "flashrt_baseline_column_complete": false,
+  "flashrt_baseline_and_fastwam_optimization_pending_job": "327380",
   "runtime_versions": {
     "author_pi0": {
       "jax": "0.5.3",
