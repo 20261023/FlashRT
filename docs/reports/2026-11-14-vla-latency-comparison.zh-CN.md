@@ -1,8 +1,13 @@
-# 四模型延迟对比：本项目已选方法与官方 Native
+# 五模型延迟对比：本项目方法、官方 Native 与 ApxInf
 
-**状态：四模型A800主对比已齐，2026-11-15。** 四个本项目已选配置与四个作者原实现均取得
+**状态：原四模型A800主对比已齐；DM0.5与新ApxInf接入进行中，2026-11-15。** 四个本项目已选配置与四个作者原实现均取得
 实际延迟。附加的π0.5 Native8步点因二次编译触及进程总预算而未完成，明确保留NR；
 不为此再排作业，也不把已有10步结果或失败记录改写掉。文献数字只作参考，不用于异卡比值。
+
+新增DM0.5固定为`Dexmal/DM05`基础模型，三相机448×448、无历史、H50／公共14维、
+内部32维、10步；不是两图H10／7维LIBERO变体。官方default／vision SDPA参考正在
+部署；FastWAM与DM0.5的ApxInf需要新增原生family，不能把Torch包装改名填数。
+详见[架构与ApxInf接入说明](2026-11-15-fastwam-architecture-and-apxinf.zh-CN.md)。
 
 **新增请求已完成：** 作业`327380`以COMPLETED 0:0结束，四个FlashRT基线列已补齐。
 FastWAM保持20步／BF16／shift5／H32／八案例，接入prefill＋denoise编译后，
@@ -11,7 +16,8 @@ FastWAM保持20步／BF16／shift5／H32／八案例，接入prefill＋denoise�
 
 机器可读：[CSV](2026-11-14-vla-latency-comparison.csv)／[JSON](2026-11-14-vla-latency-comparison.json)。
 共19条点记录：18条完成计时、1条未完成，保留旧Fast路径和旧Native对照的历史行；
-JSON另外保留作者文献参考与限制说明，不含私有输入／路径。
+JSON另外保留作者文献参考与限制说明，不含私有输入／路径。尚未运行的新DM0.5／
+ApxInf项只进入主表及JSON状态，不伪造CSV测量行；实际结果返回后再追加。
 
 ## A800实测大表
 
@@ -21,12 +27,18 @@ allocation内完成：π0为`326708`，π0.5为`326869`，Hy为`326641`，Fast�
 只同为A800型号，不据此新增跨作业加速比。Fast三条当前路径在同一张卡同一作业内配对。
 每个方法8次warmup。表内均为毫秒；Native“10步”仅指默认采样步数，其他输入几何按本轮固定。
 
-| 模型 | 本项目当前已选方法 | 本项目Median / Mean / P95 | FlashRT固定步数基线Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | 样本数（项目／FlashRT／Native） | 官方文献参考，非同卡基线 |
-|---|---|---:|---:|---:|---:|---:|---|
-| π0 | FlashRT FP16 Euler2，H50、3view | **26.1164 / 26.1463 / 26.4021** | FP16 Euler10：**40.3384 / 40.4244 / 40.7971** | JAX BF16：**69.3703 / 69.4761 / 70.1619** | Euler2 BF16：**48.3255 / 48.3931 / 48.9294** | 50／50／50 | 73 ms，RTX4090、Euler10 |
-| π0.5 | FlashRT BF16 Euler8，H50、3view | **39.2392 / 39.3056 / 39.5815** | BF16 Euler10：**41.9108 / 41.9764 / 42.3033** | 作者PyTorch compiled：**59.4795 / 59.5625 / 59.8169** | Euler8：**NR，二次编译触及预算** | 40／40／40 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
-| FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | 80／80／80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
-| Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | 相同E10配置重新计时：**121.2805 / 122.1176 / 128.2098** | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | 140／70／140 | 作者未报告完整推理延迟 |
+| 模型 | 本项目当前已选方法 | 本项目Median / Mean / P95 | FlashRT固定步数基线Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | ApxInf，本轮完整同口径 | 样本数（项目／FlashRT／Native） | 官方文献参考，非同卡基线 |
+|---|---|---:|---:|---:|---:|---|---:|---|
+| π0 | FlashRT FP16 Euler2，H50、3view | **26.1164 / 26.1463 / 26.4021** | FP16 Euler10：**40.3384 / 40.4244 / 40.7971** | JAX BF16：**69.3703 / 69.4761 / 70.1619** | Euler2 BF16：**48.3255 / 48.3931 / 48.9294** | NR | 50／50／50 | 73 ms，RTX4090、Euler10 |
+| π0.5 | FlashRT BF16 Euler8，H50、3view | **39.2392 / 39.3056 / 39.5815** | BF16 Euler10：**41.9108 / 41.9764 / 42.3033** | 作者PyTorch compiled：**59.4795 / 59.5625 / 59.8169** | Euler8：**NR，二次编译触及预算** | NR；历史prepared边界39.16 ms另列 | 40／40／40 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
+| FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | **NR，原生接入中** | 80／80／80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
+| Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | 相同E10配置重新计时：**121.2805 / 122.1176 / 128.2098** | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | NR；历史raw-policy约270.9 ms另列 | 140／70／140 | 作者未报告完整推理延迟 |
+| **DM0.5 base** | NR，未接入FlashRT | **NR** | **NR** | **NR，作者default参考部署中** | 同为10步，待实测 | **NR，原生接入中** | 0／0／0 | 不将其他GPU或LIBERO变体数字填为本例结果 |
+
+**ApxInf历史记录不回填本轮同口径列。** 已向旧会话询问并读取其原始报告：π0.5
+job229581的39.16 ms排除了tokenization／state normalization／公共decoding；Hy旧
+raw-policy约270.9 ms与device-core133.65 ms是两个边界。旧Hy与本轮semantic-BF16
+profile也不能不加说明直接配比。这些历史值的源码、环境与限制见上述独立说明。
 
 新增FlashRT列指本fork当前可用的明确执行绑定，不是官方Native。FastWAM这一列仅为部分
 Linear换成FlashRT GEMM，其他算子仍使用上游Torch，不能冒充完整FlashRT移植；采用已有

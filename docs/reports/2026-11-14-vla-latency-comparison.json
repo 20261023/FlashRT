@@ -3,6 +3,56 @@
   "primary_four_model_comparison_complete": true,
   "all_optional_matched_step_points_complete": false,
   "flashrt_baseline_column_complete": true,
+  "flashrt_baseline_column_scope": "Original four models only; DM0.5 has no FlashRT implementation/result.",
+  "five_model_extension_complete": false,
+  "dm05_status": {
+    "variant": "Dexmal/DM05 base",
+    "source_revision": "03f799120d425ead51d9482bb1da950b6dabade9",
+    "checkpoint_revision": "5cd18734814abb075a9ccfd9ad6d16777b5cf10e",
+    "cameras": 3,
+    "image_size": [448, 448],
+    "history": 0,
+    "chunk": 50,
+    "internal_action_dim": 32,
+    "public_action_dim": 14,
+    "steps": 10,
+    "author_execution": "default backend; vision SDPA; no Liger",
+    "author_status": "environment_ready_assets_transferring",
+    "flashrt_status": "not_implemented",
+    "apxinf_status": "native_port_in_progress"
+  },
+  "apxinf_current_full_boundary": {
+    "pi0": "NR",
+    "pi05": "NR; historical prepared-boundary result is not this measurement",
+    "fastwam": "NR; native port in progress",
+    "hyvla": "NR; historical profile/boundary is not this measurement",
+    "dm05": "NR; native port in progress"
+  },
+  "historical_apxinf_evidence": [
+    {
+      "model": "pi05",
+      "status": "historical_different_boundary",
+      "job_id": "229581",
+      "median_ms": 39.16,
+      "steps": 10,
+      "precision": "bf16",
+      "chunk": 50,
+      "prepared_tokens": 143,
+      "timing_boundary": "prepared inputs to actions; excludes tokenization, state normalization and common decoding",
+      "current_full_policy_speedup": null
+    },
+    {
+      "model": "hyvla",
+      "status": "historical_different_profile",
+      "job_id": "233770",
+      "approximate_raw_policy_median_ms": 270.9,
+      "steps": 10,
+      "precision": "bf16",
+      "chunk": 40,
+      "note": "Old private native port; do not conflate with 133.65ms device-core or new semantic-BF16 comparison.",
+      "current_full_policy_speedup": null
+    }
+  ],
   "runtime_versions": {
     "author_pi0": {
       "jax": "0.5.3",
@@ -88,6 +138,23 @@
       "flashrt_baseline_median_ms": 121.280456,
       "flashrt_baseline_steps": 10,
       "flashrt_baseline_job_id": "327380",
+      "flashrt_baseline_same_allocation_as_primary_pair": false
+    },
+    {
+      "model": "dm05",
+      "variant": "Dexmal/DM05 base",
+      "status": "pending_author_native_measurement",
+      "project_median_ms": null,
+      "project_steps": null,
+      "native_10step_median_ms": null,
+      "native_matched_step_median_ms": null,
+      "same_step_native_to_project_latency_ratio": null,
+      "native10_to_project_latency_ratio": null,
+      "ratio_note": "No project or ApxInf runtime result yet; no speedup inferred.",
+      "job_id": null,
+      "flashrt_baseline_median_ms": null,
+      "flashrt_baseline_steps": null,
+      "flashrt_baseline_job_id": null,
       "flashrt_baseline_same_allocation_as_primary_pair": false
     }
   ],
