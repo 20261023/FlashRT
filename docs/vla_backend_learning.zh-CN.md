@@ -1,163 +1,155 @@
-# 从一次 `infer` 理解 FlashRT：VLA 后端源码学习指南
+# FlashRT VLA 后端源码导读
 
-> **用途：学习现有实现，不是重构方案，也不是新的性能验收报告。**
->
-> 本文依据本分支 `9804654f` 时的源码梳理，日期为2026-11-13。重点是我们正在使用的
-> π0、π0.5、Hy和FastWAM统一执行层，不试图覆盖FlashRT中所有LLM、音频、视频和硬件路径。
-> 文中“支持的源码路径”不等于所有环境都已运行认证。
+这份文档从一次 `infer` 调用出发，带你看懂 FlashRT 统一 VLA 后端的源码：数据怎么流动，动作怎么一步步生成，时间花在哪里，以及 autotune 怎么在这之上挑配置。覆盖四个模型：π0、π0.5、Hy-Embodied-0.5-VLA（下文简称 Hy）和 FastWAM。
 
-如果你只先记住一句话：
+**先记住一句话：**一次推理分两部分。先把不随去噪变化的条件算一次，存成 KV cache（π0、π0.5、Hy 存的是图像加文本，FastWAM 只存首帧图像，文本留到每一步通过 cross-attention 读入）；然后动作从噪声开始，循环调用模型 N 次，每次算出一个"速度"，再由采样器把速度累加成动作。后端把"模型算速度"和"采样器怎么走步"分开写，autotune 在最外面比较不同配置的速度和误差。
 
-**后端把“模型如何执行”和“动作如何通过多次速度评估生成”分开；autotune再在它们之上比较速度与输出偏差。**
+**建议阅读顺序：**先读第一到第四节，再跑第十三节的 CPU 练习。想深入 Hy，接着读 6.3 和第十二节路线 B。第八节 C++/CUDA 放到最后看。
 
-**第一次阅读建议：**先读1、3、4、6节，再运行第14节CPU练习；想结合当前Hy工作理解数据流，
-接着读7.3和第13节路线B。第9节C++／CUDA可以最后再看，不必从kernel开始啃。
+## 目录
 
-## 阅读导航
-
-1. [先建立心智模型](#overview)
-2. [分层和目录地图](#layers)
-3. [配置、描述和加载不是一回事](#configuration)
-4. [跟踪一次完整推理](#request)
-5. [读懂输入、噪声和输出](#contracts)
-6. [Euler与ProbeFlow究竟在做什么](#sampling)
-7. [四个模型为什么不能共用同一个head](#models)
-8. [CUDA Graph、KV缓存和GEMM计划缓存](#graphs)
-9. [一条Linear如何走到C++／CUDA](#native)
-10. [性能应该怎样理解](#performance)
-11. [质量预算与Hy当前目标](#quality)
-12. [autotune如何组织和选择实验](#autotune)
-13. [沿源码实际走一遍](#walkthrough)
-14. [不需要GPU的学习练习](#exercises)
-15. [常见误解、排查路线与自测](#faq)
+1. [整体结构](#overview)
+2. [配置、描述和加载](#configuration)
+3. [跟踪一次完整推理](#request)
+4. [输入和输出](#contracts)
+5. [去噪采样：Euler 和 ProbeFlow](#sampling)
+6. [四个模型](#models)
+7. [三种缓存：KV cache、CUDA Graph、GEMM 执行计划](#graphs)
+8. [从一个 Linear 追到 CUDA](#native)
+9. [性能怎么看](#performance)
+10. [质量怎么判](#quality)
+11. [autotune 怎么跑一轮](#autotune)
+12. [沿源码走一遍](#walkthrough)
+13. [CPU 练习](#exercises)
+14. [常见误解、排查和自测](#faq)
 
 <a id="overview"></a>
-## 1. 先建立正确的心智模型
+## 一、整体结构
 
-### 1.1 这里的“后端”不是HTTP服务端
+### 1.1 后端在哪一层
 
-这里主要讨论 `flash_rt.vla`：一个**在进程内调用模型推理的执行接口**。
-它本身不负责HTTP路由、机器人通信、任务规划或训练。
-
-可以把它放进下面这幅图：
+这里的"后端"指 `flash_rt.vla`：在同一个 Python 进程里加载模型、执行推理的接口。它不管 HTTP 服务、机器人通信和训练。
 
 ```text
-机器人／数据集／调用方
-    │ 提供 observation、prompt、初始 noise
+调用方（机器人 / 数据集 / 测试脚本）
+    │  observation（图像、state）、prompt、初始噪声
     ▼
-统一VLA接口：BackendConfig + VLABackend
-    │ 选择模型与执行配置，管理调用和结果契约
+统一接口：BackendConfig + VLABackend          flash_rt/vla/
+    │  选模型和配置，统一调用方式和返回格式
     ▼
-模型frontend
-    │ 加载checkpoint、处理图像／状态／文本、选择具体pipeline
+模型 frontend                                flash_rt/frontends/torch/
+    │  读 checkpoint，预处理图像、state、文本
     ▼
-模型pipeline + sampler
-    │ 条件编码／KV prefill + 多次速度评估 + 动作积分
+模型 pipeline + 采样器                        flash_rt/models/<模型>/、flash_rt/sampling/
+    │  算一次 KV cache，循环 N 次算速度，累加成动作
     ▼
-Torch算子／FlashRT扩展／cuBLASLt／attention实现
-    │
+算子                                          Torch、FlashRT 扩展、cuBLASLt
     ▼
-GPU计算 → CPU动作数组 + 采样／执行metadata
+GPU 计算 → 返回 CPU 上的动作数组和采样信息
 ```
 
-autotune在这条链的**外部**组织候选、计时、质量比较和结果入账，并不是每个kernel里都在做搜索。
+autotune（`flash_rt/vla/autotune/`）在最外层：生成候选配置，逐个实测速度和误差，挑出最快的合格配置。
 
-### 1.2 三个不同层次的问题
+### 1.2 目录地图
 
-| 问题 | 应该先看哪里 |
-|---|---|
-| “我怎样加载模型并调用推理？” | `flash_rt/vla` |
-| “这张图像和这个state怎样变成动作？” | 模型frontend和pipeline |
-| “这个矩阵乘为什么快／慢？” | 具体算子绑定、shape、执行次数和测量 |
-
-一开始就钻进CUDA kernel，容易不知道它在整个请求里执行了几次、输入从哪里来、输出是否已经做过积分。
-先理解数据流，再向下追算子，效率更高。
-
-### 1.3 最重要的几个名词
-
-| 名词 | 在这里的含义 |
-|---|---|
-| observation | 调用方提供的一次观测；各模型的字段和预处理不同 |
-| frontend | 模型与框架／checkpoint的适配器，不是网页前端 |
-| pipeline | 把模型的实际算子和缓冲区组织成推理过程 |
-| prefix／condition | 当前请求中基本不随去噪步变化的图像／语言等条件 |
-| KV cache | 条件侧attention的K/V结果，供本请求后续评估复用 |
-| latent／state `x` | 正在迭代更新的动作变量；不要和机器人观测state混淆 |
-| raw velocity | 模型在当前latent和时间上的速度预测，尚未完成积分 |
-| sampler | 决定何时评估速度、评估几次，以及如何更新latent |
-| NFE | Neural Function Evaluations，实际神经速度评估次数 |
-| graph capture／replay | 记录并重放一段GPU执行图，不等于缓存输出答案 |
-| quality scope | 当前质量指标究竟评价哪些动作域、通道和参考点 |
-
-<a id="layers"></a>
-## 2. 分层与目录地图
-
-### 2.1 建议按这五层看
-
-```text
-实验层       flash_rt/vla/autotune/
-              controller、ledger、worker、batch、quality、search
-                    │
-统一执行层   flash_rt/vla/
-              config、registry、backend、processing、resources
-                    │
-模型适配层   flash_rt/frontends/torch/ 或 frontends/jax/
-              checkpoint、输入、prompt、模型专有配置
-                    │
-计算组织层   flash_rt/models/<model>/ + flash_rt/sampling/
-              prefix、raw velocity、采样、graph、buffer
-                    │
-算子层       flash_rt/core/、csrc/、已安装的CUDA扩展、Torch后端
-```
-
-### 2.2 先读的小文件
-
-| 文件 | 你要从中理解什么 |
-|---|---|
-| [`vla/config.py`](../flash_rt/vla/config.py) | 一份执行配置包含哪些维度，哪些组合在创建时就拒绝 |
-| [`vla/registry.py`](../flash_rt/vla/registry.py) | 模型ID如何映射到frontend、精度和硬件检查 |
-| [`vla/backend.py`](../flash_rt/vla/backend.py) | `prepare → infer → close`的公共生命周期 |
-| [`vla/processing.py`](../flash_rt/vla/processing.py) | checkpoint声明的动作反归一化如何被遵守 |
-| [`sampling/probeflow.py`](../flash_rt/sampling/probeflow.py) | 不依赖GPU的ProbeFlow配置、路由和数值参考 |
-| [`sampling/torch_probeflow.py`](../flash_rt/sampling/torch_probeflow.py) | 模型速度回调与实际latent更新之间的接口 |
-
-大frontend通常混有checkpoint转换、量化、CFG、批处理等多个模式。
-第一次阅读不必逐行读完，先顺着本次配置实际走的分支。
-
-### 2.3 `backend`、`framework`和`hardware`不是同一个开关
-
-以 `BackendConfig` 为例：
-
-| 字段 | 回答的问题 | 需要注意 |
+| 层 | 目录 | 负责什么 |
 |---|---|---|
-| `model` | 哪个模型家族？ | `pi0.5`会规范化为`pi05` |
-| `backend` | 选择哪种执行实现？ | 当前只有FastWAM额外接受`torch`，不是所有模型都可随意切换 |
-| `framework` | 使用哪种frontend／权重加载生态？ | Pi的`jax`路径不意味着整个模型在XLA里执行 |
-| `hardware` | 预期目标GPU是什么？ | 实际加载时核对真实compute capability，不能用字符串假装架构 |
-| `precision` | 统一接口约定的模型精度是什么？ | 不是承诺每个中间操作都采用同一dtype |
-| `sampler` | 固定Euler还是自适应ProbeFlow？ | 不改变它们应调用的模型专有速度head |
-| `options` | 模型特有选项是什么？ | 支持集合由registry限制，不能任意塞frontend隐藏开关 |
+| 实验层 | `flash_rt/vla/autotune/` | 候选配置、计时、误差比较、结果记录 |
+| 统一接口 | `flash_rt/vla/` | 配置、模型注册、调用流程、动作还原 |
+| 模型适配 | `flash_rt/frontends/torch/`、`frontends/jax/` | 读 checkpoint，预处理输入 |
+| 计算组织 | `flash_rt/models/<模型>/`、`flash_rt/sampling/` | prefix、速度计算、采样、CUDA Graph、显存 buffer |
+| 算子 | `flash_rt/core/`、`csrc/` | CUDA Graph 封装、GEMM、attention 等 |
 
-两个尤其容易误解的地方：
+第一次读先看下面几个小文件，每个都在 210 行以内：
 
-- `framework="torch"`不等于`backend="torch"`。Hy可以由Torch frontend执行，配置标签仍为`flashrt`。
-- `backend="flashrt"`不等于“所有算子都是手写CUDA”。FastWAM是明确标注的**部分原生Linear替换**，Hy的当前BF16路径也包含大量Torch算子。
+| 文件 | 看什么 |
+|---|---|
+| [`vla/config.py`](../flash_rt/vla/config.py) | 配置有哪些字段，哪些组合直接报错 |
+| [`vla/registry.py`](../flash_rt/vla/registry.py) | 模型名怎么对应到 frontend，加载前检查什么 |
+| [`vla/backend.py`](../flash_rt/vla/backend.py) | `prepare → infer → close` 的流程 |
+| [`vla/processing.py`](../flash_rt/vla/processing.py) | 模型输出的归一化动作怎么还原 |
+| [`sampling/probeflow.py`](../flash_rt/sampling/probeflow.py) | ProbeFlow 选步数的逻辑，纯 NumPy，CPU 能跑 |
+| [`sampling/torch_probeflow.py`](../flash_rt/sampling/torch_probeflow.py) | 采样器怎么调用模型、怎么累加 |
+
+frontend 文件通常很大，混着权重转换、量化、CFG、批处理等多种模式。第一次读只跟着当前配置实际走的那条分支看。
+
+### 1.3 常用名词
+
+| 名词 | 含义 |
+|---|---|
+| observation | 一次观测，包括图像和机器人 state。四个模型的字段不完全一样 |
+| frontend | 模型适配器，负责读权重和预处理输入，不是网页前端 |
+| pipeline | 把模型的算子和显存 buffer 组织成完整的推理过程 |
+| prefix | π0、π0.5、Hy 里图像 token 加文本 token 组成的输入前缀，每次推理只算一遍 |
+| KV cache | 条件部分每层 self-attention 的 K 和 V，去噪的每一步都会读。FastWAM 里只有首帧图像 |
+| cross-attention | 一组 token 去读另一组 token 的 attention。FastWAM 的文本和 state 就是这样进入模型的 |
+| 动作变量 x | 从噪声开始、被采样器逐步更新的动作。注意和机器人 state 区分 |
+| 速度 v | 模型在当前 x 和时间 t 下的输出，表示 x 该往哪个方向走 |
+| 采样器 | 决定在哪些时间点调用模型、怎么把速度累加到 x 上。这里有 Euler 和 ProbeFlow 两种 |
+| 模型调用次数 | 一次推理里调用模型算速度的次数，代码里的字段叫 `nfe` |
+| CUDA Graph | 把一段 GPU 计算录制一次，之后整段重放，省掉 CPU 逐个下发 kernel 的开销 |
 
 <a id="configuration"></a>
-## 3. 配置、描述和加载：三个不同阶段
+## 二、配置、描述和加载
 
-### 3.1 `BackendConfig`只是执行意图
+这是三个阶段：创建配置只检查参数组合；描述只返回信息；加载才真正读权重、上 GPU。
 
-创建配置会规范模型名并检查基本组合，例如：
+### 2.1 配置字段
 
-- Euler不能同时带一份ProbeFlow配置。
-- ProbeFlow不能用`num_steps`表达自适应预算；应使用`probeflow.max_steps`。
-- 当前统一接口不接受任意量化精度。
+[`BackendConfig`](../flash_rt/vla/config.py) 的字段：
 
-但**配置成功不等于checkpoint存在、依赖齐全、所有模型专有参数和GPU都兼容**。
-后面还有registry和frontend层的检查。
+| 字段 | 含义 | 取值 |
+|---|---|---|
+| `model` | 模型 | `pi0`、`pi05`（也可以写 `pi0.5`）、`hyvla`、`fastwam` |
+| `checkpoint` | 本地权重目录 | 路径 |
+| `backend` | 执行实现 | 默认 `flashrt`；只有 FastWAM 还能选 `torch`（全部用上游原版算子） |
+| `framework` | frontend 用哪套权重加载方式 | `torch`；π0、π0.5 还可以选 `jax` |
+| `hardware` | 目标 GPU | `auto` 或 `cuda_sm80` 等；加载时会读真实 GPU 核对 |
+| `precision` | 模型精度 | 一般写 `auto`：π0 是 FP16，其余三个是 BF16 |
+| `sampler` | 采样器 | `euler` 或 `probeflow` |
+| `num_steps` | Euler 步数 | 正整数；ProbeFlow 不用这个字段 |
+| `probeflow` | ProbeFlow 参数 | `ProbeFlowConfig`，步数上限写在 `max_steps` 里 |
+| `options` | 模型专有选项 | 每个模型允许哪些选项，在 `registry.py` 里列出，多写一个就报错 |
 
-### 3.2 CPU示例：看描述，不加载模型
+创建配置时会直接拒绝这几种组合：Euler 带 ProbeFlow 参数；ProbeFlow 用 `num_steps` 设步数；`precision` 不是 `auto`/`fp16`/`bf16`。checkpoint 在不在、GPU 对不对，要到加载时才检查。
+
+`framework` 和 `backend` 这两个字段最容易混，下一节单独讲。
+
+### 2.2 frontend、pipeline、framework、backend 各管什么
+
+先说一个容易混的地方："backend"这个词在仓库里有三个意思：
+
+1. **统一后端**：`flash_rt.vla` 和 `VLABackend`，也就是最外层的调用接口。
+2. **配置字段 `backend`**：选模型计算用谁的实现。本节讲的是这个。
+3. **SDPA 后端**：Flash、Efficient、Math 这些 attention kernel，见 6.3。
+
+**一次推理里谁做什么**（以 Hy 为例）：
+
+| 步骤 | 谁做 | Hy 的代码 |
+|---|---|---|
+| 统一调用方式，管理 prompt，传 noise，整理返回格式 | `VLABackend` | `vla/backend.py` |
+| 读 `config.json` 和权重文件 | frontend | `hyvla_thor.py` 的 `_load_weights` |
+| 图像 resize、pad、归一化；分词；state 补零；拼 prefix；算 mask 和 RoPE | frontend | `_preprocess_images`、`_assemble_prefix`、`_make_att_2d` |
+| 录 CUDA Graph，把输入拷进 buffer，调用采样器 | frontend | `hyvla_probeflow.py` 的 `_graph_forward`、`_sample_latent` |
+| ViT、merger、VLM、action expert 的实际计算 | pipeline | `pipeline_thor.py` |
+| 最底层的矩阵乘和 attention | 算子 | `F.linear`、SDPA |
+
+frontend 负责"把输入整理成模型能用的样子，并组织整次推理"，pipeline 负责"模型本身的计算"。这个仓库里 frontend 管得比名字暗示的多，录 graph、调用采样器都在它里面。
+
+**`framework`：用哪套代码读权重。**π0 的 `torch` 版读 PyTorch safetensors；`jax` 版读 openpi 原版的 Orbax checkpoint，先转成一样的 FP16 Torch tensor，之后直接继承 Torch 版的全部代码，用同一个 `Pi0Pipeline`、同一套 CUDA kernel。所以 `framework="jax"` 只是换了读权重的方式，并不会用 JAX 推理。π0.5 同理。
+
+**`backend`：模型计算用谁的实现。**
+
+| 模型 | `framework` 可选 | `backend` 可选 | `backend="flashrt"` 实际是什么 |
+|---|---|---|---|
+| π0 | torch、jax | flashrt | FlashRT 原生 CUDA kernel，FP16 |
+| π0.5 | torch、jax | flashrt | FlashRT 原生 CUDA kernel，BF16 |
+| Hy | torch | flashrt | FlashRT 照着官方模型重写的 `pipeline_thor.py`，不调用官方代码；由 Torch 算子加 CUDA Graph 组成 |
+| FastWAM | torch | flashrt、torch | `flashrt` 是上游代码，只把 Linear 换成原生 GEMM；`torch` 是上游代码原样运行 |
+
+所以"Hy 用 Torch frontend，`backend` 仍然是 `flashrt`"的意思是：Hy 读权重和预处理的代码是用 PyTorch 写的；模型计算用的是 FlashRT 自己重写的版本，而这个版本内部恰好也由 Torch 算子组成。这里"Torch"出现了两次，含义不同：前一个指代码用什么框架写，后一个是 FastWAM 才有的 `backend="torch"`，意思是上游代码原样运行。
+
+### 2.3 只看描述，不加载模型
 
 ```python
 # CPU_DEMO: describe
@@ -180,45 +172,48 @@ assert "torch" not in sys.modules
 print(description["action_domain"])
 ```
 
-这里的路径是占位符，没有读取checkpoint。`runtime_verified=False`是刻意提醒：**这是描述，不是认证结果**。
+路径是占位符，不会去读。`describe_backend` 不读权重，连 Torch 都不 import。`runtime_verified=False` 表示这只是描述，还没真正跑过。
 
-还可以在源码目录执行：
+命令行也能看描述，默认就是描述模式：
 
 ```bash
-python -m flash_rt.vla --model hyvla --checkpoint /local/checkpoint-placeholder \
-    --hardware cuda_sm80 --sampler euler --num-steps 10
+python -m flash_rt.vla --model hyvla --checkpoint /local/checkpoint-placeholder --hardware cuda_sm80 --sampler euler --num-steps 10
 ```
 
-这个CLI默认就是描述模式，不能把它打印JSON的耗时当作模型推理延迟。
+### 2.4 `load_backend` 才真正加载
 
-### 3.3 `load_backend`才进入实际加载
-
-[`registry.load_backend`](../flash_rt/vla/registry.py)大致执行：
+[`registry.load_backend`](../flash_rt/vla/registry.py) 的流程：
 
 ```text
-检查framework／precision／options
-  → 按需要读取Pi动作processor
-  → 检查真实CUDA设备和hardware
-  → 选择frontend类与构造参数
-  → 加载模型／分配资源
-  → 包成VLABackend
+检查 framework、precision、options
+  → π0 / π0.5：读 checkpoint 里的动作还原配置
+  → 读真实 GPU 型号，和 hardware 核对
+  → 选 frontend 类和构造参数
+  → 加载模型、分配显存
+  → 包成 VLABackend 返回
 ```
 
-动态导入的目的之一，是让只描述候选的工具不必先加载每个模型的Torch、tokenizer、扩展和GPU状态。
+各模型对应的 frontend：
 
-`flash_rt.load_model`是项目原来的一般模型入口；本文追踪的是专门的
-`flash_rt.vla.load_backend`。不要认为两者的参数和分发行为可以直接互换。
+| 模型 | frontend 类 | 文件 |
+|---|---|---|
+| π0 | `Pi0TorchFrontendRtx` / `Pi0JaxFrontendRtx` | `frontends/torch/pi0_rtx.py` 等 |
+| π0.5 | `Pi05TorchFrontendRtx` / `Pi05JaxFrontendRtx` | `frontends/torch/pi05_rtx.py` 等 |
+| Hy | `HyVLAFlowFrontend` | `frontends/torch/hyvla_probeflow.py` |
+| FastWAM | `FastWAMTorchFrontend` | `frontends/torch/fastwam.py` |
+
+frontend 是按需 `import` 的，所以只做描述的工具不用先装好每个模型的 Torch、tokenizer 和扩展。
+
+另外，`flash_rt.load_model` 是项目原有的通用入口，本文讲的是 `flash_rt.vla.load_backend`，两者参数不同。
 
 <a id="request"></a>
-## 4. 跟踪一次完整推理
+## 三、跟踪一次完整推理
 
-### 4.1 公共调用的骨架
+### 3.1 调用示例
 
-下面是GPU用法的**接口示意**，本次文档工作不执行这段代码。
-需要已有权重、依赖和合法GPU计算环境；在当前集群上，模型计算必须位于分配到的Slurm compute step。
+下面的代码需要 GPU 和真实权重。在集群上要放到 Slurm 分配的计算节点里跑。
 
 ```python
-# GPU_EXAMPLE: interface sketch only; not executed for this document
 import numpy as np
 from flash_rt.vla import BackendConfig, load_backend
 
@@ -228,8 +223,8 @@ config = BackendConfig(
     options={"use_cuda_graph": True, "numerical_profile": "semantic_bf16"},
 )
 
-# 只用于说明当前三相机、六帧fixture的形状；应换成真实代表性输入。
-# 列表顺序必须对应checkpoint相机顺序，不能随意交换左右相机。
+# 形状对应当前 Hy 的测试输入：3 个相机，每个相机 6 帧历史。
+# 列表顺序要和 checkpoint 里的相机顺序一致。
 observation = {
     "images": [np.zeros((6, 480, 640, 3), dtype=np.uint8) for _ in range(3)],
     "state": np.zeros(20, dtype=np.float32),
@@ -239,110 +234,86 @@ noise = np.zeros((40, 32), dtype=np.float32)
 with load_backend(config) as backend:
     backend.prepare(observation, prompt="pick up the object")
     result = backend.infer(observation, noise=noise)
-    print(result["actions"].shape)  # 当前Hy统一infer路径：(40, 32)
-    print(result["sampler_metadata"])
+    print(result["actions"].shape)      # (40, 32)
+    print(result["sampler_metadata"])   # 采样器、步数、模型调用次数等
 ```
 
-零图像／零噪声不是机器人任务样本，也不是合适的质量或性能代表集。
-输入形状正确只说明接口可能接受，不说明模型行为合理。
+全零图像只用来说明形状。测速度和误差要用真实的测试输入。
 
-### 4.2 `prepare()`不是空操作
+### 3.2 `prepare()` 做了什么
 
-读 [`VLABackend.prepare`](../flash_rt/vla/backend.py) 时分两步看：
+看 [`VLABackend.prepare`](../flash_rt/vla/backend.py)：
 
-1. `_prepare`确定有效prompt，必要时调用`set_prompt`，并处理模型的校准准备。
-2. 若frontend没有独立`calibrate_with_real_data`接口，显式`prepare`会执行一次完整请求并丢弃其结果，以真正准备运行路径。
+1. 选定 prompt，必要时调用 `set_prompt`（分词、编码文本）。
+2. π0 和 π0.5 有 `calibrate_with_real_data`（JAX 版继承自 Torch 版），用这次的 observation 做校准。
+3. Hy 和 FastWAM 没有校准入口，`prepare` 会直接跑一次完整推理并丢掉结果，触发 warmup 和 CUDA Graph 录制。
 
-所以：
+所以 `prepare` 会真的上 GPU 计算。之后 `infer` 遇到 prompt 变了，还会再更新一次。
 
-- `prepare`可能触发tokenization、模型计算、warmup和graph准备，不能在CPU dry-run中随便调用。
-- 它和正式测量的`infer`不是同一个概念。
-- 后续`infer`仍会检查prompt／状态等变化；不是调用过一次`prepare`后所有输入都可无条件复用。
-
-### 4.3 `infer()`里的统一层在做什么
-
-主要链路是：
+### 3.3 `infer()` 做了什么
 
 ```text
 VLABackend.infer
-  ├─ 持有实例锁，检查实例未关闭
-  ├─ _prepare：选择prompt，按需更新模型准备状态
-  ├─ _invoke：整理prompt／noise，调用frontend.infer
-  ├─ 按checkpoint需要修正actions解码
-  ├─ 检查／补充sampler metadata
-  └─ 加入backend metadata，返回结果
+  ├─ 加实例锁，检查实例没有关闭
+  ├─ _prepare：选 prompt，需要时更新
+  ├─ _invoke：整理 prompt 和 noise，调用 frontend.infer
+  ├─ π0 / π0.5：按 checkpoint 配置把 raw_actions 还原成 actions
+  ├─ 检查或补上 sampler_metadata
+  └─ 加上 backend_metadata，返回
 ```
 
-注意`_invoke`有一个很实用的适配：
+`_invoke` 处理了一个历史差异：π0、π0.5、FastWAM 的 `frontend.infer` 有 `noise=` 参数，Hy 则从 observation 里读 noise。`_invoke` 会检查函数签名，有参数就用参数传，没有就放进 observation 的副本里。调用方两处都给 noise 会直接报错。这样外面始终用同一种写法调用。
 
-- frontend若接受`noise=`关键字，就用该参数传递。
-- frontend若从observation里读noise，就把它放进一份浅拷贝的observation。
-- 两处重复提供noise会拒绝，避免不知道哪份实际生效。
+### 3.4 同一个 prompt 为什么也可能要重新处理
 
-这让Pi和Hy不同的历史接口，可以在外部保持同一个调用方式。
+π0.5 可以把 state 编码进 prompt 文本，所以 prompt 字符串没变、state 变了，也要重新 `set_prompt`。统一后端对 π0.5 会额外比较 state。
 
-### 4.4 为什么同一个prompt字符串也可能需要更新
+Hy 的 state 进入 action expert，不在 prompt 里，所以不需要这一步。
 
-π0.5可以把state编码进prompt，所以只缓存字符串会错。
-统一后端对π0.5还比较state是否变化，必要时重新调用`set_prompt`。
-
-但Hy的state主要进入动作侧，不把“传入了state参数”都理解成state-in-prompt。
-这正是统一接口不能抹掉模型差异的一个例子。
-
-### 4.5 一次请求内部的计算
-
-可以先用这个简化图理解，再去对应每个模型：
+### 3.5 一次推理在 GPU 上做了什么
 
 ```text
-图像／文本／机器人观测state
+图像 / 文本 / 机器人 state
             │
             ▼
-条件预处理与视觉／语言编码
+图像预处理，视觉编码，文本 embedding
             │
             ▼
-prefix／video KV prefill ───────────────┐
-                                      │ 本请求固定条件
-初始noise → latent x0                  │
-                │                     │
-                ├─ evaluate(x0,t0) ◀───┤
-                ├─ 更新x1             │
-                ├─ evaluate(x1,t1) ◀───┤
-                ├─ ...                │
-                └─ 最终动作latent     │
-                         │            │
-                         ▼            │
-              CPU动作／可选解码         │
+prefix 前向，写入每层 KV cache ─────────┐
+                                       │ 本次推理固定不变
+初始噪声 → x0                           │
+            │                          │
+            ├─ 算速度 v(x0, t0) ◀───────┤
+            ├─ 更新得到 x1             │
+            ├─ 算速度 v(x1, t1) ◀───────┤
+            ├─ ...                     │
+            └─ 最终动作                 │
+                    │
+                    ▼
+            拷回 CPU，按需还原
 ```
 
-一次`infer`往往包含多次神经网络速度评估，**不是一次矩阵乘，也不是一次Transformer forward就结束**。
+一次 `infer` = 一次 prefix + N 次速度计算。N 就是模型调用次数。
+
+这张图是 π0、π0.5、Hy 的情况。FastWAM 有一处不同：KV cache 里只有首帧图像，文本和 state 不在里面，而是每一步、每一层通过 cross-attention 重新读入，见 6.4。
 
 <a id="contracts"></a>
-## 5. 读懂输入、噪声和输出
+## 四、输入和输出
 
-### 5.1 “统一接口”不意味着“统一机器人预处理”
+### 4.1 四个模型的输入输出
 
-后端不自动猜测：
-
-- 摄像头语义及排列顺序；
-- state是原始单位还是已归一化；
-- 历史帧如何采样、补齐和排序；
-- 左右手、关节、旋转、夹爪等动作协议；
-- 某个数据集的归一化统计是否适合另一台机器人。
-
-这些必须由checkpoint和调用方明确。**shape相同也可能语义完全不同。**
-
-### 5.2 四条路径的边界对照
-
-| 模型 | 主要输入边界 | 输出边界 |
+| 模型 | 输入 | 输出 |
 |---|---|---|
-| π0 | 现有Pi图像／连续state／prompt契约；显式初始noise | `raw_actions`通常是`[chunk,32]`；公开actions按frontend／checkpoint processor解码，当前LIBERO场景常为7维 |
-| π0.5 | 图像／prompt，state可能进入prompt；显式noise | 同样区分normalized raw与解码后的公开actions，不保证所有checkpoint都固定public7 |
-| Hy | 当前fixture为三相机六帧uint8历史、20维归一化state、`[40,32]`noise；frontend做resize／pad等 | 统一`infer`给normalized padded `[40,32]`；直接`predict_actions`仍有batch维`[1,40,32]` |
-| FastWAM | first-frame输入图像、预计算T5 context／mask、normalized proprio及`[1,H,A]`noise | normalized batched `[1,H,A]`；`H/A`须符合实际checkpoint配置 |
+| π0 | 图像、连续 state、prompt、初始噪声 | `raw_actions` 是 `[chunk, 32]`；`actions` 按 checkpoint 还原，LIBERO 上是 7 维 |
+| π0.5 | 图像、prompt（state 可编码进 prompt）、初始噪声 | 同 π0 |
+| Hy | 3 个相机 × 6 帧 uint8 历史图像、20 维归一化 state（补零到 32 维）、`[40, 32]` 噪声 | 归一化的 `[40, 32]`，前 20 维是有效动作 |
+| FastWAM | 首帧图像、预先算好的 T5 文本 embedding 和 mask、归一化 proprio（编码成 1 个 token 拼在文本后面）、`[1, H, A]` 噪声 | 归一化的 `[1, H, A]`，H、A 由 checkpoint 配置决定 |
 
-Hy的40／32／20以及Pi的public7是当前模型／fixture的具体约定，不是所有VLA的通用常量。
+Hy 的 40、32、20 和 π0 的 7 维都来自具体 checkpoint 的 `config.json`，换模型要重新看。
 
-### 5.3 `actions`不一定已经是机器人指令
+后端不替调用方处理这些事：相机顺序、state 有没有归一化、历史帧怎么取和补齐、动作的单位和含义。这些由 checkpoint 和调用方决定。
+
+### 4.2 actions 怎么从模型输出还原
 
 先看这几个字段：
 
@@ -353,16 +324,12 @@ result["backend_metadata"]["action_domain"]
 result["backend_metadata"].get("action_processor")
 ```
 
-[`processing.py`](../flash_rt/vla/processing.py)的意义尤其容易漏掉：
+[`processing.py`](../flash_rt/vla/processing.py) 的规则：
 
-- 若Pi checkpoint声明了`policy_postprocessor.json`，统一层遵守它声明的ACTION模式。
-- `MEAN_STD`意味着按mean/std还原；不能因为同一目录也存着q01/q99，就擅自改用quantiles。
-- 没有该声明文件时，保留原frontend／OpenPI／Orbax的既有契约。
+- π0、π0.5 的 checkpoint 里如果有 `policy_postprocessor.json`，就按它声明的方式还原。比如声明了 `MEAN_STD`，就用 mean 和 std 还原，目录里同时存着 q01/q99 也不用。
+- 没有这个文件时，保持原 frontend 的做法（按分位数还原）。
 
-解码是模型输出契约的一部分，不是无关紧要的显示格式。
-但即使完成checkpoint解码，也仍要核对真实机器人的单位、限位和安全协议。
-
-### 5.4 CPU例子：normalized动作和解码动作不是一个数组
+还原方式是模型输出约定的一部分，用错了动作数值就是错的。
 
 ```python
 # CPU_DEMO: decode
@@ -372,7 +339,7 @@ from flash_rt.vla.processing import ActionDecoder
 decoder = ActionDecoder(
     mode="MEAN_STD", dimension=2,
     first=np.array([10., 20.], dtype=np.float32),  # mean
-    second=np.array([2., 4.], dtype=np.float32),  # std
+    second=np.array([2., 4.], dtype=np.float32),   # std
     eps=1e-8,
 )
 raw = np.array([[0.5, -0.5, 99.]], dtype=np.float32)
@@ -382,50 +349,45 @@ assert raw.tolist() == [[0.5, -0.5, 99.]]
 print(decoded)
 ```
 
-这里第3个通道没有被声明为公开动作，所以没有进入解码输出。
-这只是数学示例，mean/std不是某台真实机器人的统计值。
+第 3 个通道不在声明的 2 维动作里，所以没有出现在还原结果中。原数组也没有被改。
 
 <a id="sampling"></a>
-## 6. Euler与ProbeFlow：模型计算和积分必须分开
+## 五、去噪采样：Euler 和 ProbeFlow
 
-### 6.1 三个变量不要混用
+### 5.1 三个量
 
-- 机器人观测state：作为模型条件输入。
-- 动作latent `x`：从noise开始，采样器逐步更新。
-- 模型时间`t`：告诉模型当前去噪阶段。
+- **机器人 state**：模型的条件输入。
+- **动作变量 x**：从噪声开始，被采样器逐步更新。
+- **时间 t**：从 1 走到 0，告诉模型现在处于去噪的哪个阶段。
 
-连续时间模型可以记成速度场`v_theta(x,t;condition)`。
-模型评估返回速度，不应在这个接口里偷偷完成整段采样。
+模型就是一个速度函数 `v(x, t)`：给定当前 x 和 t，输出 x 该往哪走。pipeline 只负责算 v，积分交给采样器。
 
-### 6.2 为什么实现里经常看到负号
+### 5.2 Euler N 和负号
 
-模型时间从1走向0。直接写Euler可以是：
-
-```text
-x_next = x + (t_next - t) * v_theta(x,t)
-```
-
-本仓库共享采样器换成正向进度`s=1-t`，令`u=-v_theta`：
+时间从 1 走到 0，Euler 更新写成：
 
 ```text
-x_next = x + delta_s * u(x, 1-s)
+x_next = x + (t_next − t) × v(x, t)
 ```
 
-二者可以描述同一个更新。关键不是哪个符号“看着自然”，而是**负号和步长只能应用一次**。
+共享采样器换成"进度" `s = 1 − t`（从 0 走到 1），并令 `u = −v`：
 
-尤其注意两份参考接口并不一样：
+```text
+x_next = x + Δs × u
+```
 
-| 接口 | 回调提供什么 |
+两种写法是同一个更新。读代码时盯住一点：负号和步长都只能乘一次。
+
+两个参考实现对负号的约定不一样：
+
+| 函数 | 回调返回什么 |
 |---|---|
-| NumPy `sample_probeflow(noise, velocity, ...)` | `velocity(x,t)`返回模型时间速度`v_theta`，函数内部取负 |
-| Torch `sample_probeflow_torch_(state, evaluate, ...)` | `evaluate(t)`已经返回进度速度`-v_theta`，函数不再替你取负 |
+| NumPy `sample_probeflow(noise, velocity, ...)` | `velocity(x, t)` 返回 v，函数内部取负 |
+| Torch `sample_probeflow_torch_(state, evaluate, ...)` | `evaluate(t)` 已经返回 −v，函数不再取负 |
 
-把一个接口的回调原样接到另一个接口，可能多取或少取一次负号。
+把一个接口的回调直接接到另一个上，就会多取或少取一次负号。Hy 的 `_velocity_body` 就是先把模型输出拷到 FP32 buffer，再取一次负，交给 Torch 采样器。
 
-### 6.3 Euler的N步是什么
-
-固定Euler使用预先确定的时间表，每步评估一次、更新一次。
-理想化均匀进度写法是：
+Euler N 的均匀写法：
 
 ```text
 for i in 0..N-1:
@@ -433,495 +395,568 @@ for i in 0..N-1:
     x += u / N
 ```
 
-但源码中步长可能被折入投影权重、某个GEMM的缩放参数，或者按模型原有表达式计算。
-因此修改`N`不能只缩短循环，还要检查时间embedding、输出scale和积分是否同步改变。
+源码里步长有时被乘进了别的地方。π0 原生 Euler 把 −1/N 直接乘进输出层的矩阵乘；接 ProbeFlow 时要改成只输出速度（系数 −1），积分交给外部采样器。所以改 N 时，要同时检查时间 embedding、输出缩放和积分是不是一起变了。
 
-π0的转换函数明确区分Euler的`-1/N`与ProbeFlow的`-1`，避免从已经舍入的Euler投影倒推出raw velocity。
+### 5.3 ProbeFlow（PF）
 
-### 6.4 ProbeFlow在这里怎样选预算
+PF 是一种自适应步数的采样器（[arXiv 2603.17850](https://arxiv.org/html/2603.17850v3)）。思路是先花两次模型调用探路：轨迹直就少走步，弯就多走步。
 
-共享实现的主要步骤是：
+1. 在起点（纯噪声）调用模型，得到 v1。
+2. 沿 v1 走到 `probe_horizon`（默认 0.5），再调用一次，得到 v2。
+3. 弯曲度 = 1 − cosine(v1, v2)。两次方向越一致，越接近 0。
+4. 按弯曲度选步数（`select_schedule`）：
+   - 弯曲度为 0，或 `max_steps` 本身就是 2：走 2 步。
+   - 弯曲度 ≥ ε × 档位数：直接走满 `max_steps`。
+   - 其他情况：`2 + ⌊弯曲度 / ε⌋ × step_increment`，不超过 `max_steps`。
+5. 选了 2 步就直接用两次探路的结果走完。选了更多步，就从原始噪声重新走：v1 复用，v2 丢掉。
 
-1. 在原始noise处评估第一份速度。
-2. 前进一个probe区间，在预测latent上再评估一次。
-3. 用两份速度的cosine构造启发式曲率信号`1-cosine`。
-4. 结合`epsilon`选择可达的采样步数。
-5. 选2步时复用两次probe；选更密时间表时，从原noise重新起步，复用第一份速度，但丢弃lookahead作为积分步。
+默认参数 ε = 0.008、`max_steps` = 20、`step_increment` = 2，档位数是 ⌈(20 − 2) / 2⌉ = 9：
 
-这不是一个经过认证的ODE误差上界，`epsilon=0.008`也**不等于最终动作允许0.8%误差**。
-采样路由阈值与最终动作质量预算是不同参数。
+| 弯曲度 | 步数 | 模型调用次数 |
+|---:|---:|---:|
+| 0 | 2 | 2 |
+| 0.02 | 2 + 2 × 2 = 6 | 7 |
+| ≥ 0.072 | 20 | 21 |
 
-### 6.5 为什么NFE可能不是scheduled steps
+ε 越小，同样的弯曲度分到的步数越多，结果更准，也更慢。ε 只用来选步数，和后面质量门槛里的 5% 误差是两个参数。
 
-| 分支 | 实际NFE |
+### 5.4 模型调用次数为什么不总等于步数
+
+| 情况 | 模型调用次数 |
 |---|---:|
-| 固定Euler N步 | N |
-| ProbeFlow选择2步 | 2 |
-| ProbeFlow选择密集N步，N>2 | N+1 |
+| Euler N 步 | N |
+| PF 选 2 步 | 2 |
+| PF 选 N 步（N > 2） | N + 1 |
 
-密集分支多出来的一次是用于路由、最后未作为该时间表积分速度使用的lookahead。
-“先probe再重启”不意味着第一份速度也必须重算。
+多出来的那次就是被丢掉的 v2。v1 不用重算。
 
-`probe_horizon=0.5`时，两probe分支对应均匀Euler-2网格；若改成其他horizon，
-两个积分区间并不等长，不能继续简称为同一均匀Euler2。
+还有一个数：预先准备的时间点个数（`config.timesteps()`）。它是所有可能步数用到的时间点的并集，决定要预先算多少个时间 embedding、录多少张速度 graph。默认 PF 参数下是 64 个时间点，所以 Hy 用默认 PF 时会录 64 张速度 graph。这个数不是一次推理实际走的步数。
 
-Torch实现会clone第一份probe速度，因为native evaluator可能复用同一scratch输出。
-若只保留一个view，下一次评估可能覆盖“第一份速度”，连路由cosine都会算错。
-这属于缓冲区别名正确性，不是额外追求数值精确。
+两个实现细节：
 
-还有第三个数量：**预先准备的时间表并集长度**。
-它决定可能需要的embedding／graph条目，不是某次请求真正执行的步数。
+- `probe_horizon = 0.5` 时，两步分支正好就是均匀的 Euler2。
+- Torch 实现会 `clone` v1。原生 pipeline 每次把速度写进同一块输出 buffer，不 clone 的话，第二次调用会把 v1 覆盖掉，弯曲度就算错了。
 
-### 6.6 FastWAM还有一个时间坐标映射
+### 5.5 Euler 和 PF 对比
 
-[`ShiftedSigmaSchedule`](../flash_rt/sampling/schedules.py)实现：
+两者都是采样器，只决定在哪些时间点调用模型、怎么把速度累加成动作，模型本身完全不变。
+
+| | Euler N | ProbeFlow（PF） |
+|---|---|---|
+| 步数 | 提前定好，所有输入都一样 | 每个输入自己决定 |
+| 怎么决定 | 人设定 N | 先探路两次，看两次的速度方向差多少 |
+| 模型调用次数 | N | 走 2 步时是 2 次，否则是步数 + 1 |
+| 要调的参数 | N | ε 和 `max_steps` |
+| CUDA Graph | 整条采样路线都能录 | 只能每个时间点单独录，选步数在 graph 外做 |
+
+**为什么要看轨迹弯不弯**：Euler 每一步都是沿当前速度走一段直线。从噪声到动作的真实轨迹如果接近直线，走 2 步就够准；轨迹越弯，步子迈大了越容易偏，就要多走几步。Euler 对所有输入一视同仁，N 只能按最难的输入来定；PF 的想法是简单的输入少走、难的输入多走。
+
+**这一轮实测**，PF 在三个模型上都没有比"挑好步数的 Euler"更快：
+
+| 模型 | Euler | PF | 原因 |
+|---|---|---|---|
+| π0 | Euler2：26.1 ms | 26.7 ms | 上限只有 2 步，没有步数可省，反而多了外部积分的开销 |
+| π0.5 | Euler10：41.9 ms | ε=0.008 时调用 13 次，46.8 ms；ε=0.002 时调用 21 次，60.8 ms | 误差合格了，但 PF 自动加步，比 Euler10 还慢 |
+| FastWAM | Euler13：179.7 ms，误差 4.5% | 默认 ε=0.008（max10）时每个输入都只走 2 步，66.0 ms，相对同引擎 Euler10 误差 26%（job 309097）；ε=0.00006（max20）时调用 13–21 次，200.6 ms，误差 4.6%，P95 262.2 ms | 用 cosine 看，FastWAM 的轨迹显得很直，默认 ε 把每个输入都判成"直"，误差很大；ε 调小到能合格后，有的输入要走满 21 次，中位数和尾延迟都比 Euler13 差 |
+
+FastWAM 这一行里，Euler13 和 ε=0.00006 是同一批 4 个输入、以 Euler20 为参考的对比（job 309386）；ε=0.008 那组来自更早的 job 309097（6 个请求，max10，以 Euler10 为参考）。后来扩大到 12 个输入（job 313779），Euler13 不再合格，FastWAM 退回 Euler20；PF 没有在扩大后的输入上测过。
+
+PF 要发挥作用，前提是不同输入的难度差别很大。在这几个模型上，挑一个合适的固定 N 已经够好。数据来自 [实验记录](vla_autotune_experiments.md)。
+
+### 5.6 FastWAM 的时间映射
+
+[`ShiftedSigmaSchedule`](../flash_rt/sampling/schedules.py)：
 
 ```text
-sigma(u) = shift*u / (1 + (shift-1)*u)
-model_timestep = time_scale * sigma
-action_update = (sigma_next - sigma) * raw_velocity
+sigma(u) = shift × u / (1 + (shift − 1) × u)
+模型输入的时间 = 1000 × sigma
+动作更新 = (sigma_next − sigma) × v
 ```
 
-把模型时间乘以1000，不意味着把动作积分步长也乘1000。
-FastWAM的共享ProbeFlow适配保留逻辑clock作为查表key，但按真实sigma差积分。
-这是一项明确的shifted-grid适配，不是“所有论文默认epsilon都已适用FastWAM”的结论。
+模型输入的时间乘了 1000，积分步长却是 sigma 的差，不乘 1000。PF 用在 FastWAM 上时，用逻辑时间 u 当查表的 key，按真实 sigma 的差积分（`sample_probeflow_torch_` 的 `time_map` 参数）。
 
 <a id="models"></a>
-## 7. 四个模型的适配差异
+## 六、四个模型
 
-### 7.1 π0：连续state token和FP16动作缓冲
+### 6.1 π0
 
-入口：[`frontends/torch/pi0_rtx.py`](../flash_rt/frontends/torch/pi0_rtx.py)。
-计算组织：[`models/pi0/pipeline_rtx.py`](../flash_rt/models/pi0/pipeline_rtx.py)。
-自适应路径：[`pipeline_rtx_probeflow.py`](../flash_rt/models/pi0/pipeline_rtx_probeflow.py)。
+入口 [`frontends/torch/pi0_rtx.py`](../flash_rt/frontends/torch/pi0_rtx.py)，计算在 [`models/pi0/pipeline_rtx.py`](../flash_rt/models/pi0/pipeline_rtx.py)，PF 路径在 [`pipeline_rtx_probeflow.py`](../flash_rt/models/pi0/pipeline_rtx_probeflow.py)。
 
-阅读要点：
+- decoder 的输入是 `[state token; action tokens]`，state token 有自己的 mask。速度和积分只针对 action 部分。
+- 精度是 FP16。原生 pipeline 自己管理 CUDA buffer，Torch 采样器用 `native_float_view` 按 FP16 直接读同一块显存，不拷贝。
+- PF 路径复用 prefix，单独录每个时间点的 decoder graph，只输出速度，不在 decoder 里积分。
 
-- decoder包含`[state token; action tokens]`，state query有自己的mask约束。
-- 输出velocity／积分只针对action部分，不能把state token也当成一个动作步。
-- 这条统一接口采用FP16，不是因为两个dtype都占2字节就能把buffer解释成BF16。
-- native pipeline持有CUDA缓冲区和指针；Torch采样器通过明确dtype的view接入。
-- ProbeFlow复用prefix和单步decoder评估，不把已经执行Euler更新的完整decoder当作raw field。
+### 6.2 π0.5
 
-### 7.2 π0.5：state-in-prompt与AdaRMS时间调制
+入口 [`frontends/torch/pi05_rtx.py`](../flash_rt/frontends/torch/pi05_rtx.py)，计算在 [`models/pi05/pipeline_rtx.py`](../flash_rt/models/pi05/pipeline_rtx.py)，PF 路径在 [`pipeline_rtx_probeflow.py`](../flash_rt/models/pi05/pipeline_rtx_probeflow.py)。
 
-入口：[`frontends/torch/pi05_rtx.py`](../flash_rt/frontends/torch/pi05_rtx.py)。
-计算组织：[`models/pi05/pipeline_rtx.py`](../flash_rt/models/pi05/pipeline_rtx.py)。
-自适应路径：[`pipeline_rtx_probeflow.py`](../flash_rt/models/pi05/pipeline_rtx_probeflow.py)。
+和 π0 的区别：
 
-与π0相比：
+- state 可以编码进 prompt，所以 prompt 缓存要看 state 有没有变。
+- action expert 用 AdaRMS 把时间信息注入每一层，结构和 π0 不同。
+- 统一接口固定走 BF16 非量化路径。registry 会检查 FP8/INT8 相关的环境变量，冲突就报错。
+- PF 路径不支持 RTC、跨帧复用 KV cache、导出原生 runtime，调用这些会直接报错。
+- prefix 有 911 个 token（768 个视觉 + 143 个文本和 state），是耗时的大头，见 9.2。
 
-- state可能编码进prompt，因此prompt cache需要关注state。
-- action expert包含模型专有的时间／AdaRMS调制，不是把π0的head换个名字。
-- 统一后端选择BF16非量化路径；大frontend中其他FP8／FP4／CFG等分支不能自动算进本API支持范围。
-- ProbeFlow当前不支持的RTC、跨帧decode-only复用和runtime export等边界会显式拒绝，不能把所有Euler能力无条件搬过来。
+### 6.3 Hy
 
-文件名里有`rtx`不意味着实际调用可以跳过硬件检查，也不意味着已在所有消费级GPU上验证。
+入口 [`frontends/torch/hyvla_probeflow.py`](../flash_rt/frontends/torch/hyvla_probeflow.py)，输入处理和权重加载继承自 [`hyvla_thor.py`](../flash_rt/frontends/torch/hyvla_thor.py)，BF16 计算在 [`models/hyvla/pipeline_thor.py`](../flash_rt/models/hyvla/pipeline_thor.py)。
 
-### 7.3 Hy：历史视觉、Merger、prefix与动作Expert
-
-入口：[`frontends/torch/hyvla_probeflow.py`](../flash_rt/frontends/torch/hyvla_probeflow.py)，
-继承基础输入／权重逻辑自[`hyvla_thor.py`](../flash_rt/frontends/torch/hyvla_thor.py)。
-主要BF16计算在[`models/hyvla/pipeline_thor.py`](../flash_rt/models/hyvla/pipeline_thor.py)。
-
-按当前三相机／六帧fixture，可以把shape链记为：
+**模型结构和数据形状**（按当前测试输入）：
 
 ```text
-三份 [6,480,640,3] uint8历史
-  → 相机／通道布局整理，resize+pad与归一化
-  → [3,6,3,224,224] BF16
-  → ViT patch：每帧196个token、宽度1152
-  → 空间／时间处理，保留送入Merger的当前帧表示
-  → [3,196,1152]
-  → Merger的投影和2×2池化
-  → [3,49,2048]
-  → 图像特殊token＋语言token，形成完整prefix
-  → prefix排序／mask／RoPE，prefill K/V
-  → state embedding＋多次动作速度评估
-  → FP32动作latent，公开infer返回 [40,32]
+3 个相机 × 6 帧历史图像，每帧 480×640 uint8
+  │ resize + pad 到 224×224，归一化到 [-1, 1]
+  ▼ [3, 6, 3, 224, 224] BF16
+① ViT（27 层，宽 1152）
+  │ 每帧切成 14×14 = 196 个 patch
+  │ 第 3、7、11、15、19、23 层是时空层：同一个 patch 位置沿 6 帧做因果 attention
+  │ 第 23 层之后只保留当前帧，后面几层的计算量降到 1/6
+  ▼ [3, 196, 1152]
+② merger
+  │ PROJ1（1152 → 2048）→ 2×2 加权池化（196 → 49）→ GELU → PROJ2
+  ▼ [3, 49, 2048]，共 147 个视觉 token
+③ 拼 prefix
+  │ 2 个起始 token
+  │ + 每个相机 58 个：vision_start + 7 行 ×（7 个视觉 token + 1 个换行 token）+ vision_end
+  │ + 64 个文本 token
+  │ = 2 + 3 × 58 + 64 = 240 个 token，再按 [视觉 | 文本] 重新排序
+  ▼
+④ VLM（32 层，宽 2048，16 个 Q head、4 个 KV head）
+  │ 视觉 token 和文本 token 各用一套权重，attention 一起算（MoT）
+  │ 只跑一次，产出每层的 KV cache
+  ▼
+⑤ action expert（32 层，宽 1024），每次调用模型：
+  │ 输入：1 个 state token + 40 个动作 token（x 和时间 embedding 融合）
+  │ 每层先读 VLM 同一层的 KV cache，再和自己的 token 一起做 attention
+  ▼ 速度 v：[40, 32]
+采样器累加，Euler10 走 10 步 → 动作 [40, 32]，前 20 维有效
 ```
 
-其中`3×49=147`是这个例子的视觉token数，**不等于整个prefix长度**。
-prefix还包含行分隔、起止token和语言部分。
+几处细节：
 
-`HyVLAFlowFrontend`中的三个函数值得按顺序读：
+- **2×2 加权池化**：把相邻 4 个 patch 合成 1 个。不是简单平均，而是用一个小网络给 4 个 patch 打分，再加权求和。
+- **PROJ1** 就是 merger 的第一个 Linear。之前对齐官方实现时，这里因为 Torch 选了不同的矩阵乘 kernel（`bmm` 和 `mm`）而出现过差异。
+- **147 个视觉 token 不是 prefix 长度**。prefix 还有起止 token、换行 token 和文本，共 240 个。
+- **KV cache 预先扩展成 16 个 head 存放**。mask 和 GQA 同时开启时，Torch 会被迫走慢速的 Math 后端；代码注释记录过这在 Thor（SM110）上端到端约占 41 ms。预先扩展可以绕开。
 
-1. `_prefix_body`：prefill条件K/V，并嵌入机器人state。
-2. `_velocity_body`：调用真实`evaluate_velocity`，把raw速度转换为共享进度速度。
-3. `_sample_latent`：Euler或ProbeFlow负责动作latent更新。
+**代码怎么拆**：`HyVLAFlowFrontend` 里按顺序读这三个函数。
 
-`semantic_bf16`是当前原生路径；`official_local_fp32`是另一条显式局部算术配置。
-后者名字不表示“完整官方模型精确等价”，也不是当前性能优化必须先启用的模式。
+1. `_prefix_body`：跑 VLM，写 KV cache，并把 state 投影成 state token。
+2. `_velocity_body`：调用 `pipe.evaluate_velocity` 算一次速度，转成 FP32 后取负。
+3. `_sample_latent`：Euler 或 PF 负责更新 x。
 
-### 7.4 FastWAM：first-frame video cache与部分native Linear
+**CUDA Graph 分三类**：
 
-入口：[`frontends/torch/fastwam.py`](../flash_rt/frontends/torch/fastwam.py)。
-计算组织：[`models/fastwam/pipeline.py`](../flash_rt/models/fastwam/pipeline.py)。
+| graph | 数量 | 缓存的 key |
+|---|---|---|
+| ViT + merger | 1 张 | （相机数，帧数） |
+| prefix（VLM + state 投影） | 1 张 | （prefix 长度，视觉 token 数，时间表） |
+| 速度 | 每个时间点 1 张，Euler10 是 10 张 | 同上 |
 
-关键调用链：
+积分和 PF 选步数都在 graph 外面做。每次请求先把 prefix embedding、mask、RoPE、state、noise 全部拷进固定 buffer，再重放。prefix 长度变了会重新录一套。
+
+**两种数值配置**（`numerical_profile`）：
+
+| | `semantic_bf16`（默认） | `official_local_fp32` |
+|---|---|---|
+| 权重和矩阵乘 | BF16 | BF16 |
+| RoPE 表、旋转后的 Q/K | BF16 | FP32 |
+| VLM 和 action expert 的 attention | Torch SDPA（Efficient 或 Math） | 按官方写法：FP32 算 QK 和 softmax，概率转 BF16 再乘 V |
+| 时间 embedding | FP64 计算后存成 BF16 | 同样 FP64 计算、存成 BF16，但时间先转成 FP32，和官方一致 |
+| Euler 时间表 | 每步用公式直接算 | FP32 标量每步累减 |
+| Euler 增量 dt × v | FP32 | BF16 |
+| ViT attention | Torch SDPA | 不变 |
+
+`official_local_fp32` 只对齐了上表里这几处局部计算，日常优化用默认的 `semantic_bf16`。
+
+这条 frontend 只允许纯 BF16：FP8、FP4、fused 等开关必须是 `False`，传 `True` 直接报错。也就是说，它没有用到仓库里为 Thor、Orin 做过的量化 kernel。
+
+**Torch SDPA 的四种后端**：数学公式相同，都是 `softmax(QKᵀ/√d)·V`，区别在分块和累加顺序，所以 BF16 下末几位结果不同。
+
+| 后端 | 做法 | Hy 里的用法 |
+|---|---|---|
+| Flash | 分块计算，不生成完整注意力矩阵，最快；不支持任意 mask | ViT 的空间 attention（没有 mask，AUTO 通常选中它） |
+| Efficient | 分块计算，支持任意 mask | VLM 和 action expert 的带 mask attention |
+| cuDNN | NVIDIA 库里的实现 | 没有用 |
+| Math | 先算完整 QKᵀ，再 softmax，再乘 V；最慢、最占显存 | Efficient 用不了时的后备 |
+
+### 6.4 FastWAM
+
+入口 [`frontends/torch/fastwam.py`](../flash_rt/frontends/torch/fastwam.py)，计算在 [`models/fastwam/pipeline.py`](../flash_rt/models/fastwam/pipeline.py)。
 
 ```text
 FastWAMActionPipeline.infer
-  → _initial_state：初始动作noise
+  → _initial_state：初始动作噪声
   → _prepare_condition
-      ├─ 图像VAE编码
+      ├─ proprio 编码成 1 个 token，拼到文本 context 末尾
+      ├─ 首帧图像经 VAE 编码
       ├─ video_expert.prepare
-      └─ mot.prefill_video_cache_tensor
-  → Euler或ProbeFlow
-      └─ _denoise_action_with_video_cache：只评估raw velocity
-  → normalized CPU actions [1,H,A]
+      └─ mot.prefill_video_cache_tensor：video KV cache，只算一次
+  → Euler 或 PF
+      └─ _denoise_action_with_video_cache：每次只算速度
+  → 归一化动作 [1, H, A]，拷回 CPU
 ```
 
-这一适配不调用上游完整`infer_action`来冒充一次速度评估。
-加载器需要已有上游源码、resolved model config、完整训练checkpoint和本地VAE；
-通常由调用方提供预计算T5 context／mask，不在这条本地加载路径中下载或加载T5。
+**条件怎么进入模型**：FastWAM 的主干是 Wan 风格的 DiT，分 video expert 和 action expert 两部分。它和 π、Hy 最大的区别是，文本不和图像 token 一起做 self-attention，而是在每一层通过 cross-attention 读入。
 
-`backend="torch"`和`backend="flashrt"`共用这条first-frame采样组织。
-前者不是独立的上游sampler oracle；后者把受支持的活跃Linear模块换成原生GEMM。
-VAE、attention、norm、激活等仍有上游Torch计算，不能称为完整原生移植。
+```text
+文本 context（T5 embedding + 1 个 proprio token）
+   │ cross-attention（每层都读）               │ cross-attention（每一步、每层都读）
+   ▼                                          ▼
+首帧图像 → VAE → video expert 各层 ──► 每层 self-attention 的 K、V（video KV cache，算一次）
+                                              │
+动作 x + 时间 t → action expert 各层 ──────────┘ self-attention 时把自己的 K、V 拼在 video cache 后面
+                                              ▼
+                                           速度 v
+```
+
+- **图像，算一次**：`prefill_video_cache_tensor` 把首帧的 video token 跑完 video expert 的每一层，存下每层 self-attention 的 K、V。之后 action expert 每层做 self-attention 时，把自己的 K、V 拼在 video cache 后面。这部分和 π、Hy 的 KV cache 是同一个思路。
+- **文本和 state，每步都算**：每次调用 `_denoise_action_with_video_cache`，`action_expert.prepare` 都会重新跑一遍 `text_embedding(context)`（两个 Linear 加 GELU），每一层的 cross-attention 也都重新从 context 算 K、V。
+- **T5 一次都不跑**：文本 embedding 由调用方提前算好传进来，加载时不加载 T5。
+
+上游代码（[FastWAM](https://github.com/yuantianyuan01/FastWAM) commit `7faa711`）里对应的位置：
+
+| 做什么 | 位置 |
+|---|---|
+| proprio 拼到文本后面 | [`fastwam.py:224` `_append_proprio_to_context`](https://github.com/yuantianyuan01/FastWAM/blob/7faa71108368fbb3b6885649f112af607427a2d4/src/fastwam/models/wan22/fastwam.py#L224) |
+| 一次速度计算 | [`fastwam.py:703` `_denoise_action_with_video_cache`](https://github.com/yuantianyuan01/FastWAM/blob/7faa71108368fbb3b6885649f112af607427a2d4/src/fastwam/models/wan22/fastwam.py#L703) |
+| 写 video KV cache | [`mot.py:474` `prefill_video_cache_tensor`](https://github.com/yuantianyuan01/FastWAM/blob/7faa71108368fbb3b6885649f112af607427a2d4/src/fastwam/models/wan22/mot.py#L474) |
+| action 的 K、V 拼在 video cache 后面 | [`mot.py:560`](https://github.com/yuantianyuan01/FastWAM/blob/7faa71108368fbb3b6885649f112af607427a2d4/src/fastwam/models/wan22/mot.py#L560) |
+| 每步重跑 `text_embedding` | [`action_dit.py:324`](https://github.com/yuantianyuan01/FastWAM/blob/7faa71108368fbb3b6885649f112af607427a2d4/src/fastwam/models/wan22/action_dit.py#L324) |
+| cross-attention 每次从 context 算 K、V | [`wan_video_dit.py:214`](https://github.com/yuantianyuan01/FastWAM/blob/7faa71108368fbb3b6885649f112af607427a2d4/src/fastwam/models/wan22/wan_video_dit.py#L214) |
+
+**一个可以做的优化**：同一次推理里，文本 context 和 proprio 不随去噪步变化，所以 `text_embedding` 的输出和每层 cross-attention 的 K、V 其实只需要算一次。现在每一步都在重算，Euler20 就是重算 20 遍。这一处缓存只是复用相同的计算，输出可以和原来逐位一致。能省多少取决于文本 context 的长度和 action expert 的宽度，还没有实测。
+
+其他要点：
+
+- 每次速度计算调用上游的 `_denoise_action_with_video_cache`，只算速度不积分。不会拿上游完整的 `infer_action` 冒充一次速度计算。
+- 加载需要上游源码、模型配置、完整训练 checkpoint 和本地 VAE；`options` 里必须给出 `sigma_shift`、`action_horizon`、`model_config`、`backbone_dir`。
+- `backend="torch"`：全部用上游 Torch 算子。`backend="flashrt"`：把 Linear 换成原生 GEMM，VAE、attention、norm、激活仍是上游 Torch。
+- 原生 Linear 有两种：`legacy` 每次调用都重新建 cuBLASLt 执行计划，`cached` 每种形状只建一次。FlashRT 原生配 CUDA Graph 时必须用 `cached`。
 
 <a id="graphs"></a>
-## 8. 不要把三种“缓存”混成一种
+## 七、三种缓存：KV cache、CUDA Graph、GEMM 执行计划
 
-### 8.1 KV cache：缓存本请求的条件表示
+| 缓存 | 存的是什么 | 每次推理还要做什么 |
+|---|---|---|
+| KV cache | 条件部分每层 self-attention 的 K、V | 新的图像、prompt、state 来了要重新算 |
+| CUDA Graph | GPU 执行顺序和显存地址 | 把新输入写进固定 buffer，GPU 照样全部算一遍 |
+| GEMM 执行计划 | 矩阵乘用哪个 kernel、怎么配置 | 每次照样做矩阵乘 |
 
-同一请求中图像／语言条件通常不随动作去噪步改变，因此prefix K/V可以算一次供多次速度评估使用。
-但新请求的图像、prompt、state或mask变化后，应刷新相应条件。
+### 7.1 KV cache
 
-“一次请求内复用prefix”不等于“跨相机帧永远复用旧prefix”，也不是LLM那种单纯追加一个新token的场景。
+同一次推理里图像和文本不变，所以条件部分的 K、V 算一次，N 次速度计算都读它。下一次推理换了图像或 prompt，就要重新算。
 
-### 8.2 CUDA Graph：缓存执行结构，不缓存动作答案
+四个模型的条件分别怎么进入模型：
 
-概念上是：
+| 模型 | 图像 | 文本 | 机器人 state |
+|---|---|---|---|
+| π0 | 进 prefix，KV cache 算一次 | 进 prefix，KV cache 算一次 | action expert 里的 state token |
+| π0.5 | 进 prefix，KV cache 算一次 | 进 prefix，KV cache 算一次 | 可以编进 prompt 文本 |
+| Hy | 进 prefix，KV cache 算一次 | 进 prefix，KV cache 算一次 | action expert 里的 state token，投影只做一次 |
+| FastWAM | 首帧进 video expert，KV cache 算一次 | 每一步、每层通过 cross-attention 重新读 | 编码成 1 个 token 拼在文本后面，跟文本一样每步读 |
+
+### 7.2 CUDA Graph
 
 ```text
-预先分配buffer → warmup → capture执行结构 → 每请求更新输入 → replay
+预先分配 buffer → warmup → 录制 → 每次推理写入新输入 → 重放
 ```
 
-它主要减少CPU侧反复分发许多GPU操作的开销。**GEMM、attention等GPU工作仍然执行**。
-它既不让GPU FLOPs消失，也不意味着零开销。
+省的是 CPU 逐个下发 kernel 的时间，GPU 上的 GEMM、attention 照样执行。
 
-原生Pi使用[`core/cuda_graph.py`](../flash_rt/core/cuda_graph.py)包装的CUDA Runtime graph；
-Hy和FastWAM还各有自己的Torch graph组织。不能把一种graph的所有权／清理规则直接套到另一种。
+π0、π0.5 用 [`core/cuda_graph.py`](../flash_rt/core/cuda_graph.py) 封装的 CUDA Runtime graph；Hy 和 FastWAM 用 Torch 的 `torch.cuda.CUDAGraph`，各自组织。
 
-### 8.3 为什么ProbeFlow不能把整条采样路线固定捕获
+每次推理都要把新的图像条件、prompt、state、noise、mask 写进 buffer。不能因为两次的 tensor 地址一样，就认为内容没变——调用方可能原地改了同一个 tensor。
 
-ProbeFlow必须在本次输入的probe之后才决定路线。
-若capture时碰巧走2步，之后不加区分地重放整张2步图，就不再是输入自适应算法。
+FastWAM 的速度 graph 要求输入的 shape、stride、dtype、设备固定，不一致直接报错，不会自动重录或退回 eager。
 
-当前设计通常把以下部分分开：
+### 7.3 PF 为什么不能整条录成一张 graph
 
-- 静态prefix graph；
-- 按预计算时间key准备的单次velocity graph，或FastWAM可更新timestep的raw-field graph；
-- graph外的host路由与动作积分。
+PF 要先探路，再根据这次输入的弯曲度决定走几步。如果把整条采样路线录下来，之后每次重放的都是录制时碰巧选中的那条路线，就不是自适应了。
 
-Torch实现里cosine的标量读取也有host决策成本；不能把这部分时间从算法计时中隐去。
+所以拆成三块：prefix 一张 graph；每个时间点一张速度 graph（FastWAM 是一张可以改时间输入的速度 graph）；选步数和积分在 graph 外做。选步数要把 cosine 读回 CPU，这一小段等待也算进延迟。
 
-### 8.4 同shape不等于同内容
+### 7.4 GEMM 执行计划缓存
 
-固定地址只是graph重放的条件之一。
-每次请求还必须把新的图像条件、prompt相关数据、state、noise和mask写入相应buffer。
+cached GEMM runner 第一次遇到某种矩阵形状时，建一份 cuBLASLt 执行计划（矩阵描述、kernel 选择）和 workspace，之后同形状直接复用。省的是 CPU 准备时间，矩阵乘本身每次都要做。
 
-一个危险的错误是：“上次和这次tensor指针一样，所以context没变”。
-调用方完全可能原地更新同一个tensor的内容。
+### 7.5 一个实例不能并发使用
 
-FastWAM的raw-field graph限定固定tensor-tree几何；shape／stride／dtype／device不符时会拒绝，
-不偷偷recapture或切回eager。这是边界约束，不是“无限动态shape graph”。
+一个 backend 实例持有 x、KV cache、graph buffer 和 GEMM workspace 这些可变状态。`VLABackend` 用锁让调用排队执行。FastWAM 第一次 prepare、录 graph 时，进程里不要有别的线程同时往 GPU 提交任务。
 
-### 8.5 GEMM plan cache：缓存选择工作，不缓存矩阵乘结果
+### 7.6 `close()` 做了什么
 
-cached GEMM runner复用descriptor、heuristic等执行计划，并复用自己的workspace。
-相同shape可以减少host选择开销，但每次新的activation仍会做矩阵乘。
+看 [`backend.py`](../flash_rt/vla/backend.py) 和 [`resources.py`](../flash_rt/vla/resources.py)：
 
-| 缓存 | 复用的是什么 | 不代表什么 |
-|---|---|---|
-| KV cache | 条件K/V结果 | 新请求的条件可以不刷新 |
-| CUDA Graph | GPU执行结构和地址绑定 | 重放时不计算模型 |
-| GEMM plan cache | 矩阵乘的执行计划 | activation输出已经算好 |
+| 模型 | `close()` 做什么 |
+|---|---|
+| π0 / π0.5 | 同步 graph stream，释放 prompt 缓存和旧 pipeline，销毁原生 graph |
+| FastWAM | 等执行 stream 跑完，关闭速度 graph，释放引用 |
+| Hy | 没有单独的 `close()`，统一层释放 frontend 引用后，graph 和显存由 Torch 回收 |
 
-### 8.6 为什么实例不能随意并发复用
-
-后端／frontend持有可变的latent、K/V、scratch、graph输入和runner workspace。
-`VLABackend`用实例锁串行化调用，但这不等于协调了进程里其他线程的所有CUDA工作。
-
-FastWAM特别要求首次prepare／capture时进程CUDA工作处于quiescent状态：
-也就是本进程内没有其他线程同时提交无关CUDA工作。
-同一后端实例不是一个自动支持任意并发、多请求microbatch的服务引擎。
-
-### 8.7 `close()`到底保证什么
-
-看[`backend.py`](../flash_rt/vla/backend.py)和[`resources.py`](../flash_rt/vla/resources.py)：
-
-- **统一层**在实例锁内调用可选的frontend `close()`，为Pi额外处理原生graph，然后释放自身frontend引用并标记关闭。
-- **Pi路径**会同步相关graph stream，处理prompt cache和退休pipeline，并去重销毁原生graph／exec句柄。
-- **FastWAM路径**会排空它维护的执行stream（或最后一次eager stream），关闭raw-field graph，再释放相关引用。
-- **Hy当前路径**没有单独实现frontend `close()`；统一层释放frontend引用，graph／存储后续依赖Torch对象生命周期。
-  不能据此推断它实现了与Pi／FastWAM相同的显式stream drain和句柄销毁流程。
-
-所以，统一`close()`**不是所有模型共享的一道相同CUDA同步屏障**。
-这也不是在断言Hy存在新的资源安全缺陷，而是在区分源码确实实现了哪些保证。
-失败时不能把“有延迟样本”直接当成完整成功；部分路径保留重试清理能力。
-
-关闭并不保证进程显存数字立刻归零：allocator、CUDA context或其他对象可能仍然持有资源。
-当前后端也不会为此擅自flush进程全局缓存。
+关闭后显存数字不一定马上下降，allocator 和 CUDA context 还会占一部分。后端不会去清进程的全局缓存。
 
 <a id="native"></a>
-## 9. 从一条Linear看到C++／CUDA
+## 八、从一个 Linear 追到 CUDA
 
-学习原生算子边界时，FastWAM的[`native_linear.py`](../flash_rt/models/fastwam/native_linear.py)比较直观。
+FastWAM 的 [`native_linear.py`](../flash_rt/models/fastwam/native_linear.py) 最适合看原生算子是怎么接进来的。
 
-### 9.1 数学和shape先写清楚
+### 8.1 先写清形状
 
 ```text
-activation A: [M,K]
-weight W:     [N,K]
-bias:         [N]
-output D:     [M,N]
+输入 A：[M, K]
+权重 W：[N, K]
+bias： [N]
+输出 D：[M, N]
 
 D = A @ W.T + bias
 ```
 
-当输入原来是`[B,S,K]`时，前面的维度可展平为`M=B*S`，最终再恢复输出shape。
-这里权重已经按`[N,K]`保存，不能再无条件做一次完整转置副本。
+输入原本是 `[B, S, K]` 时，前两维展平成 `M = B × S`，算完再恢复。权重本来就按 `[N, K]` 存，不需要再转置复制一份。
 
-### 9.2 当前调用路径
+FLOPs 按 `2 × M × K × N` 估算：每个输出元素做 K 次乘加，一次乘加算 2 次浮点运算。
+
+### 8.2 调用路径
 
 ```text
-普通nn.Linear模块
-  → 实例内安装FlashRTLinear
-  → forward整理activation／weight／bias
-  → runner.bf16_nt_bias(data_ptrs, M,N,K, stream)
-  → PyBind C++入口
+上游的 nn.Linear
+  → 加载时替换成 FlashRTLinear
+  → forward：输入转 BF16、展平，准备 weight 和 bias
+  → runner.bf16_nt_bias(指针, M, N, K, stream)
+  → PyBind 的 C++ 入口
   → cuBLASLt matmul
 ```
 
-参考：[`csrc/bindings.cpp`](../csrc/bindings.cpp)、
-[`gemm_runner.cu`](../csrc/gemm/gemm_runner.cu)、
-[`bf16_nt_plan.cpp`](../csrc/gemm/bf16_nt_plan.cpp)。
+C++ 部分看 [`csrc/bindings.cpp`](../csrc/bindings.cpp)、[`gemm_runner.cu`](../csrc/gemm/gemm_runner.cu)、[`bf16_nt_plan.cpp`](../csrc/gemm/bf16_nt_plan.cpp)。
 
-有两个特别重要的细节：
+两个要注意的地方：
 
-1. 原始指针不会自动告诉Torch这些tensor被哪个stream使用，所以wrapper显式记录stream／生命周期关系。
-2. cached runner有自己的设备、workspace和受限对齐契约；不能把任意offset view当成合法base buffer，并指望缓存算法照样适用。
+1. 传给 C++ 的是裸指针，Torch 不知道这些 tensor 被哪个 stream 用着，所以 `forward` 里对每个 tensor 调了 `record_stream`，防止显存被提前回收。
+2. cached runner 有自己的设备、workspace 和对齐要求，不能随便传一个带偏移的 view 进去。
 
-这些是执行正确性条件，不是为了追求过高数值精确。
+### 8.3 调用计数有好几种
 
-### 9.3 “调用计数”也有层次
+Python 里 `FlashRTLinear.forward` 被调用的次数、CPU 成功下发 GEMM 的次数、graph 里录下的 Linear 数量、GPU 重放的次数，是四个不同的数。
 
-Python Linear的`forward`计数、成功的CPU GEMM enqueue计数、graph中编码的逻辑Linear工作和GPU replay次数不是一回事。
-
-capture后，GPU replay可以重复执行matmul，而不再经过Python模块`forward`。
-因此“Python计数为0”不表示“GPU没有做Linear”。
-看FastWAM的`execution_metadata.velocity_graph`时，应结合replay和encoded-work字段，而非只看一个host计数器。
+录完 graph 之后，GPU 重放时会照样执行矩阵乘，但不再经过 Python 的 `forward`。所以"Python 计数是 0"不代表 GPU 没做 Linear。看 FastWAM 的 `execution_metadata.velocity_graph` 时，要看重放次数和录制的工作量。
 
 <a id="performance"></a>
-## 10. 怎样理解速度，而不是被毫秒数误导
+## 九、性能怎么看
 
-### 10.1 一次请求不只包含action head
-
-一个便于思考的近似分解是：
+### 9.1 一次推理的时间拆分
 
 ```text
-T_request ≈ T_input/condition + T_prefix
-          + NFE × T_velocity
-          + T_routing/integration + T_output/dispatch
+总耗时 ≈ 输入预处理 + prefix
+       + 模型调用次数 × 每次速度计算
+       + 选步数和积分 + 拷回 CPU
 ```
 
-这不是严格可相加的GPU kernel计时公式；实际有stream、依赖、host提交和同步。
-它的用途是帮助你问：“这项优化究竟减少了哪一部分？”
+这是帮助思考的近似，不是严格相加的 kernel 计时。用它来问：这项优化到底减少了哪一块？
 
-### 10.2 少一半NFE，不一定快一倍
+### 9.2 少一半步数，不一定快一倍
 
-假设固定前置成本20ms，每次velocity成本2ms：
+π0.5 的实测：prefix 约 24 ms，每次 action expert 约 1.65 ms。
 
 ```text
-10NFE：20 + 10×2 = 40ms
- 5NFE：20 +  5×2 = 30ms
+Euler10：实测 41.6 ms
+Euler8 ：实测 38.4 ms，只快约 8%
 ```
 
-速度提升是`40/30≈1.33×`，不是2×。
-当prefix占主导时，继续减少action NFE的收益自然受限。
+prefix 占了大头，减少步数省下的只是后面那一小块。
 
-### 10.3 当前worker测量的边界
+### 9.3 CPU 下发 kernel 也是成本
 
-[`worker.run_experiment`](../flash_rt/vla/autotune/worker.py)分别记录load、prepare和正式样本。
-正式样本大致是：
+FastWAM 在 Euler2 下，插桩（cProfile/Kineto）的请求里 GPU kernel 时长合计约 52 ms；不插桩的请求中位数是 122.5 ms（Torch）和 154.8 ms（cached）。差值很可能主要来自 CPU 逐个下发 kernel，但这只是机制推断，实验记录里没有确认归因。后面上 CUDA Graph 的结果支持这个推断。
+
+所以 FastWAM 上的优化顺序是：
+
+| 做法 | 结果 |
+|---|---|
+| 原生 Linear 从 `legacy` 换成 `cached` 执行计划（Euler2） | 202.5 → 154.8 ms，快约 24%，但仍比 Torch 的 122.5 ms 慢 |
+| 上 CUDA Graph（Torch，Euler20） | 804.7 → 255.1 ms，快约 3.2 倍，输出完全一致 |
+
+### 9.4 FLOPs 怎么估，为什么不能直接换成耗时
+
+[`autotune/dataflow.py`](../flash_rt/vla/autotune/dataflow.py) 按矩阵形状估算 π0.5 的计算量，只算矩阵乘。
+
+**prefix 的 FFN**：911 个 token，宽 2048，FFN 中间层 16384，gate、up、down 三个矩阵乘：
 
 ```text
-从workload取得本请求的host数据拷贝
-sync
+一个矩阵乘：2 × 911 × 2048 × 16384 ≈ 61.1 G
+一层 3 个：≈ 183.4 G
+17 层：≈ 3.1 T
+```
+
+只算 17 层，因为最后一层的 KV 在 FFN 之前就算好了，这层 FFN 的输出没人用。
+
+**action expert 每次调用**：50 个动作 token，18 层，宽 1024：
+
+```text
+QKV、输出投影、FFN：每层约 1.73 G，18 层约 31.1 G
+attention 的两个矩阵乘（每个 token 看 911 + 50 个 token）：18 层约 7.1 G
+合计：约 38 G
+```
+
+计算量差了 80 多倍，耗时只差约 15 倍（24 ms 对 1.65 ms）。action expert 每次只处理 50 个 token，矩阵太小，GPU 算力用不满，时间更多花在读权重和下发 kernel 上。所以 FLOPs 只能比较计算量大小，不能直接换算成耗时。
+
+### 9.5 autotune 怎么计时
+
+[`worker.run_experiment`](../flash_rt/vla/autotune/worker.py) 分别记录加载、prepare 和正式测量。默认 warmup 3 次、正式测 10 次，取中位数。每次正式测量：
+
+```text
+从测试输入取出本次请求的数据
+GPU 同步
 开始计时
-backend.infer(...)  # 其内部触发的预处理／上传／prompt更新／模型／CPU输出都计入
-sync
-结束计时
-计时后保存结果
+backend.infer(...)    # 里面的预处理、上传、prompt 更新、模型计算、拷回 CPU 都算在内
+GPU 同步
+停止计时
+保存结果
 ```
 
-初始load、显式prepare、warmup和NPZ文件IO不在steady样本里。
-但是，**不能因此声称计时内永远没有准备工作**：若`infer`遇到新的prompt或shape而触发实际工作，它仍在这个边界内。
+加载、prepare、warmup 和写结果文件不算在内。`infer` 里如果遇到新 prompt 或新形状触发了额外工作，这部分会算进去。profile 是另外单独跑的请求，不混进正式数据。
 
-profile是额外请求，不应把它的耗时混进正式样本。
-CPU wall-clock、CUDA event区间和kernel时长总和也不是相同指标。
+### 9.6 小算子 benchmark 和完整模型
 
-### 10.4 为什么小算子benchmark不能代替完整模型
+单个 GEMM 变快，不一定让整个模型变快：
 
-- GEMM选择开销减少，可能只节约了很小一段请求时间。
-- 原生替换可能多做contiguous或dtype转换。
-- 更大的workspace／graph bank会影响内存和准备成本。
-- 更少的Python调用，不意味着更少的GPU算术。
-- FLOPs约`2MNK`是计算量估算，不是实测时间。
-- “权重尺寸×字节数”是逻辑数据量，不等于本次实际HBM流量。
+- 省下的可能只是整次推理里很小的一段。
+- 原生替换可能多做了 contiguous 或 dtype 转换。
+- 更大的 workspace 或更多 graph 会占显存、拖慢准备。
+- Python 调用变少，GPU 算术量不变。
 
-理解性能前，先明确shape、调用次数、NFE、精度、测量边界与输入是否相同。
-不要预设FlashRT标签一定胜过Torch标签。
+比较性能前，先对齐形状、调用次数、模型调用次数、精度、计时范围和输入。
 
 <a id="quality"></a>
-## 11. 质量预算、精度和“正确”是三件事
+## 十、质量怎么判
 
-### 11.1 三种检查分别回答不同问题
+### 10.1 误差和 cosine
 
-| 检查 | 问题 | 不能代替什么 |
-|---|---|---|
-| 执行契约 | 输入／shape／time／NFE／buffer／资源是否正确？ | 不能证明动作适合任务 |
-| 数值代理 | 固定输入下，候选输出偏离参考多少？ | 不能直接当作机器人成功率 |
-| 闭环任务评价 | 机器人是否在代表性任务中成功且安全？ | 不能仅用几个固定数组代替 |
-
-FP16、BF16是数据与运算配置；它们不是“模型质量分数”。
-比如Hy权重／投影是BF16，但动作latent和部分操作可以是FP32。
-
-### 11.2 当前Hy目标已经转为性能—质量权衡
-
-按2026-11-13用户要求，当前配置
-[`hyvla_tradeoff_quality.json`](../examples/vla_autotune/hyvla_tradeoff_quality.json)定义：
-
-- 对固定原生BF16 `semantic_bf16` Euler10执行参考比较；
-- 评价normalized public20动作通道，不让12个padding通道否决候选；
-- 每请求／回放relative L2≤0.05、cosine≥0.999；
-- 在完整覆盖、质量通过和对照稳定的点中选择更快的端到端配置。
-
-以参考数组`B`和候选`A`记：
+候选配置（比如 Euler8）和参考配置（比如 Euler10）用相同的输入和初始噪声，比较输出的动作。把一次推理的整个动作块展平成一串数字 A（候选）和 B（参考）：
 
 ```text
-relative_L2 = ||A-B||₂ / max(||B||₂, 1e-12)
-cosine = <A,B> / (||A||₂ ||B||₂)  # 零范数时实现另有明确处理
+误差（relative L2）= ‖A − B‖ / ‖B‖
+cosine            = (A · B) / (‖A‖ × ‖B‖)
 ```
 
-worker先选定公开通道，再对每个请求的动作chunk展平计算。
-多请求中取最坏relative L2和最小cosine，不是用平均值掩盖某个难例。
+- **误差**：整体差了多少，占参考值大小的百分比。
+- **cosine**：只看方向像不像，不管大小。1 是完全同向，0.999 大约相当于夹角 2.6°。
 
-这里的5%预算不是“每个元素最多差5%”，也不是ProbeFlow的`epsilon`。
-参考点自身被标为reference角色，不代表它是独立官方正确性oracle。
+两个指标各管一种情况。候选 = 1.05 × 参考时，cosine 还是 1，误差是 5%，只有误差能发现；某几个通道走势变了，cosine 更敏感。误差是随机的时候，cosine ≥ 0.999 大约等于误差 ≤ 4.5%，两个门槛差不多严。
 
-### 11.3 为什么历史EXACT研究不应成为现在的性能前提
+worker 的算法：先取出要评价的通道，每个请求单独算误差和 cosine，再取所有请求里**最大的误差和最小的 cosine**和门槛比，全部过了才算合格。
 
-`examples/vla_autotune/hy_trace/`中的冻结算子、局部交接和LSE脚本用于特定问题的研究验证，
-并不自动进入正常`load_backend → infer`路径。
+注意 5% 是整个动作块的误差，不是"每个元素都差 5% 以内"，也不是 PF 的 ε。
 
-它们可帮助解释数值现象，但当前主目标不再要求先把旧runtime或所有中间量逐位闭合。
-旧official/padded门及失败记录保留，不能用新scope事后改判。
+### 10.2 Hy 现在的目标
 
-仍必须遵守输入语义、有限输出、完整case覆盖、正确生命周期和source身份；
-“不过度追精确”不等于允许漏输入、重复积分、旧cache污染或任意放宽预算。
+配置在 [`hyvla_tradeoff_quality.json`](../examples/vla_autotune/hyvla_tradeoff_quality.json)：
+
+- 参考：原生 BF16 `semantic_bf16`、Euler10。
+- 只比前 20 维有效动作，后面 12 维补零的通道不参与。
+- 每个请求误差 ≤ 5%，cosine ≥ 0.999。
+- 在合格的配置里选端到端最快的。
+
+之前 Hy 做过和官方实现逐元素对齐的工作，用的是逐元素门槛（每个元素 `|原生 − 官方| ≤ 0.01 + 1% × |官方|`），比误差门槛严得多。`examples/vla_autotune/hy_trace/` 里的脚本是那段排查留下的研究工具，不在正常推理路径里。现在的目标是速度和误差的权衡，不再要求中间结果和官方逐位一致。
+
+但这几件事仍然要对：输入的含义、输出没有 NaN/Inf、每个测试用例都跑到、buffer 每次都刷新、没有重复积分。
 
 <a id="autotune"></a>
-## 12. autotune在执行后端之上做什么
+## 十一、autotune 怎么跑一轮
 
-先看[`vla_autotune.md`](vla_autotune.md)，再读这些代码：
+先看 [`vla_autotune.md`](vla_autotune.md)，再读代码：
 
 | 模块 | 作用 |
 |---|---|
-| [`schema.py`](../flash_rt/vla/autotune/schema.py) | Candidate与结果身份的结构 |
-| [`workloads.py`](../flash_rt/vla/autotune/workloads.py) | NPZ字段如何明确映射成请求 |
-| [`worker.py`](../flash_rt/vla/autotune/worker.py) | 一个候选加载、prepare、warmup、测量、保存raw与cleanup |
-| [`batch.py`](../flash_rt/vla/autotune/batch.py) | 同一allocation内用独立子进程串行执行各点 |
-| [`quality.py`](../flash_rt/vla/autotune/quality.py) | 精确核对评价scope／通道／阈值契约 |
-| [`search.py`](../flash_rt/vla/autotune/search.py) | 枚举候选，在已通过质量的结果里选median最快点 |
-| [`controller.py`](../flash_rt/vla/autotune/controller.py) | 初始化、提交、等待、入账与汇总 |
-| [`ledger.py`](../flash_rt/vla/autotune/ledger.py) | 可持久化的实验状态与身份 |
+| [`schema.py`](../flash_rt/vla/autotune/schema.py) | 候选配置和结果的数据结构 |
+| [`workloads.py`](../flash_rt/vla/autotune/workloads.py) | NPZ 测试输入怎么变成一个个请求 |
+| [`worker.py`](../flash_rt/vla/autotune/worker.py) | 一个候选：加载、prepare、warmup、计时、算误差、保存、清理 |
+| [`batch.py`](../flash_rt/vla/autotune/batch.py) | 在同一个 Slurm 分配里，每个候选开独立子进程依次跑 |
+| [`quality.py`](../flash_rt/vla/autotune/quality.py) | 核对评价范围、通道和门槛是否一致 |
+| [`search.py`](../flash_rt/vla/autotune/search.py) | 生成候选；在合格结果里选中位数最快的 |
+| [`controller.py`](../flash_rt/vla/autotune/controller.py) | 初始化、提交、等待、记录、汇总 |
+| [`ledger.py`](../flash_rt/vla/autotune/ledger.py) | 持久化实验状态 |
 
-### 12.1 一次campaign的最小故事
-
-```text
-冻结source、workload、质量scope与候选
-  → reference
-  → candidate A
-  → candidate B
-  → reference bookend
-  → 获取完整结果与raw
-  → controller核对身份、预算与漂移
-  → 选择合格点，或者不给winner
-```
-
-独立子进程减少不同候选之间的模型／graph驻留相互污染。
-bookend检查的是比较过程中参考延迟和输出是否仍可信；当前controller在参考median漂移超过10%等情况下不给winner。
-
-### 12.2 三个“成功”不要混淆
+### 11.1 一轮的流程
 
 ```text
-Slurm完成        ≠ worker测量成功
-worker保存测量   ≠ 质量代理通过
-质量代理通过    ≠ 机器人任务成功
+固定源码版本、测试输入、质量门槛和候选列表
+  → 参考配置
+  → 候选 A
+  → 候选 B
+  → ...
+  → 参考配置再测一次（复测）
+  → 收集全部结果
+  → controller 核对身份、门槛和复测漂移
+  → 选出最快的合格配置，或者不选
 ```
 
-某个候选失败不能被当成0ms，也不能被选中。
-campaign尚未完成或缺乏可信reference/bookend时，不能挑一个看起来最乐观的值。
+每个候选在独立子进程里跑，避免上一个候选的模型和 graph 留在显存里影响下一个。
 
-### 12.3 为什么不能随便复用另一次结果
+首尾两次参考配置的中位数延迟相差超过 10%，说明这段时间机器状态不稳定，controller 不选 winner。
 
-v2结果绑定campaign instance、完整Candidate、实际job、source和workload。
-同名candidate不表示同一次执行；同scope名字但用了更松的阈值，也不能冒充当前预算下的passed。
+### 11.2 三种"跑完了"
 
-这不是额外的数值精确要求，而是防止拿错证据。
+```text
+Slurm job 跑完    ≠ worker 测到了数据
+worker 测到数据   ≠ 误差合格
+误差合格         ≠ 机器人任务成功
+```
+
+只有误差合格的点参与选最快。失败的点不会被当成 0 ms，也不会被选中。
+
+### 11.3 结果不能跨轮次混用
+
+每条结果绑定了这一轮 campaign、完整的候选配置、实际的 job、源码版本和测试输入。名字相同的候选不代表是同一次执行；门槛不同的结果也不能拿来当这一轮的合格结果。
 
 <a id="walkthrough"></a>
-## 13. 沿源码实际走一遍
+## 十二、沿源码走一遍
 
-### 路线A：第一次读，先只看公共调用
+### 路线 A：公共调用
 
-1. [`BackendConfig.__post_init__`](../flash_rt/vla/config.py)：画出合法／非法配置。
+1. [`BackendConfig.__post_init__`](../flash_rt/vla/config.py)：列出哪些组合合法、哪些报错。
 2. [`describe_backend`](../flash_rt/vla/registry.py)：确认它只描述，不加载。
-3. [`load_backend`](../flash_rt/vla/registry.py)：找到四模型分发位置。
-4. [`VLABackend._prepare/_invoke/infer`](../flash_rt/vla/backend.py)：追prompt、state、noise和actions。
-5. [`ActionDecoder`](../flash_rt/vla/processing.py)：看公开输出怎样从raw得到。
+3. [`load_backend`](../flash_rt/vla/registry.py)：找到四个模型的分发位置。
+4. [`VLABackend._prepare/_invoke/infer`](../flash_rt/vla/backend.py)：跟着 prompt、state、noise、actions 走一遍。
+5. [`ActionDecoder`](../flash_rt/vla/processing.py)：看 actions 怎么从 raw_actions 还原。
 
-**这一遍的产出：**能画出一次请求的调用链，能解释哪个阶段开始接触GPU。
+**读完应该能**：画出一次请求的调用链，说出哪一步开始上 GPU。
 
-### 路线B：选Hy理解模型数据流
+### 路线 B：Hy 的数据流
 
-1. [`HyVLAFlowFrontend.__init__`](../flash_rt/frontends/torch/hyvla_probeflow.py)：支持哪些选项，禁用哪些量化开关。
-2. [`HyVLATorchFrontendThor.infer/predict_actions`](../flash_rt/frontends/torch/hyvla_thor.py)：公开输入与输出shape。
-3. `_preprocess_images → _vit_merge → _assemble_prefix`：图像到视觉／语言prefix。
-4. `_make_att_2d/_apply_segment_mask`：mask不只是shape，它决定语义。
-5. [`_prefix_body/_velocity_body/_sample_latent`](../flash_rt/frontends/torch/hyvla_probeflow.py)：一次prefill与多次评估怎样拆开。
-6. [`pipe.evaluate_velocity`](../flash_rt/models/hyvla/pipeline_thor.py)：动作Expert真正计算了什么。
+1. [`HyVLAFlowFrontend.__init__`](../flash_rt/frontends/torch/hyvla_probeflow.py)：支持哪些选项，哪些量化开关被禁用。
+2. [`HyVLATorchFrontendThor.infer/predict_actions`](../flash_rt/frontends/torch/hyvla_thor.py)：输入和输出的形状。
+3. `_preprocess_images → _vit_merge → _assemble_prefix`：图像怎么变成 prefix。
+4. `_make_att_2d/_apply_segment_mask`：mask 决定谁能看见谁，不只是形状。
+5. [`_prefix_body/_velocity_body/_sample_latent`](../flash_rt/frontends/torch/hyvla_probeflow.py)：一次 prefix 和多次速度计算怎么拆开。
+6. [`pipe.evaluate_velocity`](../flash_rt/models/hyvla/pipeline_thor.py)：action expert 每次具体算了什么。
 
-**这一遍的产出：**分清机器人state与动作latent，知道哪些张量本请求固定、哪些每步变化。
+**读完应该能**：分清机器人 state 和动作变量 x，说出哪些 tensor 整次推理不变、哪些每步都变。
 
-### 路线C：再理解共享采样
+### 路线 C：共享采样器
 
-1. 先读NumPy[`sample_probeflow`](../flash_rt/sampling/probeflow.py)。
-2. 手工走一遍2步分支和密集分支，数evaluate次数。
-3. 再读Torch[`sample_probeflow_torch_`](../flash_rt/sampling/torch_probeflow.py)，标出负号、clone和原地更新。
-4. 最后看Pi两个ProbeFlow pipeline怎样给采样器提供native buffer view。
+1. 读 NumPy 版 [`sample_probeflow`](../flash_rt/sampling/probeflow.py)。
+2. 手动走一遍 2 步分支和多步分支，数模型调用次数。
+3. 读 Torch 版 [`sample_probeflow_torch_`](../flash_rt/sampling/torch_probeflow.py)，标出负号、`clone` 和原地更新。
+4. 看 π0、π0.5 的 PF pipeline 怎么把原生 buffer 交给采样器。
 
-**这一遍的产出：**能解释为什么不能把已积分decoder当作raw velocity，以及为什么NFE不总等于steps。
+**读完应该能**：解释为什么不能把已经积分过的 decoder 输出当速度用，以及为什么模型调用次数不总等于步数。
 
-### 路线D：最后再向下读原生算子
+### 路线 D：原生算子
 
-1. 从[`FlashRTLinear.forward`](../flash_rt/models/fastwam/native_linear.py)开始。
-2. 纸上写出M/N/K和权重布局。
-3. 追到C++ `bf16_nt_bias`，区分plan选择、workspace和真正matmul。
-4. 再回到graph和worker，问这个调用在请求内重复多少次、测量包含什么。
+1. 从 [`FlashRTLinear.forward`](../flash_rt/models/fastwam/native_linear.py) 开始。
+2. 在纸上写出 M、N、K 和权重布局。
+3. 追到 C++ 的 `bf16_nt_bias`，分清建执行计划、workspace 和真正的矩阵乘。
+4. 回到 graph 和 worker，问：这个调用在一次推理里重复了多少次？计时包括了什么？
 
-**这一遍的产出：**能把一个kernel放回完整请求，而不是只读到某个“快”的函数就结束。
+**读完应该能**：把一个 kernel 放回整次推理里看，而不是读到一个"快"的函数就停。
 
 <a id="exercises"></a>
-## 14. 不需要GPU的练习
+## 十三、CPU 练习
 
-前面的配置描述和动作解码也是CPU练习。下面再给两个采样练习。
-它们只是数值小例子，不加载任何真实模型。
+第二、四节的配置描述和动作还原也是 CPU 练习。下面两个练习看 PF 的选步数逻辑，不加载任何模型。
 
-### 14.1 常量速度：为什么max_steps=10仍只执行2次
+### 13.1 速度不变：`max_steps=10` 也只走 2 步
 
 ```python
 # CPU_DEMO: constant_velocity
@@ -930,7 +965,7 @@ from flash_rt.sampling import ProbeFlowConfig, sample_probeflow
 
 noise = np.array([2., 3.])
 def velocity(x, t):
-    return np.ones_like(x)  # 返回v_theta；NumPy参考内部会转换成进度速度
+    return np.ones_like(x)  # 返回 v；NumPy 版内部会取负
 
 actions, metadata = sample_probeflow(
     noise, velocity, ProbeFlowConfig(epsilon=0.008, max_steps=10),
@@ -941,10 +976,9 @@ assert metadata["scheduled_steps"] == metadata["nfe"] == 2
 print(actions, metadata["timesteps"])
 ```
 
-两次速度方向完全一致，所以路由到2步。
-配置max_steps只是上限，不要求每次都走到上限。
+两次探路的速度方向完全一样，弯曲度是 0，所以只走 2 步。`max_steps` 只是上限。
 
-### 14.2 改变速度方向：密集6步为什么用了7次评估
+### 13.2 速度转向：选 6 步，调用 7 次
 
 ```python
 # CPU_DEMO: dense_route
@@ -962,90 +996,82 @@ assert len(config.timesteps()) > metadata["scheduled_steps"]
 print(metadata["scheduled_steps"], metadata["nfe"], config.timesteps())
 ```
 
-请在源码中标出：哪次是lookahead，为什么密集分支重启，哪份速度被复用。
+对着源码标出：哪一次是被丢掉的 v2，为什么要从原始噪声重新走，哪一次的速度被复用了。最后一行还能看到，预先准备的时间点（8 个）比实际步数（6 步）多。
 
-### 14.3 用已有测试当“可运行的接口说明”
+### 13.3 用测试当接口说明
 
-先看这些小范围测试，不必一开始运行整仓GPU测试：
+这些测试都能在 CPU 上跑，适合对照源码读：
 
-| 测试文件 | 适合学习的行为 |
+| 测试文件 | 看什么 |
 |---|---|
-| [`test_vla_backend_config.py`](../tests/test_vla_backend_config.py) | 配置／描述和不加载模型的边界 |
-| [`test_vla_backend_observations.py`](../tests/test_vla_backend_observations.py) | prompt／state／noise、prepare和closed实例 |
-| [`test_vla_backend_resources.py`](../tests/test_vla_backend_resources.py) | graph所有权与清理 |
-| [`test_vla_action_processor.py`](../tests/test_vla_action_processor.py) | ACTION模式不是随意选统计值 |
-| [`test_hyvla_probeflow.py`](../tests/test_hyvla_probeflow.py) | Hy raw-field／积分／graph连接 |
-| [`test_fastwam_adapter.py`](../tests/test_fastwam_adapter.py) | first-frame条件与实际NFE |
-| [`test_shifted_probeflow.py`](../tests/test_shifted_probeflow.py) | logical clock与physical sigma |
-| [`test_hyvla_tradeoff_objective_example.py`](../tests/test_hyvla_tradeoff_objective_example.py) | 新public20质量预算及旧门隔离 |
-
-CPU边界fixture能说明接口和控制流，**不能证明真实CUDA kernel、checkpoint或机器人任务质量**。
-某些旧文件头的“未执行”注释是开发当时的描述；当前执行证据应看对应验证记录，而不是从注释推断。
+| [`test_vla_backend_config.py`](../tests/test_vla_backend_config.py) | 配置、描述，以及不加载模型 |
+| [`test_vla_backend_observations.py`](../tests/test_vla_backend_observations.py) | prompt、state、noise，prepare，关闭后的实例 |
+| [`test_vla_backend_resources.py`](../tests/test_vla_backend_resources.py) | graph 的归属和释放 |
+| [`test_vla_action_processor.py`](../tests/test_vla_action_processor.py) | 动作还原按 checkpoint 声明来 |
+| [`test_hyvla_probeflow.py`](../tests/test_hyvla_probeflow.py) | Hy 的速度计算、积分、graph |
+| [`test_fastwam_adapter.py`](../tests/test_fastwam_adapter.py) | 首帧条件和实际模型调用次数 |
+| [`test_shifted_probeflow.py`](../tests/test_shifted_probeflow.py) | 逻辑时间和真实 sigma |
+| [`test_hyvla_tradeoff_objective_example.py`](../tests/test_hyvla_tradeoff_objective_example.py) | Hy 的前 20 维误差门槛 |
 
 <a id="faq"></a>
-## 15. 常见误解与排查路线
+## 十四、常见误解、排查和自测
 
-### 15.1 十个需要立即纠正的误解
+### 14.1 常见误解
 
-| 误解 | 正确理解 |
+| 误解 | 实际情况 |
 |---|---|
-| `describe_backend`能跑，所以模型已支持 | 它不加载模型，描述也不完成所有运行检查 |
-| 用Torch frontend就是Torch reference backend | 框架、执行backend与独立参考实现不是同一个维度 |
-| `flashrt`表示每个算子全原生 | 必须看实际执行覆盖；FastWAM明确是部分替换 |
-| `prepare`只是设置标记 | 它可能进行真实计算和graph准备 |
-| 步数减半，延迟必然减半 | 固定条件／prefix成本不随NFE等比例减少 |
-| Graph replay后没有Linear调用计数，就没有GEMM | host计数与重放的GPU逻辑工作不同 |
-| 同指针同shape就可复用旧条件 | 内容可能已被原地更新，必须按请求刷新 |
-| `epsilon`就是最终action容差 | 一个是速度路由启发式，一个是最终输出质量预算 |
-| 统一`actions`可直接发给机器人 | 动作域、解码、单位和安全协议仍需核对 |
-| 质量代理过门就是任务成功 | 固定输入数值代理不是闭环机器人评价 |
+| `describe_backend` 能跑，模型就能用 | 它不加载模型，很多检查要到加载时才做 |
+| 用 Torch frontend 就是 Torch 参考实现 | frontend 框架、执行 backend 和参考实现是三件事 |
+| `flashrt` 表示每个算子都是原生的 | FastWAM 只换了 Linear，Hy 大部分是 Torch 算子 |
+| `prepare` 只是设个标记 | 它会真的跑模型、录 graph |
+| 步数减半，延迟减半 | prefix 的时间不随步数减少 |
+| 四个模型的文本都只算一次 | FastWAM 的文本走 cross-attention，每一步都重新算 |
+| graph 重放后 Linear 计数是 0，就没做 GEMM | Python 计数和 GPU 重放是两回事 |
+| tensor 地址和形状都没变，条件就能复用 | 内容可能被原地改了，每次都要刷新 |
+| ε 就是最终动作的误差容忍度 | ε 只用来选步数，误差门槛另外定 |
+| `actions` 可以直接发给机器人 | 还要核对动作含义、还原方式、单位和安全限位 |
+| 误差合格就是任务成功 | 误差门槛只说明和参考输出接近，任务成功要上真机或仿真测 |
 
-### 15.2 遇到问题先分层
+### 14.2 遇到问题先分层
 
 ```text
-配置创建失败
-  → 看config合法组合
-描述正常、加载失败
-  → 看registry选项／真实硬件／依赖／checkpoint
-加载正常、首请求失败或很慢
-  → 看prompt／预处理／prepare／capture／内存
-后续请求像在用旧输入
-  → 看state-in-prompt、条件copy、graph buffer刷新和cache key
-动作偏差异常
-  → 先核对noise／动作域／processor／时间与积分符号，再看局部数值
-某点更快但不能入账
-  → 看scope／预算／身份／raw覆盖／cleanup／bookend
+创建配置就报错
+  → 看 config.py 里哪些组合不合法
+描述正常，加载失败
+  → 看 registry 的选项、真实 GPU、依赖、checkpoint
+加载正常，第一次请求失败或很慢
+  → 看 prompt、预处理、prepare、graph 录制、显存
+后面的请求好像还在用旧输入
+  → 看 π0.5 的 state-in-prompt、buffer 有没有刷新、graph 的 key
+动作偏差很大
+  → 先查 noise、动作还原方式、时间和积分的负号，再看局部数值
+某个配置更快但没被选中
+  → 看门槛、评价通道、结果身份、测试用例是否齐全、复测漂移
 ```
 
-不要从最后一个失败的CUDA函数名直接猜模型数学有错，也不要用放宽精度预算掩盖输入／执行错误。
+不要从最后一个报错的 CUDA 函数名直接猜模型数学错了，也不要靠放宽误差门槛来掩盖输入或执行上的错误。
 
-### 15.3 自测：读完后应能回答什么
+### 14.3 自测
 
-1. `BackendConfig`、`load_backend`、`prepare`哪一步开始接触真实模型和GPU？
-2. 为什么π0.5相同prompt、不同state可能要重新处理prompt？
-3. Hy的147个视觉token为什么不等于完整prefix长度？
-4. raw velocity、进度速度和最终actions的区别是什么？
-5. ProbeFlow选择6步时，为什么NFE可能是7，时间表bank长度还可能更大？
-6. FastWAM的模型时间乘1000，为何积分步长不也乘1000？
-7. KV cache、graph和GEMM plan cache分别缓存什么？
-8. 为什么某个GEMM原型更快，不能直接推出完整模型更快？
-9. 为什么Hy可以不追求中间EXACT，但仍必须检查mask、noise、NFE和buffer生命周期？
-10. 哪些CPU例子能帮助理解接口，哪些结论一定要真实GPU或闭环任务才能给出？
+1. `BackendConfig`、`load_backend`、`prepare`，哪一步开始真正碰模型和 GPU？
+2. π0.5 为什么 prompt 不变、state 变了，也要重新处理 prompt？
+3. Hy 的 147 个视觉 token 为什么不等于 prefix 长度（240）？
+4. 模型输出的速度、采样器用的进度速度、最终的 actions，三者有什么区别？
+5. PF 选 6 步时为什么调用 7 次模型？预先准备的时间点为什么更多？
+6. FastWAM 模型输入的时间乘了 1000，为什么积分步长不乘？
+7. KV cache、CUDA Graph、GEMM 执行计划分别缓存了什么？
+8. 某个 GEMM 原型更快，为什么不能直接推出整个模型更快？
+9. π0.5 的 prefix 计算量是每步 action expert 的 80 多倍，为什么耗时只差 15 倍？
+10. Hy 不再要求和官方逐位一致，为什么 mask、noise、模型调用次数和 buffer 刷新仍然要对？
+11. FastWAM 的 KV cache 里有什么、没有什么？每一步里哪部分计算其实可以只算一次？
 
-能回答这些问题后，再深入某个attention／GEMM实现，就能知道自己正在优化整条数据流中的哪一段。
+能回答这些，再去深入某个 attention 或 GEMM 实现，就知道自己在优化整条数据流里的哪一段。
 
-## 本篇文档的核验边界
+## 延伸阅读
 
-- 文中的4个`CPU_DEMO`示例及描述CLI已在本次文档核验中实际执行，不加载真实模型、权重或GPU。
-- GPU接口示意仅做语法和源码契约核对，**本次没有执行GPU推理或新性能实验**。
-- 相关既有CPU接口测试为218通过、1跳过；跳过原因是本地未构建`flash_rt_kernels`，不是GPU路径已通过。
-- 全仓另有既有收集／依赖问题，不能据这组接口测试宣称整个仓库绿色。
-- 文档是源码学习材料；真实checkpoint、硬件、几何、模型质量和机器人安全仍要用各自的验证证据回答。
-
-## 进一步阅读
-
-- [统一后端API参考](vla_backend.md)：查参数和支持边界。
-- [autotune机制](vla_autotune.md)：查实验身份、质量scope、测量与选择。
-- [实际迭代记录](vla_autotune_experiments.md)：查哪些结论有实测证据及其范围。
-- [中文阶段报告](reports/2026-11-09-vla-autotune-report.zh-CN.md)：理解历史结果与限制。
-- [研究过程记录](reports/2026-11-12-vla-autotune-research-process.zh-CN.md)：理解假设、反例与目标修订，不必当作初学源码的阅读顺序。
+- [统一后端 API 参考](vla_backend.md)：查参数和支持的组合。
+- [autotune 机制](vla_autotune.md)：查实验流程、质量门槛、计时和选择规则。
+- [autotune pipeline](vla_autotune_pipeline.zh-CN.md)：工具池、按游选工具、worktree 对比、skill 和“谁主导”的记录。
+- [实验记录](vla_autotune_experiments.md)：查每个结论对应的实测数据。
+- [中文阶段报告](reports/2026-11-09-vla-autotune-report.zh-CN.md)：四个模型的优化过程和结果。
+- [研究过程记录](reports/2026-11-12-vla-autotune-research-process.zh-CN.md)：Hy 对齐官方实现的排查过程。
