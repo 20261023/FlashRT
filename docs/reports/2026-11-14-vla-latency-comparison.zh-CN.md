@@ -1,7 +1,32 @@
 # 四模型延迟对比：本项目已选方法与官方 Native
 
-**状态：结果前协议，2026-11-15更新。** 用户确认主比较必须统一A800，
-正在补跑π0／π0.5／FastWAM作者实现；文献数字只作参考。下表“待实测”不能由旧实验值替换。
+**状态：首批A800结果已返回，2026-11-15更新。** 作业`326641`以`COMPLETED 0:0`
+结束，四个本项目配置及Hy作者实现均有完整计时结果。π0／π0.5／FastWAM作者实现的
+同卡补测作业为`326708`，尚待结果；文献数字只作参考，不用于异卡加速比。
+
+## A800实测大表（首批；前三个Native行仍待补齐）
+
+以下全部实测在同一张 **NVIDIA A800-SXM4-80GB**、同一allocation `326641`内完成。
+每个方法8次warmup，两次独立进程测量后合并原始样本；统计单位均为毫秒。
+
+| 模型 | 本项目固定方法 | 本项目Median / Mean / P95 | 官方Native同卡Median / Mean / P95 | 本轮样本数（项目／Native） | 官方文献参考，非同卡基线 |
+|---|---|---:|---:|---:|---|
+| π0 | FlashRT FP16 Euler2，H50、3view | **25.9319 / 25.9351 / 26.2221** | 待`326708` | 100／待测 | 73 ms，RTX4090、Euler10 |
+| π0.5 | FlashRT BF16 Euler8，H50、3view | **38.7992 / 38.6828 / 39.1345** | 待`326708` | 80／待测 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
+| FastWAM | 本项目Torch graph BF16 Euler20，H32、shift5、cached-T5 | **249.7167 / 249.6970 / 250.8006** | 待`326708` | 160／待测 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
+| Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | **804.2853 / 802.2074 / 810.7750** | 140／140 | 作者未报告完整推理延迟 |
+
+Hy同卡中位数延迟比为 **6.4895×**（804.2853÷123.9355）。这是记录边界内的整套实现
+延迟比，不是纯kernel收益，也不是机器人质量等价证明。双方均为3路相机×6帧、Euler10、
+BF16主体、host原始输入到FP32 CPU raw `[40,32]`；作者运行时为Torch2.7.1+cu128／
+FA2 2.7.4.post1，本项目为既有Torch2.11执行栈。双方预处理及文本缓存策略属于各自方法。
+
+本项目reference→bookend中位数漂移分别为：π0 −0.3694%、π0.5 +1.7349%、
+FastWAM −0.1459%、Hy −2.3852%；作者Hy −0.3714%。这些是固定配置的重复测量，
+没有借此新增质量胜点；Hy仍只标基线。
+
+源码：[本项目冻结提交c065ba04](https://github.com/20261023/FlashRT/tree/c065ba04de2e57a93c672ed54e25a019ea38e839)，
+[Hy作者源码af57](https://github.com/Tencent-Hunyuan/Hy-Embodied-0.5-VLA/tree/af57e7507ec5964b52fdf6296741e553cbcd3288)。
 
 ## 1. 术语与测量目标
 
@@ -14,10 +39,10 @@
 
 | 模型 | 本轮固定方法 | 已有选择依据与限制 | 新A800延迟 |
 |---|---|---|---|
-| π0 | FlashRT FP16 Euler2，3view、chunk50、Orbax/JAX权重loader | `307979`保留Euler2；loader不是Native JAX执行；未证明Euler2等价默认Euler10质量 | 待实测 |
-| π0.5 | FlashRT BF16 Euler8，3view、chunk50 | `308244`四请求数值代理范围内选择，不是泛化／机器人质量保证 | 待实测 |
-| FastWAM | 本项目Torch raw-field graph Euler20，shift5、H32、2cam224×224、cached-T5 | `313779`扩大8案例拒绝Euler13/14/16，保留Euler20；不能用旧四案例Euler13冒充当前最优 | 待实测 |
-| Hy | FlashRT semantic-BF16 Euler10＋graph，3cam×6帧，模型chunk40、raw32/public20 | 新public20权衡目标尚无实测搜索胜点；此项明确是稳定基线，不称全局最优 | 待实测 |
+| π0 | FlashRT FP16 Euler2，3view、chunk50、Orbax/JAX权重loader | `307979`保留Euler2；loader不是Native JAX执行；未证明Euler2等价默认Euler10质量 | 25.9319 ms median |
+| π0.5 | FlashRT BF16 Euler8，3view、chunk50 | `308244`四请求数值代理范围内选择，不是泛化／机器人质量保证 | 38.7992 ms median |
+| FastWAM | 本项目Torch raw-field graph Euler20，shift5、H32、2cam224×224、cached-T5 | `313779`扩大8案例拒绝Euler13/14/16，保留Euler20；不能用旧四案例Euler13冒充当前最优 | 249.7167 ms median |
+| Hy | FlashRT semantic-BF16 Euler10＋graph，3cam×6帧，模型chunk40、raw32/public20 | 新public20权衡目标尚无实测搜索胜点；此项明确是稳定基线，不称全局最优 | 123.9355 ms median |
 
 ## 3. 官方已发布的数字
 
@@ -70,7 +95,9 @@ NR表示来源未报告，不能用当前默认配置补填历史条件。
 
 ## 6. 本轮结果
 
-等待真实调度、完整产物及独立数组／统计审计后填写。当前没有新的延迟、加速比或质量晋升结论。
+`326641`的10份结果与全部动作／延迟数组已回传，并从原始样本复算上方统计量。
+四个v2 campaign的8个固定点全部入账为validated，仅表示各自固定配置replay作用域；
+不将reference角色当作独立准确性证明。`326708`补测完成前，不填前三个模型的Native延迟或比值。
 
 ### 6.1 已确认的同卡补测
 
