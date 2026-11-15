@@ -1,0 +1,2488 @@
+diff --git a/crates/apxinf-cuda/build.rs b/crates/apxinf-cuda/build.rs
+index 2c276293b335901022bc4a9320590baf218c28e7..e5e60b652ea1f10f4d72589f5221a744b5c7566a 100644
+--- a/crates/apxinf-cuda/build.rs
++++ b/crates/apxinf-cuda/build.rs
+@@ -162,6 +162,19 @@
+ }
+ 
+ fn main() {
++    // Private isolated-port build: reuse immutable foundation native libraries.
++    // Rust sources still compile in the caller's owned target directory.
++    println!("cargo:rerun-if-env-changed=APXINF_FOUNDATION_CUDA_BUILD");
++    if let Ok(root) = env::var("APXINF_FOUNDATION_CUDA_BUILD") {
++        let output = std::fs::read_to_string(format!("{root}/output"))
++            .expect("read explicitly selected foundation CUDA build metadata");
++        assert!(std::path::Path::new(&format!("{root}/out/libapxinf_kernels.a")).is_file());
++        for line in output.lines().filter(|line| line.starts_with("cargo:rustc-")) {
++            println!("{line}");
++        }
++        println!("cargo:warning=using read-only foundation CUDA native archive {root}");
++        return;
++    }
+     println!("cargo:rustc-check-cfg=cfg(apxinf_aot_sm110)");
+     println!("cargo:rustc-check-cfg=cfg(nvtx_header)");
+     println!("cargo:rustc-check-cfg=cfg(nvtx_v2)");
+diff --git a/crates/apxinf-cuda/src/kernels/elementwise.rs b/crates/apxinf-cuda/src/kernels/elementwise.rs
+index d2cce1fd9793480c6fbad31d37e09402b553842e..6ce57c6a44dc6888c5ec0ea356b774e4146a42e3 100644
+--- a/crates/apxinf-cuda/src/kernels/elementwise.rs
++++ b/crates/apxinf-cuda/src/kernels/elementwise.rs
+@@ -1,4 +1,20 @@
+ //! Elementwise operator contracts.
++
++/// Copy a contiguous column interval from a BF16 matrix into packed rows.
++/// Uses stream-ordered D2D copies and the graph workspace; no host readback.
++pub fn contiguous_columns_bf16(ctx:&crate::CudaContext,input:&apxinf_core::Tensor,start:usize,count:usize)->apxinf_core::Result<apxinf_core::Tensor>{
++    let dims=input.shape().dims();
++    if input.dtype()!=apxinf_core::DType::BF16||input.device()!=apxinf_core::Device::Cuda(ctx.device_id())||dims.len()!=2||dims[0]==0||count==0||start.checked_add(count).is_none_or(|end|end>dims[1]){
++        return Err(apxinf_core::Error::Other("BF16 column slice contract mismatch".into()));
++    }
++    let bytes=dims[0].checked_mul(count).and_then(|n|n.checked_mul(2)).ok_or_else(||apxinf_core::Error::Other("column slice overflow".into()))?;
++    let output=crate::workspace::output_buffer(ctx,bytes)?;
++    let source=crate::CudaBuffer::from_tensor(input).map_err(apxinf_core::Error::Cuda)?;
++    let source=source.view(start*2,source.len()-start*2).map_err(apxinf_core::Error::Cuda)?;
++    let source=source.as_tensor(apxinf_core::Shape::new(vec![source.len()/2]),apxinf_core::DType::BF16).map_err(apxinf_core::Error::Cuda)?;
++    crate::transfers::copy_tensor_2d_to_buffer(ctx,&source,&output,0,count*2,dims[1]*2,count*2,dims[0])?;
++    output.as_tensor(apxinf_core::Shape::new(vec![dims[0],count]),apxinf_core::DType::BF16).map_err(apxinf_core::Error::Cuda)
++}
+ 
+ use apxinf_core::{DType, Device, Error, Result, Shape, Tensor};
+ 
+diff --git a/crates/apxinf-cuda/src/transfers.rs b/crates/apxinf-cuda/src/transfers.rs
+index 8b84f95442162f101fcb7b76b46c1a38fff53ed3..42b87b84ec12aceeac147bb50486a9c2cd02a5c3 100644
+--- a/crates/apxinf-cuda/src/transfers.rs
++++ b/crates/apxinf-cuda/src/transfers.rs
+@@ -132,8 +132,9 @@
+         .storage()
+         .as_gpu()
+         .ok_or_else(|| Error::Other("expected CUDA source tensor".into()))?;
+-    let source_required = rows
++    let source_required = rows.saturating_sub(1)
+         .checked_mul(source_pitch)
++        .and_then(|n| n.checked_add(width))
+         .ok_or_else(|| Error::Other("2D CUDA source size overflow".into()))?;
+     if source_required > source.len {
+         return Err(Error::Other(format!(
+diff --git a/crates/apxinf-cuda-new/build.rs b/crates/apxinf-cuda-new/build.rs
+index 00d546e4933ce7c30eb190076e5c73b9271421ea..93ca37a210df847939bd498d8645399f8d5fe4e1 100644
+--- a/crates/apxinf-cuda-new/build.rs
++++ b/crates/apxinf-cuda-new/build.rs
+@@ -123,6 +123,32 @@
+ }
+ 
+ fn main() {
++    println!("cargo:rerun-if-env-changed=APXINF_FOUNDATION_CUDA_NEW_BUILD");
++    if let Ok(root) = env::var("APXINF_FOUNDATION_CUDA_NEW_BUILD") {
++        let output = std::fs::read_to_string(format!("{root}/output"))
++            .expect("read explicitly selected foundation new-CUDA metadata");
++        assert!(Path::new(&format!("{root}/out/libapxinf_gemm_native.a")).is_file());
++        for line in output.lines().filter(|line| line.starts_with("cargo:rustc-")) {
++            println!("{line}");
++        }
++        let manifest=PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
++        let source=manifest.join("native/kernels/custom/spatial_ops.cu");
++        println!("cargo:rerun-if-changed={}",source.display());
++        let out=PathBuf::from(env::var("OUT_DIR").unwrap());
++        let cuda=env::var("CUDA_PATH").or_else(|_|env::var("CUDA_HOME")).unwrap();
++        let object=out.join("spatial_ops.o");
++        let mut command=Command::new(format!("{cuda}/bin/nvcc"));
++        command.arg("-c").arg(&source).arg("-o").arg(&object)
++          .args(["-arch=sm_80","--compiler-options","-fPIC","-O3","-std=c++17"]);
++        run(&mut command,"compile isolated native spatial primitives");
++        let mut archive=Command::new("ar");
++        archive.arg("rcs").arg(out.join("libapxinf_spatial_native.a")).arg(object);
++        run(&mut archive,"archive isolated spatial primitives");
++        println!("cargo:rustc-link-search=native={}",out.display());
++        println!("cargo:rustc-link-lib=static=apxinf_spatial_native");
++        println!("cargo:warning=read-only foundation native operators plus owned spatial extension");
++        return;
++    }
+     println!("cargo:rerun-if-env-changed=CUDA_PATH");
+     println!("cargo:rerun-if-env-changed=CUDA_HOME");
+     println!("cargo:rerun-if-env-changed=APXINF_CUDA_ARCH");
+@@ -260,6 +286,7 @@
+     generic_sources.push(native.join("kernels/custom/attn_ops.cu"));
+     generic_sources.push(native.join("kernels/custom/model_ops.cu"));
+     generic_sources.push(native.join("kernels/custom/tensor_ops.cu"));
++    generic_sources.push(native.join("kernels/custom/spatial_ops.cu"));
+     generic_sources.push(native.join("tests/framework_backend.cu"));
+     let cutlass_root = native.join("kernels/cutlass");
+     let fa2_root = native.join("kernels/fa2");
+diff --git a/crates/apxinf-cuda-new/native/kernels/custom/spatial_ops.cu b/crates/apxinf-cuda-new/native/kernels/custom/spatial_ops.cu
+new file mode 100644
+index 0000000000000000000000000000000000000000..fc8f242158ac4181c6592ef587dd430e38f1da2b
+--- /dev/null
++++ b/crates/apxinf-cuda-new/native/kernels/custom/spatial_ops.cu
+@@ -0,0 +1,32 @@
++// Model-neutral spatial primitives. Apache-2.0, ApxInf isolated FastWAM port.
++#include <cuda_runtime.h>
++#include <cuda_bf16.h>
++#include <cstdint>
++#include <cmath>
++namespace {
++using B=__nv_bfloat16;
++__device__ float f(B x){return __bfloat162float(x);}
++__device__ B bf(float x){return __float2bfloat16_rn(x);}
++int grid(int64_t n){return int((n+255)/256>65535?65535:(n+255)/256);}
++__global__ void im2col(const B*x,B*y,int h,int w,int c,int kh,int kw,int sh,int sw,int ph,int pw,int oh,int ow){
++ int64_t count=int64_t(oh)*ow*kh*kw*c;
++ for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<count;i+=int64_t(blockDim.x)*gridDim.x){int cc=i%c;int kx=(i/c)%kw;int ky=(i/(int64_t(c)*kw))%kh;int ox=(i/(int64_t(c)*kw*kh))%ow;int oy=i/(int64_t(c)*kw*kh*ow);int iy=oy*sh-ph+ky,ix=ox*sw-pw+kx;y[i]=(iy>=0&&iy<h&&ix>=0&&ix<w)?x[(int64_t(iy)*w+ix)*c+cc]:bf(0);}}
++__global__ void patchify(const B*x,B*y,int h,int w,int c,int p){int64_t count=int64_t(h)*w*c;for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<count;i+=int64_t(blockDim.x)*gridDim.x){int q=i%p,r=(i/p)%p,cc=(i/(p*p))%c,ox=(i/(int64_t(c)*p*p))%(w/p),oy=i/(int64_t(c)*p*p*(w/p));y[i]=x[((int64_t(oy*p+q)*w+ox*p+r)*c)+cc];}}
++__global__ void avg_first(const B*x,B*y,int h,int w,int ci,int co,int fs,int ft){int group=ci*ft*fs*fs/co;int64_t count=int64_t(h/fs)*(w/fs)*co;for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<count;i+=int64_t(blockDim.x)*gridDim.x){int oc=i%co,ox=(i/co)%(w/fs),oy=i/(int64_t(co)*(w/fs));float sum=0;for(int j=0;j<group;++j){int u=oc*group+j,sx=u%fs,sy=(u/fs)%fs,tm=(u/(fs*fs))%ft,cc=u/(fs*fs*ft);if(tm==ft-1)sum+=f(x[(int64_t(oy*fs+sy)*w+ox*fs+sx)*ci+cc]);}y[i]=bf(sum/group);}}
++__device__ float sum128(float v,float* sm){for(int o=16;o;o/=2)v+=__shfl_down_sync(0xffffffff,v,o);if((threadIdx.x&31)==0)sm[threadIdx.x/32]=v;__syncthreads();if(threadIdx.x<32){v=threadIdx.x<4?sm[threadIdx.x]:0;for(int o=16;o;o/=2)v+=__shfl_down_sync(0xffffffff,v,o);if(threadIdx.x==0)sm[0]=v;}__syncthreads();float r=sm[0];__syncthreads();return r;}
++__global__ void l2(const B*x,const B*g,B*y,int c){__shared__ float sm[4];int64_t row=blockIdx.x;float sum=0;for(int j=threadIdx.x;j<c;j+=128){float v=f(x[row*c+j]);sum+=v*v;}sum=sum128(sum,sm);B norm=bf(sqrtf(sum));float den=fmaxf(f(norm),f(bf(1e-12f)));for(int j=threadIdx.x;j<c;j+=128){B normalized=bf(f(x[row*c+j])/den);B scaled=bf(f(normalized)*sqrtf(float(c)));y[row*c+j]=__hmul(scaled,g[j]);}}
++__global__ void rope(const B*x,const float*freq,B*y,int t,int h,int d){int64_t pairs=int64_t(t)*h*d/2;for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<pairs;i+=int64_t(blockDim.x)*gridDim.x){int pair=i%(d/2);int tok=i/(int64_t(h)*d/2);double c=freq[(int64_t(tok)*d/2+pair)*2],s=freq[(int64_t(tok)*d/2+pair)*2+1];double a=f(x[i*2]),b=f(x[i*2+1]);y[i*2]=bf(float(__dadd_rn(__dmul_rn(a,c),-__dmul_rn(b,s))));y[i*2+1]=bf(float(__dadd_rn(__dmul_rn(a,s),__dmul_rn(b,c))));}}
++__global__ void affine(const B*x,const B*a,const B*b,B*y,int64_t n,int c,int mode){for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<n;i+=int64_t(blockDim.x)*gridDim.x){int j=i%c;if(mode==0){B scale=__hadd(bf(1),a[j]);y[i]=__hadd(__hmul(x[i],scale),b[j]);}else if(mode==1)y[i]=__hadd(x[i],__hmul(a[j],b[i]));else y[i]=__hmul(__hsub(x[i],a[j]),b[j]);}}
++__global__ void attention(const B*q,const B*k,const B*v,const int8_t*mask,B*y,int nq,int nk,int heads,int d){
++ extern __shared__ float p[];__shared__ float sm[4];int head=blockIdx.x%heads,qi=blockIdx.x/heads,lane=threadIdx.x%32,warp=threadIdx.x/32;int64_t qoff=(int64_t(qi)*heads+head)*d;
++ for(int j=warp;j<nk;j+=4){float dot=0;int64_t ko=(int64_t(j)*heads+head)*d;for(int c=lane;c<d;c+=32)dot=fmaf(f(q[qoff+c]),f(k[ko+c]),dot);for(int o=16;o;o/=2)dot+=__shfl_down_sync(0xffffffff,dot,o);if(lane==0)p[j]=(!mask||mask[j])?dot*rsqrtf(float(d)):-INFINITY;}
++ __syncthreads();float mx=-INFINITY;for(int j=threadIdx.x;j<nk;j+=128)mx=fmaxf(mx,p[j]);for(int o=16;o;o/=2)mx=fmaxf(mx,__shfl_down_sync(0xffffffff,mx,o));if(lane==0)sm[warp]=mx;__syncthreads();mx=fmaxf(fmaxf(sm[0],sm[1]),fmaxf(sm[2],sm[3]));__syncthreads();float total=0;for(int j=threadIdx.x;j<nk;j+=128){p[j]=isfinite(mx)?expf(p[j]-mx):0;total+=p[j];}total=sum128(total,sm);for(int j=threadIdx.x;j<nk;j+=128)p[j]=total>0?p[j]/total:0;__syncthreads();for(int c=threadIdx.x;c<d;c+=128){float out=0;for(int j=0;j<nk;++j)out=fmaf(p[j],f(v[(int64_t(j)*heads+head)*d+c]),out);y[qoff+c]=bf(out);}}
++}
++// C ABI is wrapped by L1 below; all pointers/extents validated by safe L3.
++extern "C" int apxinf_spatial_im2col(const void*x,void*y,int h,int w,int c,int kh,int kw,int sh,int sw,int ph,int pw,int oh,int ow,void*s){if(!x||!y||h<=0||w<=0||c<=0||kh<=0||kw<=0||sh<=0||sw<=0||oh<=0||ow<=0)return 1;im2col<<<grid(int64_t(oh)*ow*kh*kw*c),256,0,(cudaStream_t)s>>>((const B*)x,(B*)y,h,w,c,kh,kw,sh,sw,ph,pw,oh,ow);return int(cudaGetLastError());}
++extern "C" int apxinf_spatial_patchify(const void*x,void*y,int h,int w,int c,int p,void*s){if(!x||!y||p<=0||h%p||w%p)return 1;patchify<<<grid(int64_t(h)*w*c),256,0,(cudaStream_t)s>>>((const B*)x,(B*)y,h,w,c,p);return int(cudaGetLastError());}
++extern "C" int apxinf_spatial_avg_first(const void*x,void*y,int h,int w,int ci,int co,int fs,int ft,void*s){if(!x||!y||fs<=0||ft<=0||co<=0)return 1;avg_first<<<grid(int64_t(h/fs)*(w/fs)*co),256,0,(cudaStream_t)s>>>((const B*)x,(B*)y,h,w,ci,co,fs,ft);return int(cudaGetLastError());}
++extern "C" int apxinf_spatial_l2(const void*x,const void*g,void*y,int r,int c,void*s){if(!x||!g||!y||r<=0||c<=0)return 1;l2<<<r,128,0,(cudaStream_t)s>>>((const B*)x,(const B*)g,(B*)y,c);return int(cudaGetLastError());}
++extern "C" int apxinf_spatial_rope(const void*x,const void*f,void*y,int t,int h,int d,void*s){if(!x||!f||!y||t<=0||h<=0||d<=0||d%2)return 1;rope<<<grid(int64_t(t)*h*d/2),256,0,(cudaStream_t)s>>>((const B*)x,(const float*)f,(B*)y,t,h,d);return int(cudaGetLastError());}
++extern "C" int apxinf_spatial_affine(const void*x,const void*a,const void*b,void*y,int r,int c,int mode,void*s){if(!x||!a||!b||!y||r<=0||c<=0||mode<0||mode>2)return 1;affine<<<grid(int64_t(r)*c),256,0,(cudaStream_t)s>>>((const B*)x,(const B*)a,(const B*)b,(B*)y,int64_t(r)*c,c,mode);return int(cudaGetLastError());}
++extern "C" int apxinf_spatial_attention(const void*q,const void*k,const void*v,const void*m,void*y,int nq,int nk,int h,int d,void*s){if(!q||!k||!v||!y||nq<=0||nk<=0||nk>1024||h<=0||d<=0||d>1024)return 1;attention<<<int64_t(nq)*h,128,nk*sizeof(float),(cudaStream_t)s>>>((const B*)q,(const B*)k,(const B*)v,(const int8_t*)m,(B*)y,nq,nk,h,d);return int(cudaGetLastError());}
+diff --git a/crates/apxinf-cuda-new/src/ops/mod.rs b/crates/apxinf-cuda-new/src/ops/mod.rs
+index c0130c8e1dc4cd1d1e03c7023911036b71b5f2d6..f04bbb05ebc4ac95b83b07953b153bf5a598d1e2 100644
+--- a/crates/apxinf-cuda-new/src/ops/mod.rs
++++ b/crates/apxinf-cuda-new/src/ops/mod.rs
+@@ -62,3 +62,4 @@
+ }
+ #[cfg(test)]
+ mod tests;
++pub mod spatial_ops;
+diff --git a/crates/apxinf-cuda-new/src/ops/spatial_ops.rs b/crates/apxinf-cuda-new/src/ops/spatial_ops.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..f945a7d58f35ebf9cf64ee09d3b4042e30467458
+--- /dev/null
++++ b/crates/apxinf-cuda-new/src/ops/spatial_ops.rs
+@@ -0,0 +1,373 @@
++//! Model-neutral fixed BF16 spatial/tensor primitives. Caller-owned outputs,
++//! single asynchronous implementation, no tuning, allocation or host readback.
++//! Experimental: numerical/operator tests deliberately not run under task waiver.
++use crate::context::with_launch_device;
++use crate::ffi::abi::status;
++use crate::ops::gemm::contracts::tensor_storage;
++use crate::{CudaBuffer, CudaLaunchContext};
++use apxinf_core::{DType, Error, Result, Tensor};
++use std::ffi::c_void;
++
++unsafe extern "C" {
++    fn apxinf_spatial_im2col(
++        x: *const c_void,
++        y: *mut c_void,
++        h: i32,
++        w: i32,
++        c: i32,
++        kh: i32,
++        kw: i32,
++        sh: i32,
++        sw: i32,
++        ph: i32,
++        pw: i32,
++        oh: i32,
++        ow: i32,
++        s: *mut c_void,
++    ) -> i32;
++    fn apxinf_spatial_patchify(
++        x: *const c_void,
++        y: *mut c_void,
++        h: i32,
++        w: i32,
++        c: i32,
++        p: i32,
++        s: *mut c_void,
++    ) -> i32;
++    fn apxinf_spatial_avg_first(
++        x: *const c_void,
++        y: *mut c_void,
++        h: i32,
++        w: i32,
++        ci: i32,
++        co: i32,
++        fs: i32,
++        ft: i32,
++        s: *mut c_void,
++    ) -> i32;
++    fn apxinf_spatial_l2(
++        x: *const c_void,
++        g: *const c_void,
++        y: *mut c_void,
++        r: i32,
++        c: i32,
++        s: *mut c_void,
++    ) -> i32;
++    fn apxinf_spatial_rope(
++        x: *const c_void,
++        f: *const c_void,
++        y: *mut c_void,
++        t: i32,
++        h: i32,
++        d: i32,
++        s: *mut c_void,
++    ) -> i32;
++    fn apxinf_spatial_affine(
++        x: *const c_void,
++        a: *const c_void,
++        b: *const c_void,
++        y: *mut c_void,
++        r: i32,
++        c: i32,
++        mode: i32,
++        s: *mut c_void,
++    ) -> i32;
++    fn apxinf_spatial_attention(
++        q: *const c_void,
++        k: *const c_void,
++        v: *const c_void,
++        m: *const c_void,
++        y: *mut c_void,
++        nq: i32,
++        nk: i32,
++        h: i32,
++        d: i32,
++        s: *mut c_void,
++    ) -> i32;
++}
++fn invalid(s: &str) -> Error {
++    Error::Other(format!("spatial tensor primitive: {s}"))
++}
++fn dims(t: &Tensor) -> Result<Vec<usize>> {
++    let d = t.shape().dims();
++    if d.is_empty()
++        || d.iter().any(|&x| x == 0 || x > i32::MAX as usize)
++        || d.iter()
++            .try_fold(1usize, |n, &x| n.checked_mul(x))
++            .is_none()
++    {
++        return Err(invalid("invalid/overflowed extents"));
++    }
++    Ok(d.to_vec())
++}
++fn bf(ctx: &(impl CudaLaunchContext + ?Sized), t: &Tensor, d: &[usize]) -> Result<CudaBuffer> {
++    tensor_storage(ctx, t, DType::BF16, d)
++}
++fn disjoint(y: &CudaBuffer, x: &CudaBuffer) -> Result<()> {
++    let a = y.ptr() as usize;
++    let b = x.ptr() as usize;
++    let ae = a
++        .checked_add(y.len())
++        .ok_or_else(|| invalid("address overflow"))?;
++    let be = b
++        .checked_add(x.len())
++        .ok_or_else(|| invalid("address overflow"))?;
++    if a < be && b < ae {
++        return Err(invalid("output aliases input"));
++    }
++    Ok(())
++}
++
++/// NHWC input -> [OH*OW,KH*KW*C], zero padding. Weight order is ky,kx,c.
++pub fn im2col_bf16(
++    ctx: &(impl CudaLaunchContext + ?Sized),
++    x: &Tensor,
++    y: &mut Tensor,
++    k: [usize; 2],
++    stride: [usize; 2],
++    padding: [usize; 2],
++    out_hw: [usize; 2],
++) -> Result<()> {
++    let d = dims(x)?;
++    if d.len() != 3
++        || k.iter()
++            .chain(stride.iter())
++            .any(|&v| v == 0 || v > i32::MAX as usize)
++        || padding
++            .iter()
++            .chain(out_hw.iter())
++            .any(|&v| v > i32::MAX as usize)
++    {
++        return Err(invalid("im2col geometry"));
++    }
++    let cols = k[0]
++        .checked_mul(k[1])
++        .and_then(|v| v.checked_mul(d[2]))
++        .ok_or_else(|| invalid("im2col overflow"))?;
++    let rows = out_hw[0]
++        .checked_mul(out_hw[1])
++        .ok_or_else(|| invalid("im2col rows overflow"))?;
++    if rows == 0 || cols > i32::MAX as usize {
++        return Err(invalid("im2col extent"));
++    }
++    let xb = bf(ctx, x, &d)?;
++    let yb = bf(ctx, y, &[rows, cols])?;
++    disjoint(&yb, &xb)?;
++    with_launch_device(ctx, |s| unsafe {
++        status::check(apxinf_spatial_im2col(
++            xb.ptr(),
++            yb.ptr(),
++            d[0] as _,
++            d[1] as _,
++            d[2] as _,
++            k[0] as _,
++            k[1] as _,
++            stride[0] as _,
++            stride[1] as _,
++            padding[0] as _,
++            padding[1] as _,
++            out_hw[0] as _,
++            out_hw[1] as _,
++            s,
++        ))
++    })
++}
++/// NHWC spatial patchify. Channels are (c,r,q), q=row-inner, r=column-inner.
++pub fn patchify_bf16(
++    ctx: &(impl CudaLaunchContext + ?Sized),
++    x: &Tensor,
++    y: &mut Tensor,
++    p: usize,
++) -> Result<()> {
++    let d = dims(x)?;
++    if d.len() != 3 || p == 0 || p > 16 || d[0] % p != 0 || d[1] % p != 0 {
++        return Err(invalid("patchify geometry"));
++    }
++    let xb = bf(ctx, x, &d)?;
++    let yb = bf(ctx, y, &[d[0] / p, d[1] / p, d[2] * p * p])?;
++    disjoint(&yb, &xb)?;
++    with_launch_device(ctx, |s| unsafe {
++        status::check(apxinf_spatial_patchify(
++            xb.ptr(),
++            yb.ptr(),
++            d[0] as _,
++            d[1] as _,
++            d[2] as _,
++            p as _,
++            s,
++        ))
++    })
++}
++/// AvgDown3D's first-frame shortcut: leading FT-1 zero frames, flatten
++/// [channel,time-inner,row-inner,col-inner] and group contiguous channels.
++pub fn avg_first_bf16(
++    ctx: &(impl CudaLaunchContext + ?Sized),
++    x: &Tensor,
++    y: &mut Tensor,
++    co: usize,
++    fs: usize,
++    ft: usize,
++) -> Result<()> {
++    let d = dims(x)?;
++    if d.len() != 3
++        || co == 0
++        || co > i32::MAX as usize
++        || ![1, 2].contains(&fs)
++        || ![1, 2].contains(&ft)
++        || d[0] % fs != 0
++        || d[1] % fs != 0
++        || d[2] * ft * fs * fs % co != 0
++    {
++        return Err(invalid("average geometry"));
++    }
++    let xb = bf(ctx, x, &d)?;
++    let yb = bf(ctx, y, &[d[0] / fs, d[1] / fs, co])?;
++    disjoint(&yb, &xb)?;
++    with_launch_device(ctx, |s| unsafe {
++        status::check(apxinf_spatial_avg_first(
++            xb.ptr(),
++            yb.ptr(),
++            d[0] as _,
++            d[1] as _,
++            d[2] as _,
++            co as _,
++            fs as _,
++            ft as _,
++            s,
++        ))
++    })
++}
++/// F.normalize channel L2 in BF16, then BF16 sqrt(C) scale, BF16 gamma.
++pub fn l2_channel_bf16(
++    ctx: &(impl CudaLaunchContext + ?Sized),
++    x: &Tensor,
++    g: &Tensor,
++    y: &mut Tensor,
++) -> Result<()> {
++    let d = dims(x)?;
++    if d.len() != 2 || d[1] > 8192 {
++        return Err(invalid("L2 matrix geometry"));
++    }
++    let xb = bf(ctx, x, &d)?;
++    let gb = bf(ctx, g, &[d[1]])?;
++    let yb = bf(ctx, y, &d)?;
++    disjoint(&yb, &xb)?;
++    disjoint(&yb, &gb)?;
++    with_launch_device(ctx, |s| unsafe {
++        status::check(apxinf_spatial_l2(
++            xb.ptr(),
++            gb.ptr(),
++            yb.ptr(),
++            d[0] as _,
++            d[1] as _,
++            s,
++        ))
++    })
++}
++/// Adjacent complex pairs, F32 cos/sin table [T,D/2,2], F64 products, BF16 output.
++pub fn adjacent_rope_bf16(
++    ctx: &(impl CudaLaunchContext + ?Sized),
++    x: &Tensor,
++    f: &Tensor,
++    y: &mut Tensor,
++) -> Result<()> {
++    let d = dims(x)?;
++    if d.len() != 3 || d[2] % 2 != 0 || d[2] > 1024 {
++        return Err(invalid("adjacent RoPE geometry"));
++    }
++    let xb = bf(ctx, x, &d)?;
++    let fb = tensor_storage(ctx, f, DType::F32, &[d[0], d[2] / 2, 2])?;
++    let yb = bf(ctx, y, &d)?;
++    disjoint(&yb, &xb)?;
++    disjoint(&yb, &fb)?;
++    with_launch_device(ctx, |s| unsafe {
++        status::check(apxinf_spatial_rope(
++            xb.ptr(),
++            fb.ptr(),
++            yb.ptr(),
++            d[0] as _,
++            d[1] as _,
++            d[2] as _,
++            s,
++        ))
++    })
++}
++/// mode0: BF16(BF16(x*BF16(1+a))+b), mode1: BF16(x+BF16(a*b))
++/// with a,b row vectors for mode0; mode1 a row vector, b matrix.
++/// mode2: BF16(BF16(x-a)*b). Each BF16 boundary is explicit.
++pub fn affine_bf16(
++    ctx: &(impl CudaLaunchContext + ?Sized),
++    x: &Tensor,
++    a: &Tensor,
++    b: &Tensor,
++    y: &mut Tensor,
++    mode: u32,
++) -> Result<()> {
++    let d = dims(x)?;
++    if d.len() != 2 || mode > 2 {
++        return Err(invalid("affine matrix/mode"));
++    }
++    let vector = [d[1]];
++    let xb = bf(ctx, x, &d)?;
++    let ab = bf(ctx, a, &vector)?;
++    let bb = bf(ctx, b, if mode == 1 { &d } else { &vector })?;
++    let yb = bf(ctx, y, &d)?;
++    for input in [&xb, &ab, &bb] {
++        disjoint(&yb, input)?;
++    }
++    with_launch_device(ctx, |s| unsafe {
++        status::check(apxinf_spatial_affine(
++            xb.ptr(),
++            ab.ptr(),
++            bb.ptr(),
++            yb.ptr(),
++            d[0] as _,
++            d[1] as _,
++            mode as _,
++            s,
++        ))
++    })
++}
++/// BF16 dense Q[Tq,H,D], K/V[Tk,H,D], optional I8 key visibility[Tk].
++/// FP32 scores and probabilities, BF16 output; all-masked rows return zero.
++pub fn masked_attention_bf16(
++    ctx: &(impl CudaLaunchContext + ?Sized),
++    q: &Tensor,
++    k: &Tensor,
++    v: &Tensor,
++    mask: Option<&Tensor>,
++    out: &mut Tensor,
++) -> Result<()> {
++    let d = dims(q)?;
++    let kd = dims(k)?;
++    if d.len() != 3 || kd.len() != 3 || d[1..] != kd[1..] || d[2] > 1024 || kd[0] > 1024 {
++        return Err(invalid("attention geometry"));
++    }
++    let qb = bf(ctx, q, &d)?;
++    let kb = bf(ctx, k, &kd)?;
++    let vb = bf(ctx, v, &kd)?;
++    let yb = bf(ctx, out, &d)?;
++    for x in [&qb, &kb, &vb] {
++        disjoint(&yb, x)?;
++    }
++    let mb = mask
++        .map(|m| tensor_storage(ctx, m, DType::I8, &[kd[0]]))
++        .transpose()?;
++    if let Some(m) = &mb {
++        disjoint(&yb, m)?;
++    }
++    with_launch_device(ctx, |s| unsafe {
++        status::check(apxinf_spatial_attention(
++            qb.ptr(),
++            kb.ptr(),
++            vb.ptr(),
++            mb.as_ref().map_or(std::ptr::null(), |m| m.ptr()),
++            yb.ptr(),
++            d[0] as _,
++            kd[0] as _,
++            d[1] as _,
++            d[2] as _,
++            s,
++        ))
++    })
++}
+diff --git a/crates/apxinf-model/Cargo.toml b/crates/apxinf-model/Cargo.toml
+index abc84891ede383a3be0f809c9f8cdcfd10799ea3..4d35f6e75d5cb7cf0a643d175b10b8bd9c0935da 100644
+--- a/crates/apxinf-model/Cargo.toml
++++ b/crates/apxinf-model/Cargo.toml
+@@ -18,6 +18,10 @@
+ [features]
+ default = []
+ cuda = ["dep:apxinf-cuda", "dep:apxinf-cuda-new"]
++
++[[example]]
++name = "fastwam_bench"
++required-features = ["cuda"]
+ 
+ [[example]]
+ name = "pi05_bench"
+diff --git a/crates/apxinf-model/examples/fastwam_bench.rs b/crates/apxinf-model/examples/fastwam_bench.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..4fabcb7ae0e0b4b2504c1e3024238d9bde7cfd5d
+--- /dev/null
++++ b/crates/apxinf-model/examples/fastwam_bench.rs
+@@ -0,0 +1,86 @@
++//! Actual full FastWAM inference benchmark, not an operator/smoke/test program.
++//! Full graph: VAE38 + VideoDiT30 + ActionDiT30 xEuler20. Cached T5 input seam.
++use apxinf_core::{Backend, Result, Tensor};
++use apxinf_cuda::CudaBackend;
++use apxinf_model::fastwam::{FastWamInputs, FastWamModel, FastWamRunner};
++use std::{path::Path, sync::Arc, time::Instant};
++
++fn main() -> Result<()> {
++    let args = std::env::args().collect::<Vec<_>>();
++    if args.len() != 4 {
++        return Err(apxinf_core::Error::Other(
++            "fastwam_bench CHECKPOINT INPUTS OUTPUT.json".into(),
++        ));
++    }
++    let output = Path::new(&args[3]);
++    let start = Instant::now();
++    let backend = Arc::new(CudaBackend::new(0)?);
++    let model = apxinf_cuda::tuning::without_autotune(|| {
++        FastWamModel::load(Path::new(&args[1]), Arc::clone(&backend))
++    })?;
++    let runner = FastWamRunner::new(model);
++    let mut cases = Vec::new();
++    for name in [
++        "noise-20261112",
++        "noise-20261113",
++        "noise-20261114",
++        "noise-20261115",
++        "image-minus0p1",
++        "proprio-plus0p1",
++        "context-minus0p0625",
++        "mask-last-valid-off",
++    ] {
++        let (map, _) = apxinf_loader::safetensors::load_native(
++            &Path::new(&args[2]).join(format!("{name}.safetensors")),
++        )
++        .map_err(apxinf_core::Error::Other)?;
++        let get = |n: &str| -> Result<&Tensor> {
++            map.get(n)
++                .ok_or_else(|| apxinf_core::Error::Other(format!("missing {n}")))
++        };
++        let mask = get("mask")?
++            .to_f32_vec()?
++            .into_iter()
++            .map(|x| u8::from(x != 0.))
++            .collect::<Vec<_>>();
++        let inputs = FastWamInputs::from_host(
++            get("image")?,
++            get("context")?,
++            get("proprio")?,
++            get("noise")?,
++            &mask,
++        )?;
++        cases.push((name, inputs));
++    }
++    let mut plan = runner.prepare_native(&cases[0].1, true)?;
++    let preparation_ms = start.elapsed().as_secs_f64() * 1000.;
++    for _ in 0..8 {
++        plan.replay()?;
++        backend.synchronize()?;
++    }
++    let mut rows = Vec::new();
++    for (name, input) in &cases {
++        for repeat in 0..10 {
++            let wall = Instant::now();
++            plan.update(input)?;
++            backend.synchronize()?;
++            let core = Instant::now();
++            let result = plan.replay()?;
++            backend.synchronize()?;
++            let core_ms = core.elapsed().as_secs_f64() * 1000.;
++            let action = backend.to_cpu(&result)?.to_f32_vec()?;
++            let wall_ms = wall.elapsed().as_secs_f64() * 1000.;
++            if action.iter().any(|v| !v.is_finite()) {
++                return Err(apxinf_core::Error::Other(format!(
++                    "nonfinite full-model output {name}"
++                )));
++            }
++            eprintln!("full-native {name} repeat={repeat} graph_completion_wall_ms={core_ms:.6} input_graph_output_ms={wall_ms:.6}");
++            rows.push(serde_json::json!({"case":name,"repeat":repeat,"graph_completion_wall_ms":core_ms,"input_graph_output_ms":wall_ms,"action":action}));
++        }
++    }
++    let report = serde_json::json!({"implementation":"apxinf-native-fastwam-bf16","status":"experimental_not_functionally_accepted_no_tests_user_waiver","scope":"FULL normalized image + cachedT5 + proprio + VAE38 + VideoDiT30 + Euler20 ActionDiT30 + output","graph":"whole-model","gpu":backend.context().caps().device_name,"sm":backend.context().caps().sm,"horizon":32,"action_dim":7,"proprio_dim":8,"text_tokens":128,"image_hw":[224,448],"steps":20,"sigma_shift":5.,"preparation_ms":preparation_ms,"arena_used_bytes":plan.arena_used(),"warmup":8,"repeats":80,"rows":rows});
++    std::fs::write(output, serde_json::to_vec_pretty(&report).unwrap())
++        .map_err(|e| apxinf_core::Error::Other(e.to_string()))?;
++    Ok(())
++}
+diff --git a/crates/apxinf-model/src/auto.rs b/crates/apxinf-model/src/auto.rs
+index 7ec795c9b04e00d1e2d3dec89e472f40b52f692e..b4bd64c425bc84fb790ea286901a649794cfd666 100644
+--- a/crates/apxinf-model/src/auto.rs
++++ b/crates/apxinf-model/src/auto.rs
+@@ -310,7 +310,7 @@
+         if options.model_variant.is_some()
+             && !matches!(
+                 model_name,
+-                "pi05" | "pi05-cuda" | "qwen_drive" | "qwen_drive-cuda" | "hy" | "hy-cuda"
++                "pi05" | "pi05-cuda" | "qwen_drive" | "qwen_drive-cuda" | "hy" | "hy-cuda" | "fastwam"
+             )
+         {
+             return Err(Error::Other(format!(
+diff --git a/crates/apxinf-model/src/builtin.rs b/crates/apxinf-model/src/builtin.rs
+index 322f86cc2e5e76652bbd513c1024e5edc4ba3f14..43ac00b1f7a80fd3c395f7087587a1ed44ab1136 100644
+--- a/crates/apxinf-model/src/builtin.rs
++++ b/crates/apxinf-model/src/builtin.rs
+@@ -14,6 +14,8 @@
+ /// Register every implementation shipped in this crate. Re-registering is
+ /// harmless and keeps `AutoModel::load_model` self-contained for users.
+ pub fn register_builtin_models() {
++    #[cfg(feature = "cuda")]
++    registry::register("fastwam", crate::fastwam::load::load_registered);
+     registry::register("llama", load_llama);
+     registry::register("qwen3_vl", load_qwen3vl);
+     registry::register("qwen3vl", load_qwen3vl);
+diff --git a/crates/apxinf-model/src/fastwam/FASTWAM_LICENSE.txt b/crates/apxinf-model/src/fastwam/FASTWAM_LICENSE.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..90124d129334cd5de11aa0fd606182b3ffd442cb
+--- /dev/null
++++ b/crates/apxinf-model/src/fastwam/FASTWAM_LICENSE.txt
+@@ -0,0 +1,24 @@
++MIT License
++
++Copyright (c) 2026 The FastWAM Authors
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++Except for third-party code and files that retain their original license
++headers, this repository is released under the MIT License.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/crates/apxinf-model/src/fastwam/NOTICE b/crates/apxinf-model/src/fastwam/NOTICE
+new file mode 100644
+index 0000000000000000000000000000000000000000..dd9340ed50a89441ffbf2b6167a258497168276e
+--- /dev/null
++++ b/crates/apxinf-model/src/fastwam/NOTICE
+@@ -0,0 +1,15 @@
++FastWAM native-port reference provenance
++
++Reference: FastWAM author source revision
++7faa71108368fbb3b6885649f112af607427a2d4.
++Semantics adapted from src/fastwam/models/wan22/{action_dit.py,wan_video_dit.py,
++wan_video_vae.py,mot.py,fastwam.py}. See FASTWAM_LICENSE.txt (MIT).
++The Wan model implementation has its original upstream provenance through
++FastWAM's referenced Wan2.2 implementation. Existing third-party license
++obligations are not superseded by this notice.
++
++This Rust implementation and model-neutral CUDA primitives are new composition
++code, not a Torch wrapper. Foundation ApxInf Apache-2.0 LICENSE is retained.
++Checkpoint data is reused in place for private measurement and is not included
++in this source distribution. Weight identity and transformations are recorded
++in the private checkpoint/weight-provenance.json artifact.
+diff --git a/crates/apxinf-model/src/fastwam/load.rs b/crates/apxinf-model/src/fastwam/load.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..b5e626d1f6972d328255f6f7faaf02fbdd7ead81
+--- /dev/null
++++ b/crates/apxinf-model/src/fastwam/load.rs
+@@ -0,0 +1,39 @@
++use super::{model::err, FastWamModel, FastWamRunner};
++use crate::{LoadOptions, LoadedModel, ModelPrecision};
++use apxinf_core::{Backend, Device, Result};
++use std::{path::Path, sync::Arc};
++pub(crate) fn load_registered(
++    path: &Path,
++    device: Device,
++    backend: Arc<dyn Backend>,
++    options: &LoadOptions,
++) -> Result<LoadedModel> {
++    if !matches!(device, Device::Cuda(_))
++        || !matches!(
++            options.precision,
++            ModelPrecision::Auto | ModelPrecision::Bf16
++        )
++        || options.config.is_some()
++        || options.synthetic.is_some()
++        || options.calibration_path.is_some()
++        || options.uniform_fp8_scale.is_some()
++        || options.text_weight_dtype.is_some()
++        || !options.assets.is_empty()
++        || !matches!(
++            options.model_variant.as_deref(),
++            None | Some("auto") | Some("bf16")
++        )
++    {
++        return Err(err("only the exported fixed LIBERO BF16 profile is supported; overrides/quantization/CPU are unsupported"));
++    }
++    let backend = crate::accelerator::cuda::downcast_arc(backend)
++        .ok_or_else(|| err("CUDA backend required"))?;
++    let root = if path.is_dir() {
++        path
++    } else {
++        path.parent()
++            .ok_or_else(|| err("checkpoint parent missing"))?
++    };
++    let model = apxinf_cuda::tuning::without_autotune(|| FastWamModel::load(root, backend))?;
++    Ok(LoadedModel::Vla(Box::new(FastWamRunner::new(model))))
++}
+diff --git a/crates/apxinf-model/src/fastwam/mod.rs b/crates/apxinf-model/src/fastwam/mod.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb5612fb1f374f51d32dd1359e9c3f25fac2f803
+--- /dev/null
++++ b/crates/apxinf-model/src/fastwam/mod.rs
+@@ -0,0 +1,9 @@
++//! Experimental native BF16 FastWAM LIBERO family.
++//! Author semantics: FastWAM 7faa71108368fbb3b6885649f112af607427a2d4.
++//! No Torch, TensorRT, or other model-family execution dependencies.
++pub(crate) mod load;
++pub mod model;
++pub mod runner;
++mod vision;
++pub use model::{FastWamInputs, FastWamModel};
++pub use runner::FastWamRunner;
+diff --git a/crates/apxinf-model/src/fastwam/model.rs b/crates/apxinf-model/src/fastwam/model.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..3bf1acf71041edc813c03bc4db0e7205afa10222
+--- /dev/null
++++ b/crates/apxinf-model/src/fastwam/model.rs
+@@ -0,0 +1,409 @@
++//! Native fixed-profile forward equations. Static time conditioning is computed
++//! at construction on GPU; request text KV is computed once per request.
++use apxinf_core::{Backend, DType, Error, Result, Shape, Tensor};
++use apxinf_cuda::{kernels, CudaBackend, CudaContext};
++use apxinf_cuda_new::ops::{spatial_ops, tensor_ops};
++use half::bf16;
++use std::{collections::HashMap, path::Path, sync::Arc};
++
++pub struct FastWamInputs {
++    /// Normalized resized RGB, NHWC[224,448,3], BF16.
++    pub image: Tensor,
++    /// Cached T5[128,4096], BF16. Text encoder is outside this declared seam.
++    pub context: Tensor,
++    pub context_mask: Tensor,
++    pub proprio: Tensor,
++    pub noise: Tensor,
++}
++pub struct FastWamModel {
++    pub backend: Arc<CudaBackend>,
++    pub(crate) weights: HashMap<String, Tensor>,
++    one1024: Tensor,
++    zero1024: Tensor,
++    one3072: Tensor,
++    zero3072: Tensor,
++    video_rope: Tensor,
++    action_rope: Tensor,
++    video_mod: Vec<Tensor>,
++    action_mod: Vec<Vec<Tensor>>,
++    deltas: Vec<f32>,
++    pub(crate) vae_mean: Tensor,
++    pub(crate) vae_inv_std: Tensor,
++}
++pub(crate) fn err(s: impl Into<String>) -> Error {
++    Error::Other(format!("FastWAM native: {}", s.into()))
++}
++pub(crate) fn scratch(ctx: &CudaContext, dtype: DType, dims: &[usize]) -> Result<Tensor> {
++    let n = dims
++        .iter()
++        .try_fold(dtype.size_in_bytes(), |n, &v| n.checked_mul(v))
++        .ok_or_else(|| err("scratch overflow"))?;
++    kernels::scratch_buffer(ctx, n)?
++        .as_tensor(Shape::new(dims.to_vec()), dtype)
++        .map_err(Error::Cuda)
++}
++impl FastWamModel {
++    pub fn load(root: &Path, backend: Arc<CudaBackend>) -> Result<Self> {
++        if backend.context().caps().sm != 80 {
++            return Err(err("this fixed BF16 profile requires SM80"));
++        }
++        let config: serde_json::Value = serde_json::from_slice(
++            &std::fs::read(root.join("config.json")).map_err(|e| err(e.to_string()))?,
++        )
++        .map_err(|e| err(e.to_string()))?;
++        for (key, value) in [
++            ("horizon", 32),
++            ("action_dim", 7),
++            ("proprio_dim", 8),
++            ("text_tokens", 128),
++            ("text_dim", 4096),
++            ("video_layers", 30),
++            ("action_layers", 30),
++        ] {
++            if config[key].as_u64() != Some(value) {
++                return Err(err(format!("unsupported checkpoint {key}")));
++            }
++        }
++        if config["model_type"] != "fastwam" {
++            return Err(err("wrong model_type"));
++        }
++        let (host, _) = apxinf_loader::safetensors::load_native_path(root).map_err(err)?;
++        let mut weights = HashMap::new();
++        for (name, value) in host {
++            if value.dtype() != DType::BF16 {
++                return Err(err(format!("weight {name} is not BF16")));
++            }
++            weights.insert(name, backend.to_device(&value)?);
++        }
++        let upload = |d: Vec<usize>, v: Vec<f32>| {
++            backend.to_device(&Tensor::from_bf16(
++                d,
++                &v.iter().copied().map(bf16::from_f32).collect::<Vec<_>>(),
++            )?)
++        };
++        let one1024 = upload(vec![1024], vec![1.; 1024])?;
++        let zero1024 = upload(vec![1024], vec![0.; 1024])?;
++        let one3072 = upload(vec![3072], vec![1.; 3072])?;
++        let zero3072 = upload(vec![3072], vec![0.; 3072])?;
++        let mut vfreq = Vec::new();
++        for yy in 0..7 {
++            for xx in 0..14 {
++                for (dimension, position) in [(44, 0), (42, yy), (42, xx)] {
++                    for pair in 0..dimension / 2 {
++                        let phase =
++                            position as f64 / 10000f64.powf((pair * 2) as f64 / dimension as f64);
++                        vfreq.extend([phase.cos() as f32, phase.sin() as f32]);
++                    }
++                }
++            }
++        }
++        let video_rope = backend.to_device(&Tensor::from_f32(vec![98, 64, 2], &vfreq)?)?;
++        let mut afreq = Vec::new();
++        for token in 0..32 {
++            for pair in 0..64 {
++                let phase = token as f64 / 10000f64.powf((pair * 2) as f64 / 128.);
++                afreq.extend([phase.cos() as f32, phase.sin() as f32]);
++            }
++        }
++        let action_rope = backend.to_device(&Tensor::from_f32(vec![32, 64, 2], &afreq)?)?;
++        let mean = vec![
++            -0.2289, -0.0052, -0.1323, -0.2339, -0.2799, 0.0174, 0.1838, 0.1557, -0.1382, 0.0542,
++            0.2813, 0.0891, 0.1570, -0.0098, 0.0375, -0.1825, -0.2246, -0.1207, -0.0698, 0.5109,
++            0.2665, -0.2108, -0.2158, 0.2502, -0.2055, -0.0322, 0.1109, 0.1567, -0.0729, 0.0899,
++            -0.2799, -0.1230, -0.0313, -0.1649, 0.0117, 0.0723, -0.2839, -0.2083, -0.0520, 0.3748,
++            0.0152, 0.1957, 0.1433, -0.2944, 0.3573, -0.0548, -0.1681, -0.0667,
++        ];
++        let std = vec![
++            0.4765, 1.0364, 0.4514, 1.1677, 0.5313, 0.4990, 0.4818, 0.5013, 0.8158, 1.0344, 0.5894,
++            1.0901, 0.6885, 0.6165, 0.8454, 0.4978, 0.5759, 0.3523, 0.7135, 0.6804, 0.5833, 1.4146,
++            0.8986, 0.5659, 0.7069, 0.5338, 0.4889, 0.4917, 0.4069, 0.4999, 0.6866, 0.4093, 0.5709,
++            0.6065, 0.6415, 0.4944, 0.5726, 1.2042, 0.5458, 1.6887, 0.3971, 1.0600, 0.3943, 0.5537,
++            0.5444, 0.4089, 0.7468, 0.7744,
++        ];
++        let vae_mean = upload(vec![48], mean)?;
++        let vae_inv_std = upload(vec![48], std.into_iter().map(|x| 1f32 / x).collect())?;
++        let mut model = Self {
++            backend,
++            weights,
++            one1024,
++            zero1024,
++            one3072,
++            zero3072,
++            video_rope,
++            action_rope,
++            video_mod: vec![],
++            action_mod: vec![],
++            deltas: vec![],
++            vae_mean,
++            vae_inv_std,
++        };
++        for (name, shape) in [
++            ("action.action_encoder.weight", vec![7, 1024]),
++            ("action.head.weight", vec![1024, 7]),
++            ("proprio.weight", vec![8, 4096]),
++            ("video.patch_embedding.weight", vec![192, 3072]),
++        ] {
++            if model.w(name)?.shape().dims() != shape {
++                return Err(err(format!("{name} shape mismatch")));
++            }
++        }
++        model.video_mod = model.prepare_time("video", 0.)?;
++        let sigma = |i: usize| {
++            let clock = (20 - i) as f64 / 20.;
++            5. * clock / (1. + 4. * clock)
++        };
++        for step in 0..20 {
++            model.action_mod.push(model.prepare_time(
++                "action",
++                bf16::from_f32((1000. * sigma(step)) as f32).to_f32(),
++            )?);
++            model
++                .deltas
++                .push(bf16::from_f32((sigma(step + 1) - sigma(step)) as f32).to_f32());
++        }
++        model.backend.synchronize()?;
++        Ok(model)
++    }
++    pub(crate) fn w(&self, name: &str) -> Result<&Tensor> {
++        self.weights
++            .get(name)
++            .ok_or_else(|| err(format!("missing weight {name}")))
++    }
++    pub(crate) fn linear(&self, x: &Tensor, name: &str) -> Result<Tensor> {
++        let ctx = self.backend.context();
++        kernels::gemm::bf16_bias(
++            ctx,
++            x,
++            self.w(&format!("{name}.weight"))?,
++            self.w(&format!("{name}.bias"))?,
++        )
++    }
++    fn prepare_time(&self, family: &str, time: f32) -> Result<Vec<Tensor>> {
++        let mut v = Vec::new();
++        for i in 0..128 {
++            let a = time as f64 / 10000f64.powf(i as f64 / 128.);
++            v.push(bf16::from_f32(a.cos() as f32));
++        }
++        for i in 0..128 {
++            let a = time as f64 / 10000f64.powf(i as f64 / 128.);
++            v.push(bf16::from_f32(a.sin() as f32));
++        }
++        let t = self
++            .backend
++            .to_device(&Tensor::from_bf16(vec![1, 256], &v)?)?;
++        let t = self.linear(&t, &format!("{family}.time_embedding.0"))?;
++        let t = kernels::activation::silu(self.backend.context(), &t)?;
++        let t = self.linear(&t, &format!("{family}.time_embedding.2"))?;
++        let t = kernels::activation::silu(self.backend.context(), &t)?;
++        let t = self.linear(&t, &format!("{family}.time_projection.1"))?;
++        let d = if family == "video" { 3072 } else { 1024 };
++        (0..30)
++            .map(|layer| {
++                kernels::elementwise::add(
++                    self.backend.context(),
++                    &t.reshape(vec![6, d])?,
++                    &self
++                        .w(&format!("{family}.blocks.{layer}.modulation"))?
++                        .reshape(vec![6, d])?,
++                )
++            })
++            .collect()
++    }
++    fn norm(&self, x: &Tensor, affine: Option<&str>) -> Result<Tensor> {
++        let d = x.shape().dims()[1];
++        let (w, b) = match affine {
++            Some(name) => (
++                self.w(&format!("{name}.weight"))?,
++                self.w(&format!("{name}.bias"))?,
++            ),
++            None => {
++                if d == 3072 {
++                    (&self.one3072, &self.zero3072)
++                } else {
++                    (&self.one1024, &self.zero1024)
++                }
++            }
++        };
++        let mut out = scratch(self.backend.context(), DType::BF16, x.shape().dims())?;
++        tensor_ops::layer_norm_welford_bf16(self.backend.context(), x, w, b, &mut out, 1e-6)?;
++        Ok(out)
++    }
++    fn rms(&self, x: &Tensor, name: &str) -> Result<Tensor> {
++        let mut out = scratch(self.backend.context(), DType::BF16, x.shape().dims())?;
++        tensor_ops::rms_bf16_rounded(self.backend.context(), x, self.w(name)?, &mut out, 1e-6)?;
++        Ok(out)
++    }
++    fn mod_row(&self, mods: &Tensor, index: usize) -> Result<Tensor> {
++        let d = mods.shape().dims()[1];
++        kernels::elementwise::contiguous_rows(self.backend.context(), mods, index, 1)?
++            .reshape(vec![d])
++    }
++    fn affine(&self, x: &Tensor, a: &Tensor, b: &Tensor, mode: u32) -> Result<Tensor> {
++        let mut out = scratch(self.backend.context(), DType::BF16, x.shape().dims())?;
++        spatial_ops::affine_bf16(self.backend.context(), x, a, b, &mut out, mode)?;
++        Ok(out)
++    }
++    fn text(&self, context: &Tensor, family: &str) -> Result<Tensor> {
++        let x = self.linear(context, &format!("{family}.text_embedding.0"))?;
++        let x = kernels::activation::gelu_tanh(self.backend.context(), &x)?;
++        self.linear(&x, &format!("{family}.text_embedding.2"))
++    }
++    fn cross_kv(&self, context: &Tensor, name: &str) -> Result<(Tensor, Tensor)> {
++        let k = self.linear(context, &format!("{name}.cross_attn.k"))?;
++        let k = self.rms(&k, &format!("{name}.cross_attn.norm_k.weight"))?;
++        let v = self.linear(context, &format!("{name}.cross_attn.v"))?;
++        Ok((k, v))
++    }
++    pub(crate) fn attention(
++        &self,
++        q: &Tensor,
++        k: &Tensor,
++        v: &Tensor,
++        heads: usize,
++        dim: usize,
++        mask: Option<&Tensor>,
++    ) -> Result<Tensor> {
++        let nq = q.numel() / (heads * dim);
++        let nk = k.numel() / (heads * dim);
++        let q = q.reshape(vec![nq, heads, dim])?;
++        let k = k.reshape(vec![nk, heads, dim])?;
++        let v = v.reshape(vec![nk, heads, dim])?;
++        // Reuse maintained FA2 for the homogeneous video self-attention. The
++        // masked cross and heterogeneous action attention use a safe baseline.
++        if mask.is_none() && nq == nk && dim <= 256 {
++            return kernels::attention::mha_bf16(self.backend.context(), &q, &k, &v, nq)?
++                .reshape(vec![nq, heads * dim]);
++        }
++        let mut out = scratch(self.backend.context(), DType::BF16, &[nq, heads, dim])?;
++        spatial_ops::masked_attention_bf16(self.backend.context(), &q, &k, &v, mask, &mut out)?;
++        out.reshape(vec![nq, heads * dim])
++    }
++    fn qkv(
++        &self,
++        x: &Tensor,
++        name: &str,
++        mods: &Tensor,
++        rope: &Tensor,
++    ) -> Result<(Tensor, Tensor, Tensor)> {
++        let x = self.norm(x, None)?;
++        let x = self.affine(&x, &self.mod_row(mods, 1)?, &self.mod_row(mods, 0)?, 0)?;
++        let q = self.rms(
++            &self.linear(&x, &format!("{name}.self_attn.q"))?,
++            &format!("{name}.self_attn.norm_q.weight"),
++        )?;
++        let k = self.rms(
++            &self.linear(&x, &format!("{name}.self_attn.k"))?,
++            &format!("{name}.self_attn.norm_k.weight"),
++        )?;
++        let v = self.linear(&x, &format!("{name}.self_attn.v"))?;
++        let rows = x.shape().dims()[0];
++        let mut qr = scratch(self.backend.context(), DType::BF16, &[rows, 24, 128])?;
++        let mut kr = scratch(self.backend.context(), DType::BF16, &[rows, 24, 128])?;
++        spatial_ops::adjacent_rope_bf16(
++            self.backend.context(),
++            &q.reshape(vec![rows, 24, 128])?,
++            rope,
++            &mut qr,
++        )?;
++        spatial_ops::adjacent_rope_bf16(
++            self.backend.context(),
++            &k.reshape(vec![rows, 24, 128])?,
++            rope,
++            &mut kr,
++        )?;
++        Ok((
++            qr.reshape(vec![rows, 3072])?,
++            kr.reshape(vec![rows, 3072])?,
++            v,
++        ))
++    }
++    fn post(
++        &self,
++        x: &Tensor,
++        mixed: &Tensor,
++        name: &str,
++        mods: &Tensor,
++        cross: &(Tensor, Tensor),
++        mask: &Tensor,
++    ) -> Result<Tensor> {
++        let ctx = self.backend.context();
++        let projected = self.linear(mixed, &format!("{name}.self_attn.o"))?;
++        let x = self.affine(x, &self.mod_row(mods, 2)?, &projected, 1)?;
++        let norm = self.norm(&x, Some(&format!("{name}.norm3")))?;
++        let q = self.rms(
++            &self.linear(&norm, &format!("{name}.cross_attn.q"))?,
++            &format!("{name}.cross_attn.norm_q.weight"),
++        )?;
++        let attended = self.attention(&q, &cross.0, &cross.1, 24, 128, Some(mask))?;
++        let x = kernels::elementwise::add(
++            ctx,
++            &x,
++            &self.linear(&attended, &format!("{name}.cross_attn.o"))?,
++        )?;
++        let norm = self.norm(&x, None)?;
++        let norm = self.affine(&norm, &self.mod_row(mods, 4)?, &self.mod_row(mods, 3)?, 0)?;
++        let ff = self.linear(&norm, &format!("{name}.ffn.0"))?;
++        let ff = kernels::activation::gelu_tanh(ctx, &ff)?;
++        let ff = self.linear(&ff, &format!("{name}.ffn.2"))?;
++        self.affine(&x, &self.mod_row(mods, 5)?, &ff, 1)
++    }
++    /// Complete native image -> VAE38 -> VideoDiT30 -> ActionDiT30 x20 path.
++    pub fn forward(&self, input: &FastWamInputs) -> Result<Tensor> {
++        let ctx = self.backend.context();
++        for (t, s, d) in [
++            (&input.image, vec![224, 448, 3], DType::BF16),
++            (&input.context, vec![128, 4096], DType::BF16),
++            (&input.context_mask, vec![129], DType::I8),
++            (&input.proprio, vec![1, 8], DType::BF16),
++            (&input.noise, vec![32, 7], DType::BF16),
++        ] {
++            if t.shape().dims() != s || t.dtype() != d || t.device() != self.backend.device() {
++                return Err(err("fixed input profile mismatch"));
++            }
++        }
++        let latents = self.vision(&input.image)?;
++        let mut patches = scratch(ctx, DType::BF16, &[98, 192])?;
++        spatial_ops::im2col_bf16(ctx, &latents, &mut patches, [2, 2], [2, 2], [0, 0], [7, 14])?;
++        let mut video = self.linear(&patches, "video.patch_embedding")?;
++        let proprio = self.linear(&input.proprio, "proprio")?;
++        let context = kernels::elementwise::concat_rows_bf16(ctx, &input.context, &proprio)?;
++        let vctx = self.text(&context, "video")?;
++        let actx = self.text(&context, "action")?;
++        let mut vcache = Vec::new();
++        let mut acache = Vec::new();
++        for layer in 0..30 {
++            let name = format!("video.blocks.{layer}");
++            let mods = &self.video_mod[layer];
++            let cross = self.cross_kv(&vctx, &name)?;
++            let (q, k, v) = self.qkv(&video, &name, mods, &self.video_rope)?;
++            let attended = self.attention(&q, &k, &v, 24, 128, None)?;
++            video = self.post(&video, &attended, &name, mods, &cross, &input.context_mask)?;
++            vcache.push((k, v));
++            acache.push(self.cross_kv(&actx, &format!("action.blocks.{layer}"))?);
++        }
++        let mut state = input.noise.clone();
++        for step in 0..20 {
++            let mut x = self.linear(&state, "action.action_encoder")?;
++            for layer in 0..30 {
++                let name = format!("action.blocks.{layer}");
++                let mods = &self.action_mod[step][layer];
++                let (q, k, v) = self.qkv(&x, &name, mods, &self.action_rope)?;
++                let k = kernels::elementwise::concat_rows_bf16(ctx, &vcache[layer].0, &k)?;
++                let v = kernels::elementwise::concat_rows_bf16(ctx, &vcache[layer].1, &v)?;
++                let attended = self.attention(&q, &k, &v, 24, 128, None)?;
++                x = self.post(
++                    &x,
++                    &attended,
++                    &name,
++                    mods,
++                    &acache[layer],
++                    &input.context_mask,
++                )?;
++            }
++            let velocity = self.linear(&x, "action.head")?;
++            let delta = kernels::elementwise::scale(ctx, &velocity, self.deltas[step])?;
++            state = kernels::elementwise::add(ctx, &state, &delta)?;
++        }
++        Ok(state)
++    }
++}
+diff --git a/crates/apxinf-model/src/fastwam/runner.rs b/crates/apxinf-model/src/fastwam/runner.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..02fca001b6e78976ab1e6838b3e167b561d49ac9
+--- /dev/null
++++ b/crates/apxinf-model/src/fastwam/runner.rs
+@@ -0,0 +1,286 @@
++//! Stable input ownership and whole-model graph, including all20 Euler steps.
++//! Request operations are serialized. Output aliases the last run's buffer.
++use super::model::{err, FastWamInputs, FastWamModel};
++use crate::vla::*;
++use apxinf_core::{Backend, DType, Device, Graph, Result, Tensor};
++use apxinf_cuda::{kernels, transfers, tuning};
++use half::bf16;
++use std::{cell::RefCell, rc::Rc};
++
++pub struct FastWamRunner {
++    pub model: Rc<FastWamModel>,
++    plan: RefCell<Option<FastWamPrepared>>,
++}
++pub struct FastWamPrepared {
++    // Field order: destroy graph before storage and retained model.
++    graph: Option<Box<dyn Graph>>,
++    output: Tensor,
++    arena: kernels::GraphWorkspace,
++    input: FastWamInputs,
++    model: Rc<FastWamModel>,
++    spec: InferenceSpec,
++}
++fn host_bf(t: &Tensor, shape: &[usize]) -> Result<Tensor> {
++    if t.device() != Device::Cpu || t.numel() != shape.iter().product::<usize>() {
++        return Err(err("host input size/device mismatch"));
++    }
++    if !matches!(t.dtype(), DType::F32 | DType::BF16) {
++        return Err(err("host floating inputs require FP32 or BF16"));
++    }
++    if t.dtype() == DType::BF16 {
++        return t.reshape(shape.to_vec());
++    }
++    let v = t.to_f32_vec()?;
++    if v.iter().any(|x| !x.is_finite()) {
++        return Err(err("nonfinite host input"));
++    }
++    Tensor::from_bf16(
++        shape.to_vec(),
++        &v.into_iter().map(bf16::from_f32).collect::<Vec<_>>(),
++    )
++}
++impl FastWamInputs {
++    pub fn from_host(
++        image: &Tensor,
++        context: &Tensor,
++        proprio: &Tensor,
++        noise: &Tensor,
++        mask: &[u8],
++    ) -> Result<Self> {
++        if !matches!(image.shape().dims(), [224, 448, 3] | [100352, 3])
++            || context.shape().dims() != [128, 4096]
++            || proprio.numel() != 8
++            || noise.numel() != 224
++            || mask.len() != 128
++            || mask.iter().any(|&x| x > 1)
++        {
++            return Err(err(
++                "LIBERO image224x448x3/context128x4096/proprio8/noise32x7/mask128 required",
++            ));
++        }
++        let mut mask = mask.iter().map(|&x| x as i8).collect::<Vec<_>>();
++        mask.push(1);
++        Ok(Self {
++            image: host_bf(image, &[224, 448, 3])?,
++            context: host_bf(context, &[128, 4096])?,
++            proprio: host_bf(proprio, &[1, 8])?,
++            noise: host_bf(noise, &[32, 7])?,
++            context_mask: Tensor::from_i8(vec![129], &mask)?,
++        })
++    }
++}
++impl FastWamRunner {
++    pub fn new(model: FastWamModel) -> Self {
++        Self {
++            model: Rc::new(model),
++            plan: RefCell::new(None),
++        }
++    }
++    pub fn prepare_native(&self, host: &FastWamInputs, graph: bool) -> Result<FastWamPrepared> {
++        let backend = &self.model.backend;
++        let input = FastWamInputs {
++            image: backend.to_device(&host.image)?,
++            context: backend.to_device(&host.context)?,
++            context_mask: backend.to_device(&host.context_mask)?,
++            proprio: backend.to_device(&host.proprio)?,
++            noise: backend.to_device(&host.noise)?,
++        };
++        // Monotonic graph arena retains all transient outputs. Setup-only;
++        // never allocates in replay. Bounded profile, 12GiB capacity.
++        let arena = kernels::GraphWorkspace::new(12usize << 30, backend.device_id())?;
++        let eager = tuning::without_autotune(|| {
++            kernels::prepare_with_workspace(&arena, || self.model.forward(&input))
++        })?;
++        backend.synchronize()?;
++        let (captured, output) = if graph {
++            let (g, o) = backend.capture_graph(|| {
++                tuning::without_autotune(|| {
++                    kernels::with_workspace(&arena, || self.model.forward(&input))
++                })
++            })?;
++            (Some(g), o)
++        } else {
++            (None, eager)
++        };
++        backend.synchronize()?;
++        eprintln!(
++            "FastWAM native prepare graph={} arena_used={} capacity={}",
++            graph,
++            arena.used(),
++            arena.capacity()
++        );
++        Ok(FastWamPrepared {
++            graph: captured,
++            output,
++            arena,
++            input,
++            model: Rc::clone(&self.model),
++            spec: InferenceSpec {
++                token_count: 128,
++                image_layout: None,
++            },
++        })
++    }
++    fn bind_request(request: &VlaRequest<'_>) -> Result<FastWamInputs> {
++        let observation = request.observation;
++        if observation.token_ids.len() != 128
++            || observation.action_mask.is_some()
++            || request.metadata.planning.is_some()
++        {
++            return Err(err(
++                "fixed cached-T5 profile requires128 slots, no mask/step override",
++            ));
++        }
++        let image = match &observation.vision {
++            VisionObservation::Patches(t) => t,
++            _ => return Err(err("normalized NHWC image tensor required")),
++        };
++        let context = request
++            .metadata
++            .language_features
++            .ok_or_else(|| err("cached language_features[128,4096] required"))?;
++        let proprio = observation
++            .state
++            .as_ref()
++            .ok_or_else(|| err("proprio8 required"))?;
++        let noise = match request.initial_latent {
++            InitialLatent::Provided(t) => t,
++            _ => {
++                return Err(err(
++                    "fixed profile currently requires caller-supplied exact noise32x7",
++                ))
++            }
++        };
++        let mask = request
++            .metadata
++            .attention_mask
++            .ok_or_else(|| err("cachedT5 attention mask128 required"))?;
++        FastWamInputs::from_host(image, context, proprio, noise, mask)
++    }
++    pub fn infer_native(&self, host: &FastWamInputs) -> Result<Tensor> {
++        let mut plan = self
++            .plan
++            .try_borrow_mut()
++            .map_err(|_| err("runs must be serialized"))?;
++        if plan.is_none() {
++            *plan = Some(self.prepare_native(host, true)?);
++        }
++        let plan = plan.as_mut().ok_or_else(|| err("plan missing"))?;
++        plan.update(host)?;
++        plan.replay()
++    }
++}
++impl FastWamPrepared {
++    pub fn arena_used(&self) -> usize {
++        self.arena.used()
++    }
++    pub fn update(&mut self, host: &FastWamInputs) -> Result<()> {
++        self.model.backend.synchronize()?;
++        for (src, dst) in [
++            (&host.image, &self.input.image),
++            (&host.context, &self.input.context),
++            (&host.context_mask, &self.input.context_mask),
++            (&host.proprio, &self.input.proprio),
++            (&host.noise, &self.input.noise),
++        ] {
++            transfers::copy_cpu_to_cuda(src, dst)?;
++        }
++        Ok(())
++    }
++    pub fn replay(&self) -> Result<Tensor> {
++        if let Some(g) = &self.graph {
++            g.replay()?;
++            Ok(self.output.clone())
++        } else {
++            tuning::without_autotune(|| {
++                kernels::with_workspace(&self.arena, || self.model.forward(&self.input))
++            })
++        }
++    }
++}
++impl Drop for FastWamPrepared {
++    fn drop(&mut self) {
++        let _ = self.model.backend.synchronize();
++    }
++}
++struct PublicPrepared {
++    inner: RefCell<FastWamPrepared>,
++    spec: InferenceSpec,
++}
++impl PreparedInference for PublicPrepared {
++    fn spec(&self) -> &InferenceSpec {
++        &self.spec
++    }
++    fn status(&self) -> PreparationStatus {
++        PreparationStatus::Ready {
++            mode: if self.inner.borrow().graph.is_some() {
++                ExecutionMode::Graph
++            } else {
++                ExecutionMode::Eager
++            },
++            fallback_reason: None,
++        }
++    }
++    fn run(&self, request: &VlaRequest<'_>) -> Result<Action> {
++        let host = FastWamRunner::bind_request(request)?;
++        let mut p = self
++            .inner
++            .try_borrow_mut()
++            .map_err(|_| err("prepared calls must be serialized"))?;
++        p.update(&host)?;
++        p.replay().map(Action::new)
++    }
++}
++impl VlaRuntime for FastWamRunner {
++    fn model_variant(&self) -> Option<&'static str> {
++        Some("bf16")
++    }
++    fn contract(&self) -> VlaContract {
++        VlaContract {
++            action_shape: [32, 7],
++            patch_shape: [224 * 448, 3],
++            max_token_len: 128,
++            num_views: 1,
++            image_size: 224,
++            patch_size: 1,
++            accepts_rgb_u8: false,
++        }
++    }
++    fn infer(&self, r: &VlaRequest<'_>) -> Result<Action> {
++        self.infer_native(&Self::bind_request(r)?).map(Action::new)
++    }
++    fn prepare(&self, _s: &InferenceSpec) -> Result<Box<dyn PreparedInference>> {
++        Err(err("use prepare_for with actual cached language input"))
++    }
++    fn prepare_for(
++        &self,
++        r: &VlaRequest<'_>,
++        policy: ExecutionPolicy,
++    ) -> Result<Box<dyn PreparedInference>> {
++        let host = Self::bind_request(r)?;
++        let inner = self.prepare_native(&host, policy != ExecutionPolicy::Eager)?;
++        Ok(Box::new(PublicPrepared {
++            inner: RefCell::new(inner),
++            spec: r.observation.inference_spec(),
++        }))
++    }
++    fn clear_prepared(&self) -> Result<()> {
++        self.model.backend.synchronize()?;
++        self.plan
++            .try_borrow_mut()
++            .map_err(|_| err("runner in use"))?
++            .take();
++        Ok(())
++    }
++    fn execution_mode(&self) -> &'static str {
++        if self.plan.borrow().is_some() {
++            "whole-model-graph"
++        } else {
++            "unprepared"
++        }
++    }
++    fn infer_host_f32(&self, r: &VlaRequest<'_>) -> Result<Vec<f32>> {
++        let out = self.infer(r)?;
++        self.model.backend.to_cpu(out.tensor())?.to_f32_vec()
++    }
++}
+diff --git a/crates/apxinf-model/src/fastwam/vision.rs b/crates/apxinf-model/src/fastwam/vision.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..289f9d2ae90977bbe83a585a3a0f26eac57dc019
+--- /dev/null
++++ b/crates/apxinf-model/src/fastwam/vision.rs
+@@ -0,0 +1,147 @@
++//! WanVideoVAE38 encoder at its explicitly restricted single-frame profile.
++//! Zero-history CausalConv3d slices are transformed once at checkpoint export;
++//! first-chunk temporal downsamplers intentionally bypass time_conv as upstream.
++use super::model::{err, scratch, FastWamModel};
++use apxinf_core::{DType, Result, Tensor};
++use apxinf_cuda::kernels;
++use apxinf_cuda_new::ops::spatial_ops;
++
++impl FastWamModel {
++    fn conv(
++        &self,
++        x: &Tensor,
++        name: &str,
++        k: usize,
++        stride: usize,
++        padding: usize,
++        oh: usize,
++        ow: usize,
++    ) -> Result<Tensor> {
++        let d = x.shape().dims();
++        if d.len() != 3 {
++            return Err(err("VAE input must be NHWC"));
++        }
++        let mut col = scratch(
++            self.backend.context(),
++            DType::BF16,
++            &[oh * ow, k * k * d[2]],
++        )?;
++        spatial_ops::im2col_bf16(
++            self.backend.context(),
++            x,
++            &mut col,
++            [k, k],
++            [stride, stride],
++            [padding, padding],
++            [oh, ow],
++        )?;
++        // Standalone convolution rounds accumulation before its BF16 bias add.
++        let mat = kernels::gemm::bf16(
++            self.backend.context(),
++            &col,
++            self.w(&format!("{name}.weight"))?,
++        )?;
++        let mat = kernels::elementwise::bias_bf16(
++            self.backend.context(),
++            &mat,
++            Some(self.w(&format!("{name}.bias"))?),
++        )?;
++        let c = mat.shape().dims()[1];
++        mat.reshape(vec![oh, ow, c])
++    }
++    fn vae_norm(&self, x: &Tensor, name: &str) -> Result<Tensor> {
++        let d = x.shape().dims();
++        let rows = d[0] * d[1];
++        let c = d[2];
++        let mut out = scratch(self.backend.context(), DType::BF16, &[rows, c])?;
++        spatial_ops::l2_channel_bf16(
++            self.backend.context(),
++            &x.reshape(vec![rows, c])?,
++            self.w(name)?,
++            &mut out,
++        )?;
++        out.reshape(d.to_vec())
++    }
++    fn residual(&self, x: &Tensor, name: &str) -> Result<Tensor> {
++        let d = x.shape().dims();
++        let (h, w) = (d[0], d[1]);
++        let shortcut = if self
++            .weights
++            .contains_key(&format!("{name}.shortcut.weight"))
++        {
++            self.conv(x, &format!("{name}.shortcut"), 1, 1, 0, h, w)?
++        } else {
++            x.clone()
++        };
++        let y = self.vae_norm(x, &format!("{name}.residual.0.gamma"))?;
++        let y = kernels::activation::silu(self.backend.context(), &y)?;
++        let y = self.conv(&y, &format!("{name}.residual.2"), 3, 1, 1, h, w)?;
++        let y = self.vae_norm(&y, &format!("{name}.residual.3.gamma"))?;
++        let y = kernels::activation::silu(self.backend.context(), &y)?;
++        let y = self.conv(&y, &format!("{name}.residual.6"), 3, 1, 1, h, w)?;
++        kernels::elementwise::add(self.backend.context(), &y, &shortcut)
++    }
++    pub(crate) fn vision(&self, image: &Tensor) -> Result<Tensor> {
++        let ctx = self.backend.context();
++        let mut x = scratch(ctx, DType::BF16, &[112, 224, 12])?;
++        spatial_ops::patchify_bf16(ctx, image, &mut x, 2)?;
++        x = self.conv(&x, "vae.encoder.conv1", 3, 1, 1, 112, 224)?;
++        for stage in 0..4 {
++            let original = x.clone();
++            let (h, w) = (x.shape().dims()[0], x.shape().dims()[1]);
++            for block in 0..2 {
++                x = self.residual(
++                    &x,
++                    &format!("vae.encoder.downsamples.{stage}.downsamples.{block}"),
++                )?;
++            }
++            let co = x.shape().dims()[2];
++            let fs = if stage < 3 { 2 } else { 1 };
++            let ft = if stage == 1 || stage == 2 { 2 } else { 1 };
++            if stage < 3 {
++                x = self.conv(
++                    &x,
++                    &format!("vae.encoder.downsamples.{stage}.downsamples.2.resample.1"),
++                    3,
++                    2,
++                    0,
++                    h / 2,
++                    w / 2,
++                )?;
++            }
++            let mut shortcut = scratch(ctx, DType::BF16, &[h / fs, w / fs, co])?;
++            spatial_ops::avg_first_bf16(ctx, &original, &mut shortcut, co, fs, ft)?;
++            x = kernels::elementwise::add(ctx, &x, &shortcut)?;
++        }
++        x = self.residual(&x, "vae.encoder.middle.0")?;
++        let residual = x.clone();
++        let normalized = self.vae_norm(&x, "vae.encoder.middle.1.norm.gamma")?;
++        let qkv = self
++            .conv(&normalized, "vae.encoder.middle.1.to_qkv", 1, 1, 0, 14, 28)?
++            .reshape(vec![392, 1920])?;
++        let qkv = kernels::attention::split_qkv_bias_bf16(ctx, &qkv, None, 1, 640)?;
++        let attended = self
++            .attention(&qkv.q, &qkv.k, &qkv.v, 1, 640, None)?
++            .reshape(vec![14, 28, 640])?;
++        let projected = self.conv(&attended, "vae.encoder.middle.1.proj", 1, 1, 0, 14, 28)?;
++        x = kernels::elementwise::add(ctx, &residual, &projected)?;
++        x = self.residual(&x, "vae.encoder.middle.2")?;
++        x = self.vae_norm(&x, "vae.encoder.head.0.gamma")?;
++        x = kernels::activation::silu(ctx, &x)?;
++        x = self.conv(&x, "vae.encoder.head.2", 3, 1, 1, 14, 28)?;
++        x = self.conv(&x, "vae.conv1", 1, 1, 0, 14, 28)?;
++        // Mu/logvar chunk is along channels. Conv1 output is NHWC[14,28,96].
++        let out =
++            kernels::elementwise::contiguous_columns_bf16(ctx, &x.reshape(vec![392, 96])?, 0, 48)?;
++        let mut normalized = scratch(ctx, DType::BF16, &[392, 48])?;
++        spatial_ops::affine_bf16(
++            ctx,
++            &out,
++            &self.vae_mean,
++            &self.vae_inv_std,
++            &mut normalized,
++            2,
++        )?;
++        normalized.reshape(vec![14, 28, 48])
++    }
++}
+diff --git a/crates/apxinf-model/src/lib.rs b/crates/apxinf-model/src/lib.rs
+index 63957218e63749e9d57e34da6776ab99eb02af7f..2d60d9bb162530979e31424ff56ff8bafb5eea8a 100644
+--- a/crates/apxinf-model/src/lib.rs
++++ b/crates/apxinf-model/src/lib.rs
+@@ -7,6 +7,8 @@
+ mod generation_config;
+ pub mod gr00t;
+ pub mod hyvla;
++#[cfg(feature = "cuda")]
++pub mod fastwam;
+ pub mod llama;
+ pub mod llm_trait;
+ pub mod pi05;
+diff --git a/crates/apxinf-model/src/vla/mod.rs b/crates/apxinf-model/src/vla/mod.rs
+index b67e69c0adc4010da5ff8c31d97089d4da81de71..ca40f94a53e94347d7476673491857b109484dd7 100644
+--- a/crates/apxinf-model/src/vla/mod.rs
++++ b/crates/apxinf-model/src/vla/mod.rs
+@@ -103,6 +103,9 @@
+ /// default.
+ #[derive(Clone, Copy, Debug, Default)]
+ pub struct VlaMetadata<'a> {
++    /// Optional caller-computed language features for cached-encoder profiles.
++    /// The family validates shape/dtype; token IDs are not reinterpreted as floats.
++    pub language_features: Option<&'a Tensor>,
+     pub attention_mask: Option<&'a [u8]>,
+     pub image_grid_thw: Option<&'a [[u32; 3]]>,
+     pub embodiment_id: Option<usize>,
+@@ -124,6 +127,7 @@
+             observation,
+             initial_latent: InitialLatent::Generate { rng },
+             metadata: VlaMetadata {
++                language_features: None,
+                 attention_mask: None,
+                 image_grid_thw: None,
+                 embodiment_id: None,
+@@ -137,6 +141,7 @@
+             observation,
+             initial_latent: InitialLatent::Provided(latent),
+             metadata: VlaMetadata {
++                language_features: None,
+                 attention_mask: None,
+                 image_grid_thw: None,
+                 embodiment_id: None,
+diff --git a/crates/apxinf-py/src/lib.rs b/crates/apxinf-py/src/lib.rs
+index 3eeac0116dffca6ea2d552db6de852d32878bae0..4d258a20199d81399908b64c37fccbebcc6cb493 100644
+--- a/crates/apxinf-py/src/lib.rs
++++ b/crates/apxinf-py/src/lib.rs
+@@ -245,6 +245,7 @@
+     rng: RngKey,
+ ) -> VlaRequest<'a> {
+     let metadata = VlaMetadata {
++        language_features: None,
+         attention_mask: Some(&input.attention_mask),
+         image_grid_thw: Some(&input.image_grid_thw),
+         embodiment_id: input.embodiment_id,
+@@ -719,6 +720,7 @@
+             raw_rgb_resize: raw_frames,
+         };
+         let metadata = VlaMetadata {
++            language_features: None,
+             attention_mask: Some(&input.attention_mask),
+             image_grid_thw: Some(&input.image_grid_thw),
+             embodiment_id: input.embodiment_id,
+@@ -1052,7 +1054,7 @@
+         embodiment_id,
+         noise=None,
+         *, num_steps=None, max_new_tokens=None, min_new_tokens=0,
+-        terminator_ids=None, closing_ids=None,
++        terminator_ids=None, closing_ids=None, language_features=None,
+     ))]
+     #[allow(clippy::too_many_arguments)]
+     fn infer_preprocessed<'py>(
+@@ -1070,6 +1072,7 @@
+         min_new_tokens: usize,
+         terminator_ids: Option<Vec<u32>>,
+         closing_ids: Option<Vec<u32>>,
++        language_features: Option<PyReadonlyArray2<'py, f32>>,
+     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+         let input = self.preprocessed_vla_input(
+             "_infer_preprocessed",
+@@ -1112,7 +1115,13 @@
+         } else {
+             RngKey::default()
+         };
+-        let request = preprocessed_request(&input, planning, rng);
++        let language = language_features.map(|features| {
++            let shape=features.shape().to_vec();
++            let values=features.as_slice().map_err(|_|PyValueError::new_err("language_features must be C-contiguous float32"))?;
++            Tensor::from_f32(Shape::new(shape),values).map_err(runtime_err)
++        }).transpose()?;
++        let mut request = preprocessed_request(&input, planning, rng);
++        request.metadata.language_features=language.as_ref();
+         let flat = self.model.infer_host_f32(&request).map_err(runtime_err)?;
+         self.action_array(py, flat)
+     }
+@@ -1271,6 +1280,7 @@
+             Some(noise),
+         )?;
+         let metadata = VlaMetadata {
++            language_features: None,
+             attention_mask: Some(&input.attention_mask),
+             image_grid_thw: Some(&input.image_grid_thw),
+             embodiment_id: input.embodiment_id,
+diff --git a/doc/fastwam.md b/doc/fastwam.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..2984927e62456132fa179d2d75c546487a131586
+--- /dev/null
++++ b/doc/fastwam.md
+@@ -0,0 +1,126 @@
++# Experimental FastWAM native fixed profile
++
++**Not functionally accepted.** This isolated port was developed under an
++explicit no-tests/no-extra-review instruction. Building, registering, preparing
++or measuring it must not be represented as passing operator or public API gates.
++Actual full native/public benchmark evidence exists (job329256); it is recorded
++below without treating saved-output arithmetic as a new test/acceptance gate.
++
++## Declared seam
++
++Native BF16 SM80 only. LIBERO checkpoint `libero_uncond_2cam224.pt`, author
++revision `7faa71108368fbb3b6885649f112af607427a2d4`; H32/A7, proprio8,
++normalized resized single current image224x448, cachedT5[128,4096], Euler20,
++sigma_shift5. Cached text encoding is explicitly outside the measured graph;
++image VAE, VideoDiT30, proprio projection, text embedding/crossKV, ActionDiT30
++and all20 solver steps are inside one graph.
++
++Image input is floating normalized NHWC[224,448,3], or its declared packed
++[100352,3] representation through the generic binding. Context features use
++`VlaMetadata.language_features`; token slots have length128 and mask128.
++Caller-provided noise[32,7] is required; generated noise is explicitly unsupported.
++Output is normalized BF16 actions[32,7], transferred to FP32 only at the public
++output boundary. This policy is not a deployable robot action adapter.
++
++## Ownership and entry points
++
++- `fastwam/load.rs`: existing Rust registry/AutoModel loader.
++- `fastwam/model.rs`: forward order, fixed flow schedule, time conditioning.
++- `fastwam/vision.rs`: WanVAE38 first-frame encoder semantics.
++- `fastwam/runner.rs`: input binding, stable arena, graph and output lifetime.
++- `FastWamPolicy`: existing AutoPolicy/ModelRunner integration; generic
++  `_infer_preprocessed(...,language_features=context)` binding.
++
++Checkpoint export is one-time CPU weight mapping, not inference. It transposes
++linears, reduces zero-history T1 causal3d kernels to their last temporal slice,
++and retains full spatial kernels. The first temporal-downsample time_conv is
++intentionally bypassed, matching the author's cache-first-frame path. Decoder
++weights and the unused video output head are not loaded.
++
++Fixed schedule modulation is computed by native GPU operators during setup.
++Per-request text K/V and video K/V are reused within the action loop, not across
++unrelated observations. All forward intermediates stay on GPU. Graph output
++aliases reusable storage; consumers must download/copy before the next replay.
++
++## Precision / performance debt
++
++The safe spatial baseline adds channel L2 BF16 normalization, NHWC im2col,
++first-frame grouped averages, adjacent-pair RoPE and masked BF16 attention.
++It is native, but untested at the operator level and untuned. FP32 cos/sin tables with FP64 rotary
++products differ from the author's FP64 table representation; output comparisons
++must quantify the effect. Welford LayerNorm, whole3072 RMSNorm and BF16 rounding
++boundaries are explicit. No FP8 is used on A800.
++
++Preparation warms up the actual complete model before capture. Public
++`prepare_for` is supported; shape-only preparation and unsupported devices,
++precisions, dimensions and schedule overrides fail explicitly. A native family
++benchmark executable alone is not proof that the Python policy was exercised.
++
++## Recorded complete native result (not release acceptance)
++
++Slurm329256 completed on2026-11-15,23:49:42->23:51:05+08:00,exit0, A800-SXM4-80GB,
++driver580.178.04 (`logs/full-native-329256.log:5`). Both native and existing public AutoPolicy/binding paths saved
++80outputs (eight formal cases x10). No tests, smoke/operator suites or extra
++reviews were run. No additional model execution is implied by these notes.
++
++| Timing scope | Median ms | Mean ms | P95 ms |
++|---|---:|---:|---:|
++| Whole graph dispatch/completion wall |212.5182835|212.6541041875|213.09412235|
++| Prepared-input upload + graph + output wall |212.869315|213.018002175|213.75278815|
++| Public AutoPolicy wall |215.3436585795|215.5860788247|216.6182828136|
++
++Saved-output arithmetic versus author compiled20 and project compiled20 from
++source227993d5/job327380: maxrelL2 0.011609512347092753, mincosine
++0.9999326109645393, maxabs0.05078125. Both paths are within the original
++0.05/0.999 numerical proxy. This is not an independent operator/capture-parity
++gate, deployment acceptance or robot-success evidence.
++
++The public benchmark receives CPU FP32 NHWC prepared before timing; historical
++project timing receives NCHW. Keep that seam difference explicit and calculate
++no pure-backend speedup ratio. New latency is slower than historical author
++142.4363065ms and project137.6502975ms: this implementation is **not the winner**.
++Whole-graph dispatch/completion wall is not a pure CUDA-event kernel duration.
++
++Native preparation is27,855.473494ms excluding eight warmup replays. Public
++preparation15,204.954596ms includes eight warmups and has different cache/process
++conditions; these are not matching cold-start measurements. Arena consumption
++is4,595,864,768bytes within12GiB, not a measured live activation peak.
++
++Portable source-only reproduction helpers and build/asset instructions:
++[`python/apxinf/examples/fastwam_experimental/`](../python/apxinf/examples/fastwam_experimental/README.md).
++Those helper adapters/documentation were curated after measurement, not rerun.
++
++## Source-visible performance debt (not profiling)
++
++These are implementation facts and hypotheses for later authorized work, not
++measured stage percentages, causal attribution of the latency gap, or promised
++speedups:
++
++1. `model.rs::attention` reuses maintained FA2 only for same-length unmasked
++   attention. Action self-attention has32queries/130keys and uses the custom
++   baseline, as does masked text cross-attention. The custom CUDA implementation
++   performs warp FP32 dot reduction, stores per-row probabilities, then loops
++   serially over keys for each output channel; it does not use a tiled
++   Tensor-Core/FlashAttention implementation. Static forward order calls this
++   action self/cross pair600times each, video cross30times and VAE once per
++   request. Those counts are source-derived, not measured timings.
++2. Action K/V are concatenated with98cached video tokens inside every one of
++   600action blocks. Two130x3072BF16 concatenations imply958,464,000logical
++   output bytes per request, plus corresponding reads; this is **not measured
++   DRAM traffic**. Video KV and text cross-KV are already request-cached; do not
++   describe those caches as missing. A fixed-prefix/action-window layout could
++   remove repeated concatenation but has no measured benefit here.
++3. WanVAE convolutions materialize NHWC im2col matrices and then invoke GEMM and
++   a separate bias operation. This is a complete native path, not a tuned
++   convolution provider. No cuDNN/fused-convolution comparison was performed.
++4. LayerNorm, scale/shift, Q/K RMS, adjacent RoPE, activation and residual/gating
++   remain many distinct device operations with intermediate BF16 boundaries.
++   CUDA Graph removes repeated host construction/submission, not those kernels
++   or their intermediate traffic. Fusion must preserve intended rounding;
++   no post-measurement fusion or numerical acceptance is claimed.
++5. `runner.rs` deliberately uses `without_autotune` and a monotonic graph arena.
++   Missing GEMM tuning and cross-node buffer liveness reuse are performance
++   debt; the4.596GB logical arena consumption is observed, but its latency
++   contribution is unmeasured. Policy validation/copies/FP32->BF16 conversion,
++   synchronization before input update and final output transfer are additional
++   public-seam work, not proof that they explain the native-vs-historical gap.
+diff --git a/python/apxinf/apxinf/policies/__init__.py b/python/apxinf/apxinf/policies/__init__.py
+index 602e093903262c8959983d2da820f70ffffcd55b..b16c12c87ff749acc63a0424602a3dadb037d4ce 100644
+--- a/python/apxinf/apxinf/policies/__init__.py
++++ b/python/apxinf/apxinf/policies/__init__.py
+@@ -39,7 +39,7 @@
+ from .registry import available_policies, get_policy, register_policy
+ 
+ # Concrete model policies (importing registers them under their model_type).
+-from .impls import Pi05Policy, Pi0FastPolicy, Gr00tPolicy, QwenDrivePolicy, WallossPolicy, HyVlaPolicy
++from .impls import Pi05Policy, Pi0FastPolicy, Gr00tPolicy, QwenDrivePolicy, WallossPolicy, HyVlaPolicy, FastWamPolicy
+ 
+ __all__ = [
+     "Policy",
+@@ -59,4 +59,5 @@
+     "QwenDrivePolicy",
+     "WallossPolicy",
+     "HyVlaPolicy",
++    "FastWamPolicy",
+ ]
+diff --git a/python/apxinf/apxinf/policies/impls/__init__.py b/python/apxinf/apxinf/policies/impls/__init__.py
+index eb38bd9387b3f50c9d5daca78207342a2187e5d5..6fd1f478e84e11554f4584b9c51d7d8fe1f453c5 100644
+--- a/python/apxinf/apxinf/policies/impls/__init__.py
++++ b/python/apxinf/apxinf/policies/impls/__init__.py
+@@ -25,5 +25,6 @@
+ from .qwen_drive import QwenDrivePolicy
+ from .walloss import WallossPolicy
+ from .hyvla import HyVlaPolicy
++from .fastwam import FastWamPolicy
+ 
+-__all__ = ["Pi05Policy", "Pi0FastPolicy", "Gr00tPolicy", "QwenDrivePolicy", "WallossPolicy", "HyVlaPolicy"]
++__all__ = ["Pi05Policy", "Pi0FastPolicy", "Gr00tPolicy", "QwenDrivePolicy", "WallossPolicy", "HyVlaPolicy", "FastWamPolicy"]
+diff --git a/python/apxinf/apxinf/policies/impls/fastwam.py b/python/apxinf/apxinf/policies/impls/fastwam.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..b2c294ba579230fbd51b7fea87d41611b7d2fd1b
+--- /dev/null
++++ b/python/apxinf/apxinf/policies/impls/fastwam.py
+@@ -0,0 +1,88 @@
++"""Experimental native LIBERO FastWAM, normalized cached-T5 tensor interface.
++
++Not a robot adapter: image resize, prompt/T5 encoding and normalization must be
++performed by the caller. No Torch/Transformers/external inference engine runs.
++The user waived tests for this port; this policy is NOT functionally accepted.
++"""
++from __future__ import annotations
++
++import time
++from collections.abc import Mapping
++from pathlib import Path
++
++import numpy as np
++
++from ..registry import register_policy
++
++
++def _array(value, shape, name):
++    value = np.asarray(value)
++    if value.shape != shape or not np.issubdtype(value.dtype, np.floating):
++        raise ValueError(f"{name} must be floating {shape}")
++    value = np.ascontiguousarray(value, dtype=np.float32)
++    if not np.isfinite(value).all():
++        raise ValueError(f"{name} must be finite in float32")
++    return value
++
++
++@register_policy("fastwam")
++class FastWamPolicy:
++    """Fixed224x448/cachedT5128/proprio8/H32A7/Euler20shift5 research seam."""
++
++    @classmethod
++    def from_pretrained(cls, checkpoint_dir, *, model_runner=None,
++                        normalized_output=False, device="cuda:0",
++                        model_variant="bf16"):
++        if normalized_output is not True:
++            raise ValueError("FastWamPolicy requires normalized_output=True; not robot commands")
++        if model_variant not in ("auto", "bf16"):
++            raise ValueError("only unquantized bf16 is supported")
++        if model_runner is None:
++            from apxinf import ModelRunner
++            model_runner = ModelRunner.load("fastwam", Path(checkpoint_dir),
++                                            device=device, precision="bf16",
++                                            model_variant=model_variant,
++                                            autotune=False)
++        if (model_runner.action_horizon, model_runner.action_dim,
++                model_runner.max_token_len) != (32, 7, 128):
++            raise ValueError("native runner does not match LIBERO H32/A7/T5128")
++        return cls(model_runner)
++
++    def __init__(self, model_runner):
++        self.model_runner = model_runner
++        self.action_horizon = 32
++        self.action_dim = 7
++        self.metadata = {"model_type": "fastwam", "model_variant": "bf16",
++                         "action_horizon": 32, "action_dim": 7,
++                         "proprio_dim": 8, "cached_t5_tokens": 128,
++                         "image_shape": [224, 448, 3], "num_steps": 20,
++                         "sigma_shift": 5.0, "action_domain": "normalized",
++                         "deployable": False, "functional_acceptance": False}
++
++    def infer(self, observation: Mapping, *, noise=None):
++        start = time.perf_counter()
++        image = _array(observation["input_image"], (224, 448, 3), "normalized NHWC image")
++        if np.any(image < -1) or np.any(image > 1):
++            raise ValueError("normalized input_image must be within [-1,1]")
++        context = _array(observation["context"], (128, 4096), "cached T5 context")
++        proprio = _array(observation["proprio"], (8,), "normalized proprio")
++        if noise is None:
++            raise ValueError("caller-supplied noise[32,7] is currently required")
++        noise = _array(noise, (32, 7), "noise")
++        mask = np.asarray(observation["context_mask"])
++        if mask.shape != (128,) or mask.dtype != np.bool_:
++            raise ValueError("context_mask must be bool[128]")
++        model_start = time.perf_counter()
++        result = self.model_runner._infer_preprocessed(
++            image.reshape(-1, 3), np.array([[1, 224, 448]], dtype=np.uint32),
++            np.zeros(128, dtype=np.uint32), np.ascontiguousarray(mask, dtype=np.uint8),
++            proprio, None, noise, language_features=context)
++        actions = np.array(result, dtype=np.float32, order="C", copy=True)
++        if actions.shape != (32, 7) or not np.isfinite(actions).all():
++            raise ValueError("native output must be finite float32[32,7]")
++        return {"actions": actions, "action_domain": "normalized",
++                "timing": {"model_ms": (time.perf_counter()-model_start)*1000,
++                           "total_ms": (time.perf_counter()-start)*1000}}
++
++    def close(self):
++        self.model_runner = None
+diff --git a/python/apxinf/examples/fastwam_experimental/README.md b/python/apxinf/examples/fastwam_experimental/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..a297440dcffc514f79cf11b34e8140394238e5a2
+--- /dev/null
++++ b/python/apxinf/examples/fastwam_experimental/README.md
+@@ -0,0 +1,131 @@
++# Experimental FastWAM reproduction sources
++
++These sources reproduce the fixed LIBERO path described in
++[`doc/fastwam.md`](../../../../doc/fastwam.md). **Experimental, not deployable,
++not functionally/release accepted.** No tests or extra reviews were run under
++the original user's waiver. Actual complete native/public inference and saved
++output arithmetic exist; they do not waive the missing independent gates.
++
++## Source and assets
++
++Apply the supplied source patch to the **full archived foundation content**,
++not just its Git HEAD: the foundation includes uncommitted private changes.
++Foundation base Git HEAD is `7f37642dd6c5896bca66d7640d9944c2a3fe04b4`.
++This delta depends on that archived private Hy foundation; it is not a
++self-contained clean7f37642 rebuild. Do not publish the whole dirty foundation.
++The source patch and its manifest identify the exact archive and content hashes.
++
++Reference author revision: `7faa71108368fbb3b6885649f112af607427a2d4`.
++The intended assets are the exact author `libero_uncond_2cam224.pt` and
++`Wan2.2_VAE.pth` identified by the exporter's SHA256 allowlist. Checkpoint data,
++raw inputs/actions, environments, native archives and binary executables are
++**not** included. Obtain/reuse those assets separately subject to their licenses.
++Do not substitute another checkpoint variant. Author MIT license/NOTICE live in
++`crates/apxinf-model/src/fastwam/`; the foundation Apache-2.0 LICENSE is retained.
++
++## One-time CPU preparation
++
++Requirements for these offline exporters: Python with NumPy, SafeTensors and
++PyTorch. PyTorch is used only for trusted checkpoint/layout conversion, never
++as the native model's inference engine. Use existing approved environments;
++these scripts do not install anything or contact a service.
++
++From the patched repository root, use your own output directory and existing
++asset/input locations (the shell variables below are caller-supplied):
++
++```bash
++HELPERS=python/apxinf/examples/fastwam_experimental
++python "$HELPERS/prepare_checkpoint.py" \
++  --checkpoint "$AUTHOR_LIBERO_PT" --vae "$AUTHOR_WAN_VAE_PTH" \
++  --output "$OWN_OUTPUT/checkpoint"
++python "$HELPERS/prepare_inputs.py" \
++  --npz-dir "$FORMAL_EIGHT_CASE_NPZ_DIR" --output "$OWN_OUTPUT/inputs"
++```
++
++The output directories must be empty. The input helper expects the same eight
++named formal cases as the Rust benchmark; it generates no synthetic samples.
++Image NCHW->NHWC happens on CPU **before timing**. Mask storage is FP32 binary
++because the foundation safetensors loader rejects I8 file entries; the native
++runtime still uses I8 masks. Exported weights are BF16; causal3d zero-history T1
++selects the last temporal slice, with no general multi-frame claim.
++
++## Build only (no tests or smoke/import invocation)
++
++The observed build used Rust1.95.0, GCC11.4.0, CUDA12.8, SM80, Python3.11.
++Use a matching approved toolchain and an owned target/cache location:
++
++`build_native.sh` is a separately identified PUBLIC path-parameterized copy of
++the private task build commands. It requires explicit `FASTWAM_TASK_ROOT`,
++`APXINF_SOURCE_ROOT`, `APXINF_TOOLCHAIN_CARGO_HOME`,
++`APXINF_TOOLCHAIN_RUSTUP_HOME` and, for Python, `APPROVED_NATIVE_PYTHON`.
++It contains no private machine/account paths and has **not** been newly run.
++The direct build commands below are an alternative; neither approach submits
++jobs, performs model inference, or establishes a new acceptance gate.
++
++```bash
++export APXINF_CUDA_ARCH=sm_80
++export CARGO_TARGET_DIR="$OWN_OUTPUT/target"
++export PYO3_PYTHON="$APPROVED_NATIVE_PYTHON"
++cargo build --release --offline --locked -p apxinf-model --features cuda \
++  --example fastwam_bench
++cargo build --release --offline --locked -p apxinf-py \
++  --features cuda,extension-module
++```
++
++The measured build reused unchanged foundation native archives read-only using
++`APXINF_FOUNDATION_CUDA_BUILD` and `APXINF_FOUNDATION_CUDA_NEW_BUILD`, each naming
++a build directory with `output` metadata and `out/lib*.a`. Only use matching
++content-addressed foundation artifacts; see the accompanying build-identity
++notes. Leave both variables unset to compile the foundation native sources and
++the new spatial primitives normally. The from-source fallback was **not** the
++recorded build and has not been rerun. New spatial CUDA code compiles into the
++owned target directory in either path. No FP8 or external inference engine runs.
++
++For a direct source-tree Python bridge, stage the newly built extension into
++an owned directory without modifying an old environment:
++
++```bash
++mkdir -p "$OWN_OUTPUT/py-native"
++cp "$CARGO_TARGET_DIR/release/libapxinf_py.so" "$OWN_OUTPUT/py-native/apxinf_py.so"
++export PYTHONPATH="$OWN_OUTPUT/py-native:$PWD/python/apxinf"
++export PYTHONDONTWRITEBYTECODE=1
++```
++
++## Actual full-model inference benchmarks — only when separately authorized
++
++**Do not execute these now under a no-more-GPU instruction.** When authorized,
++run model computation only within an allocated GPU step. On the observed
++cluster the bounded pattern was partition `gpu_a800`, one node/task, `--gres=gpu:1`,
++`--time=00:30:00`, `srun -n1 -c8 --cpu-bind=cores`; no automatic submission
++script is included. Never run model computation on a login node.
++
++```bash
++srun -n1 -c8 --cpu-bind=cores "$CARGO_TARGET_DIR/release/examples/fastwam_bench" \
++  "$OWN_OUTPUT/checkpoint" "$OWN_OUTPUT/inputs" "$OWN_OUTPUT/full-native.json"
++srun -n1 -c8 --cpu-bind=cores "$APPROVED_NATIVE_PYTHON" -B -u \
++  "$HELPERS/benchmark_policy.py" --checkpoint "$OWN_OUTPUT/checkpoint" \
++  --npz-dir "$FORMAL_EIGHT_CASE_NPZ_DIR" --output "$OWN_OUTPUT/public-policy.json"
++```
++
++Both source benchmarks exercise VAE38 + VideoDiT30 + ActionDiT30xEuler20 and
++save80outputs after8warmups, not an isolated operator or smoke workload.
++Cached T5 input is explicitly outside the graph. The native report separates
++whole-graph dispatch/completion wall and prepared-input/graph/output wall. The
++public report includes policy conversion/native binding/output work, but the
++CPU FP32 NHWC layout has already been prepared. Historical project timing takes
++NCHW, so do not present a pure-backend speedup ratio or matching seam claim.
++
++## Arithmetic on already saved outputs
++
++This command never loads a model or executes a test/reference task:
++
++```bash
++python "$HELPERS/compare_saved.py" --native "$OWN_OUTPUT/full-native.json" \
++  --public "$OWN_OUTPUT/public-policy.json" --author "$SAVED_AUTHOR_OUTPUTS_NPZ" \
++  --project "$SAVED_PROJECT_OUTPUTS_NPZ" --output "$OWN_OUTPUT/summary.json"
++```
++
++It reports the original0.05relative-L2/0.999cosine proxy without creating a new
++gate, and deliberately writes no raw actions to its aggregate report. The
++portable helper adapters were curated **after** job329256 and have not been
++rerun; measured runtime source hashes are unchanged and recorded separately.
+diff --git a/python/apxinf/examples/fastwam_experimental/benchmark_policy.py b/python/apxinf/examples/fastwam_experimental/benchmark_policy.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..f2c84967cf75c2d7db01b085ab5c5cfd1d2979a2
+--- /dev/null
++++ b/python/apxinf/examples/fastwam_experimental/benchmark_policy.py
+@@ -0,0 +1,57 @@
++"""Actual full-model public-policy benchmark, not a test or smoke invocation.
++
++Must run inside an allocated GPU step. No reference models are executed.
++CPU FP32 NHWC layout is prepared BEFORE timing, unlike historical NCHW seam.
++"""
++import argparse
++import json
++import time
++from pathlib import Path
++
++import numpy as np
++from apxinf.policies import AutoPolicy
++
++from prepare_inputs import CASES
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--checkpoint", type=Path, required=True)
++    parser.add_argument("--npz-dir", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    if args.output.exists():
++        raise ValueError("output already exists; do not overwrite measured evidence")
++    start = time.perf_counter()
++    policy = AutoPolicy.from_pretrained(args.checkpoint, normalized_output=True, model_variant="bf16")
++    cases = []
++    for name in CASES:
++        with np.load(args.npz_dir / (name + ".npz"), allow_pickle=False) as data:
++            observation = {"input_image": np.ascontiguousarray(data["input_image"][0].transpose(1, 2, 0)),
++                           "context": np.ascontiguousarray(data["context"][0]),
++                           "context_mask": np.ascontiguousarray(data["context_mask"].reshape(128)),
++                           "proprio": np.ascontiguousarray(data["proprio"].reshape(8))}
++            cases.append((name, observation, np.ascontiguousarray(data["noise"].reshape(32, 7))))
++    for _ in range(8):
++        policy.infer(cases[0][1], noise=cases[0][2])
++    preparation_ms = (time.perf_counter() - start) * 1000
++    rows = []
++    for name, observation, noise in cases:
++        for repeat in range(10):
++            start = time.perf_counter()
++            result = policy.infer(observation, noise=noise)
++            elapsed = (time.perf_counter() - start) * 1000
++            rows.append({"case": name, "repeat": repeat, "public_policy_wall_ms": elapsed,
++                         "model_reported_ms": result["timing"]["model_ms"],
++                         "action": np.asarray(result["actions"], dtype=np.float32).reshape(-1).tolist()})
++            print(name, repeat, elapsed, flush=True)
++    args.output.write_text(json.dumps({"implementation": "AutoPolicy->FastWamPolicy->existing ModelRunner->Rust AutoModel->native whole-model graph",
++        "scope": "FULL normalized-image/cachedT5/proprio->VAE/video/action20->normalized FP32 actions",
++        "seam": "CPU FP32 NHWC prepared before timing; historical project NCHW; no pure-backend ratio",
++        "status": "experimental_not_functionally_accepted_no_tests_user_waiver",
++        "preparation_with_8_warmups_ms": preparation_ms, "repeats": 80, "rows": rows}, indent=2))
++    policy.close()
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/python/apxinf/examples/fastwam_experimental/build_native.sh b/python/apxinf/examples/fastwam_experimental/build_native.sh
+new file mode 100644
+index 0000000000000000000000000000000000000000..69d74dec8190c1d85991f5129fd6ee56146b32c8
+--- /dev/null
++++ b/python/apxinf/examples/fastwam_experimental/build_native.sh
+@@ -0,0 +1,34 @@
++#!/usr/bin/env bash
++# PUBLIC parameterized copy of the private task build commands.
++# Not newly built/run. Build only: no tests, imports, model execution or jobs.
++set -euo pipefail
++root="${FASTWAM_TASK_ROOT:?set an owned task/output directory}"
++source_root="${APXINF_SOURCE_ROOT:?set the patched foundation source directory}"
++toolchain_cargo="${APXINF_TOOLCHAIN_CARGO_HOME:?set the approved existing cargo toolchain/cache directory}"
++export RUSTUP_HOME="${APXINF_TOOLCHAIN_RUSTUP_HOME:?set the approved existing rustup directory}"
++source "${APXINF_MODULE_INIT:-/usr/share/modules/init/bash}"
++module load cuda/12.8 gcc/11.4.0 cmake/3.31.12
++export CARGO_HOME="$root/cargo-home"
++mkdir -p "$CARGO_HOME"
++if [ ! -e "$CARGO_HOME/registry" ]; then ln -s "$toolchain_cargo/registry" "$CARGO_HOME/registry"; fi
++if [ -d "$toolchain_cargo/git" ] && [ ! -e "$CARGO_HOME/git" ]; then ln -s "$toolchain_cargo/git" "$CARGO_HOME/git"; fi
++export RUSTUP_TOOLCHAIN=1.95.0-x86_64-unknown-linux-gnu
++export PATH="$toolchain_cargo/bin:$PATH"
++export CARGO_TARGET_DIR="$root/target"
++export CARGO_BUILD_JOBS=8 APXINF_CUDA_ARCH=sm_80
++# The measured build supplied matching read-only foundation build directories.
++# Caller may explicitly set APXINF_FOUNDATION_CUDA_BUILD and
++# APXINF_FOUNDATION_CUDA_NEW_BUILD; no private paths are discovered or embedded.
++# Unset inputs select full native source compilation, not the recorded build.
++export LIBRARY_PATH="$CUDA_PATH/lib64/stubs${LIBRARY_PATH:+:$LIBRARY_PATH}"
++export TMPDIR="$root/tmp"
++mkdir -p "$TMPDIR"
++cd "$source_root"
++if [ "${1:-model}" = python ]; then
++    export PYO3_PYTHON="${APPROVED_NATIVE_PYTHON:?set the approved existing Python3.11 executable}"
++    cargo build --release --offline --locked -p apxinf-py --features cuda,extension-module
++    mkdir -p "$root/py-native"
++    cp "$CARGO_TARGET_DIR/release/libapxinf_py.so" "$root/py-native/apxinf_py.so"
++else
++    cargo build --release --offline --locked -p apxinf-model --features cuda --example fastwam_bench
++fi
+diff --git a/python/apxinf/examples/fastwam_experimental/compare_saved.py b/python/apxinf/examples/fastwam_experimental/compare_saved.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..10546bfe08c097ccb29c5121e51dd86f23d323f7
+--- /dev/null
++++ b/python/apxinf/examples/fastwam_experimental/compare_saved.py
+@@ -0,0 +1,73 @@
++"""Arithmetic on saved outputs only. No model loading or model/test execution."""
++import argparse
++import json
++from pathlib import Path
++
++import numpy as np
++
++
++def reference_rows(path):
++    with np.load(path, allow_pickle=False) as data:
++        ids = data["request_ids"].astype(str)
++        actions = data["actions"] if "actions" in data.files else np.stack(
++            [data[f"actions_{i:05d}"] for i in range(len(ids))])
++        result = {}
++        for case, value in zip(ids, actions):
++            result.setdefault(case, []).append(np.asarray(value, dtype=np.float64).reshape(-1))
++        return result
++
++
++def compare(rows, reference):
++    values = []
++    for row in rows:
++        actual = np.asarray(row["action"], dtype=np.float64)
++        candidates = reference[row["case"]]
++        expected = candidates[row["repeat"] % len(candidates)]
++        if actual.shape != expected.shape or not np.isfinite(actual).all() or not np.isfinite(expected).all():
++            return {"finite_and_compatible": False, "within_historical_proxy": False}
++        expected_norm, actual_norm = np.linalg.norm(expected), np.linalg.norm(actual)
++        values.append((float(np.linalg.norm(actual - expected) / max(expected_norm, 1e-30)),
++                       float(np.dot(actual, expected) / max(actual_norm * expected_norm, 1e-30)),
++                       float(np.max(np.abs(actual - expected)))))
++    l2, cosine, absolute = max(v[0] for v in values), min(v[1] for v in values), max(v[2] for v in values)
++    return {"finite_and_compatible": True, "max_relative_l2": l2, "min_cosine": cosine,
++            "max_abs": absolute, "within_historical_proxy": l2 <= 0.05 and cosine >= 0.999}
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--native", type=Path, required=True)
++    parser.add_argument("--public", type=Path, required=True)
++    parser.add_argument("--author", type=Path, required=True)
++    parser.add_argument("--project", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    if args.output.exists():
++        raise ValueError("output already exists; preserve previous evidence")
++    references = {"saved_author_compiled20": reference_rows(args.author),
++                  "saved_project_compiled20": reference_rows(args.project)}
++    report = {"scope": "saved-output arithmetic only; not a new model/testing gate",
++              "functional_acceptance": False, "deployment_status": "experimental_not_deployable",
++              "seam": "public CPU FP32 NHWC prepared before timing; historical NCHW; no pure-backend ratio",
++              "historical_proxy": {"max_relative_l2": 0.05, "min_cosine": 0.999}, "runs": {}}
++    for name, path, keys in (("native", args.native, ("graph_completion_wall_ms", "input_graph_output_ms")),
++                             ("public_policy", args.public, ("public_policy_wall_ms",))):
++        data = json.loads(path.read_text())
++        rows = data["rows"]
++        if not rows:
++            raise ValueError(f"no saved output rows in {path}")
++        entry = {"path": str(path), "samples": len(rows), "timing": {}, "comparison": {}}
++        for key in keys:
++            numbers = np.asarray([row[key] for row in rows], dtype=np.float64)
++            entry["timing"][key] = {"median_ms": float(np.median(numbers)),
++                                    "mean_ms": float(np.mean(numbers)),
++                                    "p95_ms": float(np.percentile(numbers, 95))}
++        for reference, values in references.items():
++            entry["comparison"][reference] = compare(rows, values)
++        report["runs"][name] = entry
++    # Aggregate report intentionally contains no raw input/action tensors.
++    args.output.write_text(json.dumps(report, indent=2))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/python/apxinf/examples/fastwam_experimental/prepare_checkpoint.py b/python/apxinf/examples/fastwam_experimental/prepare_checkpoint.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..d49f67bb5d3fe40b927b178c6ffcba14cdfd8450
+--- /dev/null
++++ b/python/apxinf/examples/fastwam_experimental/prepare_checkpoint.py
+@@ -0,0 +1,116 @@
++"""CPU-only export for the exact experimental LIBERO native FastWAM profile.
++
++No model construction/inference. Does not distribute checkpoint data. This
++portable adapter is derived from the exporter used for job329256; the adapter
++itself has not been rerun under the user's no-additional-execution instruction.
++"""
++from __future__ import annotations
++
++import argparse
++import hashlib
++import json
++from pathlib import Path
++
++import torch
++from safetensors.torch import save_file
++
++CHECKPOINT_SHA256 = "1000437cfcf55c000094f79a2600634c502bcb5b492476b94bf8509883a49579"
++VAE_SHA256 = "20eb789667fa5e60e7516bf509512f6cb61f01b0aa0695eadaea930c13892b36"
++REFERENCE_REVISION = "7faa71108368fbb3b6885649f112af607427a2d4"
++
++
++def sha256(path):
++    result = hashlib.sha256()
++    with path.open("rb") as stream:
++        for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
++            result.update(chunk)
++    return result.hexdigest()
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--checkpoint", type=Path, required=True)
++    parser.add_argument("--vae", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    checkpoint_digest, vae_digest = sha256(args.checkpoint), sha256(args.vae)
++    if checkpoint_digest != CHECKPOINT_SHA256 or vae_digest != VAE_SHA256:
++        raise ValueError("asset digest does not match the measured LIBERO profile")
++    args.output.mkdir(parents=True, exist_ok=True)
++    if any(args.output.iterdir()):
++        raise ValueError("output must be empty; existing evidence is never overwritten")
++    torch.set_num_threads(8)
++    # Hash-allowlisted private author assets only; do not load arbitrary pickle.
++    payload = torch.load(args.checkpoint, map_location="cpu", mmap=True, weights_only=False)
++    vae = torch.load(args.vae, map_location="cpu", mmap=True, weights_only=True)
++    if tuple(payload["mot"]["mixtures.action.action_encoder.weight"].shape) != (1024, 7):
++        raise ValueError("wrong action checkpoint variant")
++    if tuple(payload["proprio_encoder"]["weight"].shape) != (4096, 8):
++        raise ValueError("wrong proprio checkpoint variant")
++    shard, index, transforms = {}, {}, {}
++    shard_number, shard_bytes = 0, 0
++
++    def flush():
++        nonlocal shard, shard_number, shard_bytes
++        if not shard:
++            return
++        name = f"model-{shard_number:03d}.safetensors"
++        save_file(shard, str(args.output / name))
++        index.update({key: name for key in shard})
++        print("wrote", name, shard_bytes, flush=True)
++        shard, shard_number, shard_bytes = {}, shard_number + 1, 0
++
++    def emit(name, tensor, transform):
++        nonlocal shard_bytes
++        tensor = tensor.to(dtype=torch.bfloat16).contiguous()
++        size = tensor.numel() * 2
++        if shard_bytes + size > 512 * 1024 * 1024:
++            flush()
++        shard[name], shard_bytes = tensor, shard_bytes + size
++        transforms[name] = {"shape": list(tensor.shape), "dtype": "BF16", "transform": transform}
++
++    for name, tensor in payload["mot"].items():
++        name = name.removeprefix("mixtures.")
++        if name.startswith("video.head."):
++            continue
++        if tensor.ndim == 5:
++            if name != "video.patch_embedding.weight" or tuple(tensor.shape) != (3072, 48, 1, 2, 2):
++                raise ValueError("unexpected video convolution")
++            tensor = tensor[:, :, 0].permute(2, 3, 1, 0).reshape(192, 3072)
++            transform = "patch Conv3d OI1HW -> HWIO -> [192,3072]"
++        elif tensor.ndim == 2 and name.endswith(".weight"):
++            tensor, transform = tensor.t(), "linear OI -> IO"
++        else:
++            tensor, transform = tensor.reshape(-1), "flatten gamma/bias/modulation"
++        emit(name, tensor, transform)
++    for name, tensor in payload["proprio_encoder"].items():
++        emit("proprio." + name, tensor.t() if name == "weight" else tensor,
++             "linear OI -> IO" if name == "weight" else "identity")
++    for name, tensor in vae.items():
++        if not (name.startswith("encoder.") or name.startswith("conv1.")) or ".time_conv." in name:
++            continue
++        if tensor.ndim == 5:
++            out_channels = tensor.shape[0]
++            tensor = tensor[:, :, -1].permute(2, 3, 1, 0).reshape(-1, out_channels)
++            transform = "T1 zero-history causal3d last temporal slice; HWIO -> KN"
++        elif tensor.ndim == 4 and name.endswith(".weight"):
++            out_channels = tensor.shape[0]
++            tensor = tensor.permute(2, 3, 1, 0).reshape(-1, out_channels)
++            transform = "Conv2d OIHW -> HWIO -> KN"
++        else:
++            tensor, transform = tensor.reshape(-1), "flatten gamma/bias"
++        emit("vae." + name, tensor, transform)
++    flush()
++    (args.output / "model.safetensors.index.json").write_text(json.dumps({"metadata": {}, "weight_map": index}, indent=2))
++    config = {"model_type": "fastwam", "profile": "libero-current224x448-cachedt5-128-euler20-shift5",
++              "horizon": 32, "action_dim": 7, "proprio_dim": 8, "text_tokens": 128,
++              "text_dim": 4096, "video_layers": 30, "action_layers": 30, "dtype": "bf16"}
++    (args.output / "config.json").write_text(json.dumps(config, indent=2))
++    provenance = {"checkpoint": str(args.checkpoint), "checkpoint_sha256": checkpoint_digest,
++                  "vae": str(args.vae), "vae_sha256": vae_digest,
++                  "reference_revision": REFERENCE_REVISION, "transforms": transforms}
++    (args.output / "weight-provenance.json").write_text(json.dumps(provenance, indent=2))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/python/apxinf/examples/fastwam_experimental/prepare_inputs.py b/python/apxinf/examples/fastwam_experimental/prepare_inputs.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..2743344724b7bdad9ba6c50c58d4a30fd3966b15
+--- /dev/null
++++ b/python/apxinf/examples/fastwam_experimental/prepare_inputs.py
+@@ -0,0 +1,42 @@
++"""CPU container/layout conversion of the existing eight formal NPZ cases.
++
++No model execution, synthetic data generation, or bundled input data.
++"""
++import argparse
++import json
++from pathlib import Path
++
++import numpy as np
++from safetensors.numpy import save_file
++
++CASES = ("noise-20261112", "noise-20261113", "noise-20261114", "noise-20261115",
++         "image-minus0p1", "proprio-plus0p1", "context-minus0p0625", "mask-last-valid-off")
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--npz-dir", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    args.output.mkdir(parents=True, exist_ok=True)
++    if any(args.output.iterdir()):
++        raise ValueError("output must be empty; do not overwrite existing evidence")
++    for name in CASES:
++        with np.load(args.npz_dir / (name + ".npz"), allow_pickle=False) as data:
++            expected = {"input_image": (1, 3, 224, 448), "context": (1, 128, 4096),
++                        "context_mask": (1, 128), "proprio": (1, 8), "noise": (1, 32, 7)}
++            if any(data[key].shape != shape for key, shape in expected.items()):
++                raise ValueError(f"{name}: input profile differs from the measured LIBERO profile")
++            arrays = {"image": np.ascontiguousarray(data["input_image"][0].transpose(1, 2, 0)),
++                      "context": np.ascontiguousarray(data["context"][0]),
++                      "proprio": np.ascontiguousarray(data["proprio"].reshape(1, 8)),
++                      "noise": np.ascontiguousarray(data["noise"].reshape(32, 7)),
++                      # Foundation safetensors loader does not support I8 files.
++                      "mask": np.ascontiguousarray(data["context_mask"].reshape(128).astype(np.float32))}
++            save_file(arrays, str(args.output / (name + ".safetensors")))
++    (args.output / "inputs.json").write_text(json.dumps({"source": str(args.npz_dir), "cases": CASES,
++        "transform": "CPU image NCHW->NHWC before timing; values unmodified; runtime casts BF16; binary mask stored FP32"}, indent=2))
++
++
++if __name__ == "__main__":
++    main()

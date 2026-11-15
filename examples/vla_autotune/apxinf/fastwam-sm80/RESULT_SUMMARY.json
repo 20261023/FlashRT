@@ -1,0 +1,122 @@
+{
+  "job_id": "329256",
+  "terminal_status": {
+    "state": "COMPLETED",
+    "elapsed": "00:01:23",
+    "start": "2026-11-15T23:49:42+08:00",
+    "end": "2026-11-15T23:51:05+08:00",
+    "exit_code": "0:0",
+    "source": "single sacct terminal-status collection"
+  },
+  "functional_acceptance": false,
+  "deployment_status": "experimental_not_deployable",
+  "tests_run": false,
+  "seam_caveat": "public policy takes CPU FP32 NHWC already prepared before timing; historical project takes NCHW. No pure-backend speedup ratio.",
+  "historical_comparison": {
+    "source": "227993d52b83aa769132cd5d04ade0a5b53d5a55",
+    "job": "327380",
+    "scope": "saved outputs and historical timings, not rerun",
+    "author_median_ms": 142.4363065,
+    "project_median_ms": 137.6502975,
+    "new_native_is_latency_winner": false,
+    "pure_backend_speedup_ratio": null
+  },
+  "runs": {
+    "native": {
+      "artifact_basename": "full-native-329256.json",
+      "artifact_sha256": "cecb538b89ceb2921991e911aa7a489bcb134bee9ffc9ef6946dfb5ba9d68e63",
+      "row_count": 80,
+      "metadata": {
+        "action_dim": 7,
+        "arena_used_bytes": 4595864768,
+        "gpu": "NVIDIA A800-SXM4-80GB",
+        "graph": "whole-model",
+        "horizon": 32,
+        "image_hw": [
+          224,
+          448
+        ],
+        "implementation": "apxinf-native-fastwam-bf16",
+        "preparation_ms": 27855.473494,
+        "proprio_dim": 8,
+        "repeats": 80,
+        "scope": "FULL normalized image + cachedT5 + proprio + VAE38 + VideoDiT30 + Euler20 ActionDiT30 + output",
+        "sigma_shift": 5.0,
+        "sm": 80,
+        "status": "experimental_not_functionally_accepted_no_tests_user_waiver",
+        "steps": 20,
+        "text_tokens": 128,
+        "warmup": 8
+      },
+      "timing": {
+        "graph_completion_wall_ms": {
+          "median_ms": 212.5182835,
+          "mean_ms": 212.65410418749997,
+          "p95_ms": 213.09412235,
+          "min_ms": 212.456098,
+          "max_ms": 213.90187999999998
+        },
+        "input_graph_output_ms": {
+          "median_ms": 212.86931500000003,
+          "mean_ms": 213.01800217500005,
+          "p95_ms": 213.75278815,
+          "min_ms": 212.767911,
+          "max_ms": 214.194333
+        }
+      },
+      "saved_output_arithmetic": {
+        "official_compiled20_saved_source227993d5_job327380": {
+          "finite": true,
+          "max_relative_l2": 0.011609512347092753,
+          "min_cosine": 0.9999326109645393,
+          "max_abs": 0.05078125,
+          "within_historical_proxy": true
+        },
+        "project_compiled20_saved_source227993d5_job327380": {
+          "finite": true,
+          "max_relative_l2": 0.011609512347092753,
+          "min_cosine": 0.9999326109645393,
+          "max_abs": 0.05078125,
+          "within_historical_proxy": true
+        }
+      }
+    },
+    "public_policy": {
+      "artifact_basename": "public-policy-329256.json",
+      "artifact_sha256": "9a03865f10357cedd4ffc554403e5a398663d98a1ad4b8a65093a4dac8e61f4b",
+      "row_count": 80,
+      "metadata": {
+        "implementation": "AutoPolicy->FastWamPolicy->existing ModelRunner binding->Rust AutoModel fastwam->native whole-model graph",
+        "scope": "FULL normalized-image + cachedT5 + proprio -> VAE/video/action20 -> normalized FP32 actions",
+        "status": "experimental_not_functionally_accepted_no_tests_user_waiver",
+        "preparation_with_8_warmups_ms": 15204.954596236348,
+        "repeats": 80
+      },
+      "timing": {
+        "public_policy_wall_ms": {
+          "median_ms": 215.34365857951343,
+          "mean_ms": 215.58607882470824,
+          "p95_ms": 216.61828281357884,
+          "min_ms": 214.97574681416154,
+          "max_ms": 216.89411625266075
+        }
+      },
+      "saved_output_arithmetic": {
+        "official_compiled20_saved_source227993d5_job327380": {
+          "finite": true,
+          "max_relative_l2": 0.011609512347092753,
+          "min_cosine": 0.9999326109645393,
+          "max_abs": 0.05078125,
+          "within_historical_proxy": true
+        },
+        "project_compiled20_saved_source227993d5_job327380": {
+          "finite": true,
+          "max_relative_l2": 0.011609512347092753,
+          "min_cosine": 0.9999326109645393,
+          "max_abs": 0.05078125,
+          "within_historical_proxy": true
+        }
+      }
+    }
+  }
+}

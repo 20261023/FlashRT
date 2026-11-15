@@ -102,7 +102,16 @@
     "arena_capacity_bytes": 12884901888,
     "source_delta_archive_sha256": "e8d71b823a70760b77da12abf5468494b381e0d7ab3fd7ef0dd3a56500c6da79",
     "native_executable_sha256": "0d7aaa805aaf75bc790bb9c3e0eabd681ecf12c14bb9afcbd69033114dfbe638",
-    "python_extension_sha256": "b3e00e93d6dc28dbfee499bff6eb227bcb5d87e4abe90c1411991ff660d8ed7b"
+    "python_extension_sha256": "b3e00e93d6dc28dbfee499bff6eb227bcb5d87e4abe90c1411991ff660d8ed7b",
+    "public_source_delta": {
+      "path": "examples/vla_autotune/apxinf/fastwam-sm80/fastwam-apxinf-experimental.patch",
+      "sha256": "79baaac216e816fddd7f693c9a29b37d086886bb37408664909e724a7fc6b450",
+      "same_as_measured_runtime_files": 24,
+      "post_measurement_unexecuted_files": 7,
+      "self_contained_clean_upstream_rebuild": false,
+      "requires_archived_private_hy_foundation": true,
+      "patch_application_check_run": false
+    }
   },
   "historical_apxinf_evidence": [
     {

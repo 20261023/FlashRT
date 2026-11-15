@@ -179,6 +179,33 @@ NCHW，且不是同allocation；不给纯engine比值。已有请求级文本KV�
 整个执行栈一定更快。空间／attention原语目前为未调优组合，尚无新的阶段profile，
 不能把剩余差距定量归给其中一项。详细边界见[大表新增结果](2026-11-14-vla-latency-comparison.zh-CN.md#新增dm05作者参考与fastwam-apxinf实跑)。
 
+在**这份研究实现**中，源码可见的具体性能债是：
+
+1. **不等长／masked action attention仍是标量baseline。** 同长度、无mask分支复用
+   现有FA2；32-query／130-key的action self-attention及带mask文本cross-attention
+   则使用FP32 score／probability和逐key PV循环，不是tiled Tensor-Core／FlashAttention。
+   这描述本候选的实际选择，不代表整个ApxInf没有其他attention能力。
+2. **缓存不等于没有KV拼接。** video KV和文本cross-KV均已按请求缓存，但30层×20步
+   的600个action block仍分别concat K／V。仅按源码输出shape计数，
+   `600 × 2 × 130 × 3072 × 2 = 958,464,000 bytes/request`。
+   这是逻辑输出字节数，**不是测得的DRAM流量、峰值带宽或阶段耗时**。
+3. **VAE显式im2col，许多BF16边界未融合。** 卷积为im2col→GEMM→bias，norm、
+   modulation、RMS、RoPE、激活和残差保留多个操作；whole-model Graph只改变提交方式，
+   不自动消除这些设备计算／访存。
+4. **GEMM autotune关闭，arena没有按存活期复用。** 已记录的4,595,864,768字节是arena
+   consumption，不是实测活跃峰值或总显存。公共入口还包含检查、复制、同步及输出传输，
+   当前数据没有把约215 ms分摊给这些操作。
+
+因此，“已使用原生kernel／whole-model graph／文本KV缓存”并不足以推出胜过作者compiled。
+本轮不新增profiling、算子测试或消融，也不承诺某一项修改能消除全部差距。
+
+源码增量与身份说明已整理到
+[`examples/vla_autotune/apxinf/fastwam-sm80/`](../../examples/vla_autotune/apxinf/fastwam-sm80/README.md)。
+公开补丁中24份运行时代码与实测字节相同；7份后补文档／helper未执行。它仍依赖
+含未提交改动的私有Hy foundation，**不是从干净上游提交可独立复建的完整源码包**。
+公开增量SHA为`79baaac2…fc6b450`，与实测私有增量包身份分开；没有打包权重、环境、
+二进制或原始动作，也没有为打包新增测试／模型运行。
+
 ## 7. 新加入的DM0.5具体是什么
 
 本任务固定为作者[OpenDM源码`03f7991`](https://github.com/dexmal/opendm/tree/03f799120d425ead51d9482bb1da950b6dabade9)
