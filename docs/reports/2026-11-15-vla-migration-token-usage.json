@@ -1,0 +1,588 @@
+{
+  "scope": "Four-model unified backend migration and follow-up, current root plus its69direct children; not the entire lifetime cost of upstream FlashRT/ApxInf.",
+  "window": {
+    "start_ms": 1794147641449,
+    "initial_phase_end_ms": 1794218192719,
+    "cutoff_ms": 1794744759409,
+    "start_utc": "2026-11-08T14:20:41.449000+00:00",
+    "initial_phase_end_utc": "2026-11-09T09:56:32.719000+00:00",
+    "cutoff_utc": "2026-11-15T12:12:39.409000+00:00"
+  },
+  "models": {
+    "shared": {
+      "input": 21956614,
+      "output": 520174,
+      "reasoning": 633453,
+      "cache_read": 515770496,
+      "cache_write": 0,
+      "uncached_work_tokens": 23110241,
+      "all_processed_tokens": 538880737,
+      "usage_records": 1378,
+      "missing_usage_records": 11
+    },
+    "hyvla": {
+      "input": 11308008,
+      "output": 1129375,
+      "reasoning": 1446433,
+      "cache_read": 756510976,
+      "cache_write": 0,
+      "uncached_work_tokens": 13883816,
+      "all_processed_tokens": 770394792,
+      "usage_records": 2155,
+      "missing_usage_records": 3
+    },
+    "fastwam": {
+      "input": 1857130,
+      "output": 206104,
+      "reasoning": 238933,
+      "cache_read": 116914176,
+      "cache_write": 0,
+      "uncached_work_tokens": 2302167,
+      "all_processed_tokens": 119216343,
+      "usage_records": 398,
+      "missing_usage_records": 0
+    },
+    "pi0": {
+      "input": 351149,
+      "output": 37192,
+      "reasoning": 31186,
+      "cache_read": 16795904,
+      "cache_write": 0,
+      "uncached_work_tokens": 419527,
+      "all_processed_tokens": 17215431,
+      "usage_records": 85,
+      "missing_usage_records": 0
+    },
+    "pi05": {
+      "input": 86436,
+      "output": 35149,
+      "reasoning": 47885,
+      "cache_read": 42308480,
+      "cache_write": 0,
+      "uncached_work_tokens": 169470,
+      "all_processed_tokens": 42477950,
+      "usage_records": 89,
+      "missing_usage_records": 0
+    }
+  },
+  "stages": [
+    {
+      "model": "fastwam",
+      "stage": "benchmark_reporting",
+      "input": 454777,
+      "output": 7852,
+      "reasoning": 17099,
+      "cache_read": 5238528,
+      "cache_write": 0,
+      "uncached_work_tokens": 479728,
+      "all_processed_tokens": 5718256
+    },
+    {
+      "model": "fastwam",
+      "stage": "initial_adaptation",
+      "input": 944766,
+      "output": 100972,
+      "reasoning": 65185,
+      "cache_read": 31018112,
+      "cache_write": 0,
+      "uncached_work_tokens": 1110923,
+      "all_processed_tokens": 32129035
+    },
+    {
+      "model": "fastwam",
+      "stage": "optimization",
+      "input": 457587,
+      "output": 97280,
+      "reasoning": 156649,
+      "cache_read": 80657536,
+      "cache_write": 0,
+      "uncached_work_tokens": 711516,
+      "all_processed_tokens": 81369052
+    },
+    {
+      "model": "hyvla",
+      "stage": "benchmark_reporting",
+      "input": 790136,
+      "output": 18603,
+      "reasoning": 13842,
+      "cache_read": 12163072,
+      "cache_write": 0,
+      "uncached_work_tokens": 822581,
+      "all_processed_tokens": 12985653
+    },
+    {
+      "model": "hyvla",
+      "stage": "initial_adaptation",
+      "input": 434651,
+      "output": 73584,
+      "reasoning": 41989,
+      "cache_read": 16456960,
+      "cache_write": 0,
+      "uncached_work_tokens": 550224,
+      "all_processed_tokens": 17007184
+    },
+    {
+      "model": "hyvla",
+      "stage": "precision_debugging",
+      "input": 10083221,
+      "output": 1037188,
+      "reasoning": 1390602,
+      "cache_read": 727890944,
+      "cache_write": 0,
+      "uncached_work_tokens": 12511011,
+      "all_processed_tokens": 740401955
+    },
+    {
+      "model": "pi0",
+      "stage": "benchmark_reporting",
+      "input": 4750,
+      "output": 269,
+      "reasoning": 346,
+      "cache_read": 360448,
+      "cache_write": 0,
+      "uncached_work_tokens": 5365,
+      "all_processed_tokens": 365813
+    },
+    {
+      "model": "pi0",
+      "stage": "initial_adaptation",
+      "input": 346399,
+      "output": 36923,
+      "reasoning": 30840,
+      "cache_read": 16435456,
+      "cache_write": 0,
+      "uncached_work_tokens": 414162,
+      "all_processed_tokens": 16849618
+    },
+    {
+      "model": "pi05",
+      "stage": "benchmark_reporting",
+      "input": 13558,
+      "output": 4622,
+      "reasoning": 5021,
+      "cache_read": 3548288,
+      "cache_write": 0,
+      "uncached_work_tokens": 23201,
+      "all_processed_tokens": 3571489
+    },
+    {
+      "model": "pi05",
+      "stage": "initial_adaptation",
+      "input": 63073,
+      "output": 24597,
+      "reasoning": 31755,
+      "cache_read": 33314176,
+      "cache_write": 0,
+      "uncached_work_tokens": 119425,
+      "all_processed_tokens": 33433601
+    },
+    {
+      "model": "pi05",
+      "stage": "optimization",
+      "input": 9805,
+      "output": 5930,
+      "reasoning": 11109,
+      "cache_read": 5446016,
+      "cache_write": 0,
+      "uncached_work_tokens": 26844,
+      "all_processed_tokens": 5472860
+    },
+    {
+      "model": "shared",
+      "stage": "benchmark_reporting",
+      "input": 4003768,
+      "output": 110842,
+      "reasoning": 109104,
+      "cache_read": 74638592,
+      "cache_write": 0,
+      "uncached_work_tokens": 4223714,
+      "all_processed_tokens": 78862306
+    },
+    {
+      "model": "shared",
+      "stage": "context_compaction",
+      "input": 7094533,
+      "output": 36505,
+      "reasoning": 29978,
+      "cache_read": 9088,
+      "cache_write": 0,
+      "uncached_work_tokens": 7161016,
+      "all_processed_tokens": 7170104
+    },
+    {
+      "model": "shared",
+      "stage": "initial_adaptation",
+      "input": 3058703,
+      "output": 159047,
+      "reasoning": 141886,
+      "cache_read": 107851392,
+      "cache_write": 0,
+      "uncached_work_tokens": 3359636,
+      "all_processed_tokens": 111211028
+    },
+    {
+      "model": "shared",
+      "stage": "shared_iteration",
+      "input": 7799610,
+      "output": 213780,
+      "reasoning": 352485,
+      "cache_read": 333271424,
+      "cache_write": 0,
+      "uncached_work_tokens": 8365875,
+      "all_processed_tokens": 341637299
+    }
+  ],
+  "sources": [
+    {
+      "model": "fastwam",
+      "source": "child",
+      "input": 1320951,
+      "output": 104360,
+      "reasoning": 71709,
+      "cache_read": 21154432,
+      "cache_write": 0,
+      "uncached_work_tokens": 1497020,
+      "all_processed_tokens": 22651452
+    },
+    {
+      "model": "fastwam",
+      "source": "main",
+      "input": 536179,
+      "output": 101744,
+      "reasoning": 167224,
+      "cache_read": 95759744,
+      "cache_write": 0,
+      "uncached_work_tokens": 805147,
+      "all_processed_tokens": 96564891
+    },
+    {
+      "model": "hyvla",
+      "source": "child",
+      "input": 5177431,
+      "output": 206381,
+      "reasoning": 238939,
+      "cache_read": 34481152,
+      "cache_write": 0,
+      "uncached_work_tokens": 5622751,
+      "all_processed_tokens": 40103903
+    },
+    {
+      "model": "hyvla",
+      "source": "main",
+      "input": 6130577,
+      "output": 922994,
+      "reasoning": 1207494,
+      "cache_read": 722029824,
+      "cache_write": 0,
+      "uncached_work_tokens": 8261065,
+      "all_processed_tokens": 730290889
+    },
+    {
+      "model": "pi0",
+      "source": "child",
+      "input": 316001,
+      "output": 33108,
+      "reasoning": 23489,
+      "cache_read": 6612864,
+      "cache_write": 0,
+      "uncached_work_tokens": 372598,
+      "all_processed_tokens": 6985462
+    },
+    {
+      "model": "pi0",
+      "source": "main",
+      "input": 35148,
+      "output": 4084,
+      "reasoning": 7697,
+      "cache_read": 10183040,
+      "cache_write": 0,
+      "uncached_work_tokens": 46929,
+      "all_processed_tokens": 10229969
+    },
+    {
+      "model": "pi05",
+      "source": "main",
+      "input": 86436,
+      "output": 35149,
+      "reasoning": 47885,
+      "cache_read": 42308480,
+      "cache_write": 0,
+      "uncached_work_tokens": 169470,
+      "all_processed_tokens": 42477950
+    },
+    {
+      "model": "shared",
+      "source": "child",
+      "input": 1522963,
+      "output": 86656,
+      "reasoning": 61308,
+      "cache_read": 17944448,
+      "cache_write": 0,
+      "uncached_work_tokens": 1670927,
+      "all_processed_tokens": 19615375
+    },
+    {
+      "model": "shared",
+      "source": "main",
+      "input": 13339118,
+      "output": 397013,
+      "reasoning": 542167,
+      "cache_read": 497816960,
+      "cache_write": 0,
+      "uncached_work_tokens": 14278298,
+      "all_processed_tokens": 512095258
+    },
+    {
+      "model": "shared",
+      "source": "main_compaction",
+      "input": 7094533,
+      "output": 36505,
+      "reasoning": 29978,
+      "cache_read": 9088,
+      "cache_write": 0,
+      "uncached_work_tokens": 7161016,
+      "all_processed_tokens": 7170104
+    }
+  ],
+  "assignment_bases": [
+    {
+      "model": "fastwam",
+      "basis": "dedicated_child_title",
+      "input": 1320951,
+      "output": 104360,
+      "reasoning": 71709,
+      "cache_read": 21154432,
+      "cache_write": 0,
+      "uncached_work_tokens": 1497020,
+      "all_processed_tokens": 22651452
+    },
+    {
+      "model": "fastwam",
+      "basis": "single_model_current_text",
+      "input": 11361,
+      "output": 1514,
+      "reasoning": 10277,
+      "cache_read": 2325760,
+      "cache_write": 0,
+      "uncached_work_tokens": 23152,
+      "all_processed_tokens": 2348912
+    },
+    {
+      "model": "fastwam",
+      "basis": "single_model_tool_input",
+      "input": 524818,
+      "output": 100230,
+      "reasoning": 156947,
+      "cache_read": 93433984,
+      "cache_write": 0,
+      "uncached_work_tokens": 781995,
+      "all_processed_tokens": 94215979
+    },
+    {
+      "model": "hyvla",
+      "basis": "dedicated_child_title",
+      "input": 1555944,
+      "output": 99002,
+      "reasoning": 68254,
+      "cache_read": 14675200,
+      "cache_write": 0,
+      "uncached_work_tokens": 1723200,
+      "all_processed_tokens": 16398400
+    },
+    {
+      "model": "hyvla",
+      "basis": "dominant_child_dispatch",
+      "input": 3621487,
+      "output": 107379,
+      "reasoning": 170685,
+      "cache_read": 19805952,
+      "cache_write": 0,
+      "uncached_work_tokens": 3899551,
+      "all_processed_tokens": 23705503
+    },
+    {
+      "model": "hyvla",
+      "basis": "single_model_current_text",
+      "input": 576787,
+      "output": 9625,
+      "reasoning": 6311,
+      "cache_read": 8555520,
+      "cache_write": 0,
+      "uncached_work_tokens": 592723,
+      "all_processed_tokens": 9148243
+    },
+    {
+      "model": "hyvla",
+      "basis": "single_model_tool_input",
+      "input": 5553790,
+      "output": 913369,
+      "reasoning": 1201183,
+      "cache_read": 713474304,
+      "cache_write": 0,
+      "uncached_work_tokens": 7668342,
+      "all_processed_tokens": 721142646
+    },
+    {
+      "model": "pi0",
+      "basis": "dedicated_child_title",
+      "input": 316001,
+      "output": 33108,
+      "reasoning": 23489,
+      "cache_read": 6612864,
+      "cache_write": 0,
+      "uncached_work_tokens": 372598,
+      "all_processed_tokens": 6985462
+    },
+    {
+      "model": "pi0",
+      "basis": "single_model_current_text",
+      "input": 449,
+      "output": 897,
+      "reasoning": 5574,
+      "cache_read": 1222016,
+      "cache_write": 0,
+      "uncached_work_tokens": 6920,
+      "all_processed_tokens": 1228936
+    },
+    {
+      "model": "pi0",
+      "basis": "single_model_tool_input",
+      "input": 34699,
+      "output": 3187,
+      "reasoning": 2123,
+      "cache_read": 8961024,
+      "cache_write": 0,
+      "uncached_work_tokens": 40009,
+      "all_processed_tokens": 9001033
+    },
+    {
+      "model": "pi05",
+      "basis": "single_model_current_text",
+      "input": 202,
+      "output": 175,
+      "reasoning": 516,
+      "cache_read": 415104,
+      "cache_write": 0,
+      "uncached_work_tokens": 893,
+      "all_processed_tokens": 415997
+    },
+    {
+      "model": "pi05",
+      "basis": "single_model_tool_input",
+      "input": 86234,
+      "output": 34974,
+      "reasoning": 47369,
+      "cache_read": 41893376,
+      "cache_write": 0,
+      "uncached_work_tokens": 168577,
+      "all_processed_tokens": 42061953
+    },
+    {
+      "model": "shared",
+      "basis": "explicit_shared_child_task",
+      "input": 1299325,
+      "output": 81517,
+      "reasoning": 52802,
+      "cache_read": 15542272,
+      "cache_write": 0,
+      "uncached_work_tokens": 1433644,
+      "all_processed_tokens": 16975916
+    },
+    {
+      "model": "shared",
+      "basis": "main_context_compaction",
+      "input": 7094533,
+      "output": 36505,
+      "reasoning": 29978,
+      "cache_read": 9088,
+      "cache_write": 0,
+      "uncached_work_tokens": 7161016,
+      "all_processed_tokens": 7170104
+    },
+    {
+      "model": "shared",
+      "basis": "mixed_child_dispatch",
+      "input": 223638,
+      "output": 5139,
+      "reasoning": 8506,
+      "cache_read": 2402176,
+      "cache_write": 0,
+      "uncached_work_tokens": 237283,
+      "all_processed_tokens": 2639459
+    },
+    {
+      "model": "shared",
+      "basis": "mixed_model_tool_input",
+      "input": 1805219,
+      "output": 255780,
+      "reasoning": 246633,
+      "cache_read": 142701312,
+      "cache_write": 0,
+      "uncached_work_tokens": 2307632,
+      "all_processed_tokens": 145008944
+    },
+    {
+      "model": "shared",
+      "basis": "mixed_or_unlabelled_main_step",
+      "input": 11224380,
+      "output": 140804,
+      "reasoning": 295336,
+      "cache_read": 355090304,
+      "cache_write": 0,
+      "uncached_work_tokens": 11660520,
+      "all_processed_tokens": 366750824
+    },
+    {
+      "model": "shared",
+      "basis": "verified_shared_allocation_monitor",
+      "input": 309519,
+      "output": 429,
+      "reasoning": 198,
+      "cache_read": 25344,
+      "cache_write": 0,
+      "uncached_work_tokens": 310146,
+      "all_processed_tokens": 335490
+    }
+  ],
+  "known_recorded_grand_total": {
+    "input": 35559337,
+    "output": 1927994,
+    "reasoning": 2397890,
+    "cache_read": 1448300032,
+    "cache_write": 0,
+    "uncached_work_tokens": 39885221,
+    "all_processed_tokens": 1488185253
+  },
+  "missing_usage_record_count": 14,
+  "attribution_is_activity_based_estimate": true,
+  "token_counters_are_recorded_not_character_estimates": true,
+  "direct_children": 69,
+  "counter_definitions": {
+    "input": "Recorded uncached input tokens",
+    "output": "Recorded output tokens, excluding separately reported reasoning",
+    "reasoning": "Recorded reasoning tokens",
+    "cache_read": "Recorded cached-context reads, summed over calls",
+    "cache_write": "Recorded cache-write tokens",
+    "uncached_work_tokens": "input + output + reasoning; not price-normalized billing units",
+    "all_processed_tokens": "input + output + reasoning + cache_read + cache_write"
+  },
+  "coverage": {
+    "opencode_version": "2.2.7",
+    "sessions": 70,
+    "root_sessions": 1,
+    "direct_children": 69,
+    "known_usage_records": 4105,
+    "missing_usage_records": 14,
+    "fork_sessions": 0,
+    "duplicate_billed_message_count": 0,
+    "main_compaction_records": 9,
+    "older_parent_children_excluded": 2,
+    "initial_window_is_temporal_proxy_not_per_model_final_acceptance": true
+  },
+  "excluded_scopes": [
+    "Earlier October ApxInf migration, robot deployment/training/download work in other root sessions",
+    "Research before the November8 four-model adaptation request",
+    "This accounting request and its follow-up publication work"
+  ],
+  "privacy": "Public aggregate only; raw sessions, prompts, tool bodies, credentials and per-message ledgers remain private."
+}
