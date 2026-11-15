@@ -39,6 +39,11 @@ class FastWAMTorchFrontend:
     is quiescent; an instance lock cannot coordinate unrelated GPU threads.
     Sampler decisions, VAE and per-request video prefill remain outside capture.
 
+    ``compile_action_infer=True`` instead compiles BOTH video prefill and raw
+    denoise using the author's reduce-overhead/fullgraph recipe. This CUDA
+    Torch-only opt-in is mutually exclusive with manual graphs/native Linear;
+    it keeps the explicit fixed-noise interface and unchanged sampler schedule.
+
     Alternatively pass ``model=`` with an already initialized upstream model;
     its weights/device/dtype are not silently changed. Source/checkpoint loading
     options are mutually exclusive with that injection boundary.
@@ -62,6 +67,7 @@ class FastWAMTorchFrontend:
         native_linear: bool = False,
         native_linear_backend: str = "legacy",
         use_cuda_graph: bool = False,
+        compile_action_infer: bool = False,
     ):
         steps, probe = validate_sampler(sampler, sigma_shift, num_inference_steps, probeflow_config)
         horizon = positive_integer(action_horizon, "action_horizon")
@@ -69,6 +75,10 @@ class FastWAMTorchFrontend:
             raise TypeError("native_linear must be bool")
         if not isinstance(use_cuda_graph, bool):
             raise TypeError("use_cuda_graph must be bool")
+        if not isinstance(compile_action_infer, bool):
+            raise TypeError("compile_action_infer must be bool")
+        if compile_action_infer and (native_linear or use_cuda_graph):
+            raise ValueError("compile_action_infer requires Torch operators without a manual raw-body graph")
         if use_cuda_graph and native_linear and native_linear_backend != "cached":
             raise ValueError("FastWAM CUDA graph with native Linear requires cached backend")
         if use_cuda_graph and device is not None and not str(device).startswith("cuda"):
@@ -110,6 +120,8 @@ class FastWAMTorchFrontend:
             raise ValueError("native_linear requires CUDA BF16")
         if use_cuda_graph and device.type != "cuda":
             raise ValueError("use_cuda_graph requires a CUDA device")
+        if compile_action_infer and device.type != "cuda":
+            raise ValueError("compile_action_infer requires a CUDA device")
         if model is None:
             from flash_rt.models.fastwam.loader import load_local_model
             model = load_local_model(config, *paths, device=device, dtype=dtype)
@@ -120,6 +132,7 @@ class FastWAMTorchFrontend:
             native_linear=native_linear, device=device, dtype=dtype,
             native_linear_backend=native_linear_backend,
             use_cuda_graph=use_cuda_graph,
+            compile_action_infer=compile_action_infer,
         )
         self.sampler = sampler
         self.device, self.dtype = device, dtype
@@ -128,6 +141,7 @@ class FastWAMTorchFrontend:
         self.num_inference_steps = steps
         self.native_linear_backend = native_linear_backend
         self.use_cuda_graph = use_cuda_graph
+        self.compile_action_infer = compile_action_infer
 
     @property
     def execution_metadata(self):

@@ -40,7 +40,8 @@ _CAPABILITIES = {
         'hardware': ('cuda_sm80', 'rtx_sm87', 'rtx_sm89', 'thor', 'rtx_sm120'),
         'action_domain': 'normalized-model-actions-batched',
         'options': ('source_dir', 'model_config', 'backbone_dir',
-                    'sigma_shift', 'action_horizon', 'native_linear_backend', 'use_cuda_graph'),
+                    'sigma_shift', 'action_horizon', 'native_linear_backend', 'use_cuda_graph',
+                    'compile_action_infer'),
         'execution_coverage': 'partial-native-linear-upstream-other-operators',
     },
 }
@@ -128,6 +129,11 @@ def validate_config(config: BackendConfig) -> dict:
             'semantic_bf16', 'official_local_fp32'):
         raise ValueError('Unknown HyVLA numerical_profile')
     if config.model == 'fastwam':
+        compiled = config.options.get('compile_action_infer', False)
+        if not isinstance(compiled, bool):
+            raise TypeError('compile_action_infer must be bool')
+        if compiled and (config.backend != 'torch' or config.options.get('use_cuda_graph', False)):
+            raise ValueError('Compiled FastWAM requires backend="torch" and use_cuda_graph=False')
         if config.backend == 'torch' and 'native_linear_backend' in config.options:
             raise ValueError('native_linear_backend is incompatible with backend="torch"')
         if config.options.get('native_linear_backend', 'legacy') not in ('legacy', 'cached'):

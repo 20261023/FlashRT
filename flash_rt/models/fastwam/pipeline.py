@@ -42,9 +42,14 @@ class FastWAMActionPipeline:
 
     def __init__(self, model, *, action_horizon, sigma_shift, sampler,
                  num_inference_steps, probeflow_config, native_linear, device, dtype,
-                  native_linear_backend="legacy", use_cuda_graph=False):
+                   native_linear_backend="legacy", use_cuda_graph=False,
+                   compile_action_infer=False):
         if not isinstance(use_cuda_graph, bool):
             raise TypeError("use_cuda_graph must be bool")
+        if not isinstance(compile_action_infer, bool):
+            raise TypeError("compile_action_infer must be bool")
+        if compile_action_infer and (device.type != "cuda" or native_linear or use_cuda_graph):
+            raise ValueError("Compiled FastWAM requires CUDA Torch operators without the manual raw-body graph")
         if use_cuda_graph and (device.type != "cuda" or (native_linear and native_linear_backend != "cached")):
             raise ValueError("FastWAM CUDA graphs require CUDA and Torch or cached native Linear")
         if native_linear_backend not in ("legacy", "cached"):
@@ -52,6 +57,8 @@ class FastWAMActionPipeline:
         if native_linear_backend == "cached" and not native_linear:
             raise ValueError("native_linear_backend='cached' requires native_linear=True")
         self.model = model
+        self.compile_action_infer = compile_action_infer
+        self._compiled_prefill = self._compiled_denoise = None
         self.native_linear_backend = native_linear_backend
         self.device, self.dtype = device, dtype
         self.action_horizon, self.sigma_shift = action_horizon, sigma_shift
@@ -67,6 +74,11 @@ class FastWAMActionPipeline:
         self._validate_model()
         self._build_time_bank()
         model.eval()
+        if compile_action_infer:
+            self._compiled_prefill = torch.compile(
+                model.mot.prefill_video_cache_tensor, mode="reduce-overhead", fullgraph=True)
+            self._compiled_denoise = torch.compile(
+                model._denoise_action_with_video_cache, mode="reduce-overhead", fullgraph=True)
         if native_linear:
             from flash_rt.models.fastwam.native_linear import install_native_linears
             self._native_modules, self._native_skipped = install_native_linears(
@@ -242,6 +254,8 @@ class FastWAMActionPipeline:
             "native_linear_backend": self.native_linear_backend if self._native_modules else None,
             "upstream_operations": ("VAE", "patch_conv3d", "attention_sdpa", "norm", "RoPE", "activations", "modulation"),
             "cuda_graph": self._velocity_graph is not None,
+            "compiled_action_infer": self.compile_action_infer,
+            "compiled_regions": ["video_prefill", "raw_denoise"] if self.compile_action_infer else [],
             "native_counter_semantics": "Python Linear forwards / successful CPU GEMM enqueues, not graph GPU work",
             "device": str(self.device),
             "image_spatial_multiple": self.image_multiple,
@@ -374,17 +388,29 @@ class FastWAMActionPipeline:
             video_seq_len=seq_len, action_seq_len=self.action_horizon,
             video_tokens_per_frame=tokens_per_frame, device=tokens.device,
         )
-        cache_k, cache_v = self.model.mot.prefill_video_cache_tensor(
+        prefill = self._compiled_prefill or self.model.mot.prefill_video_cache_tensor
+        if self.compile_action_infer:
+            torch.compiler.cudagraph_mark_step_begin()
+        cache_k, cache_v = prefill(
             video_tokens=tokens, video_freqs=freqs, video_t_mod=t_mod,
             video_context=video_context, video_context_mask=video_mask,
             video_attention_mask=attention_mask[:seq_len, :seq_len],
         )
+        if self.compile_action_infer:
+            # Match the author's compiled infer_action ownership boundary:
+            # subsequent graph steps may overwrite Inductor-owned KV outputs.
+            cache_k = [value.clone() for value in cache_k]
+            cache_v = [value.clone() for value in cache_v]
         return FastWAMCondition(context, mask, cache_k, cache_v, attention_mask[seq_len:, :])
 
     def _evaluate_at_timestep(self, state, timestep, condition, *, graph=False):
         if timestep.shape != (1,) or timestep.device != state.device or timestep.dtype != state.dtype:
             raise ValueError("FastWAM banked timestep must match state device/dtype and have shape [1]")
-        evaluator = self._velocity_graph if graph and self._velocity_graph is not None else self.model._denoise_action_with_video_cache
+        if graph and self._compiled_denoise is not None:
+            torch.compiler.cudagraph_mark_step_begin()
+            evaluator = self._compiled_denoise
+        else:
+            evaluator = self._velocity_graph if graph and self._velocity_graph is not None else self.model._denoise_action_with_video_cache
         raw = evaluator(
             latents_action=state, timestep_action=timestep,
             context=condition.context, context_mask=condition.context_mask,
@@ -496,6 +522,7 @@ class FastWAMActionPipeline:
             self._velocity_graph = self._execution_stream = None
             self._last_eager_stream = None
             self._native_modules.clear()
+            self._compiled_prefill = self._compiled_denoise = None
             self._native_runner = self.model = None
             self._time_rows.clear()
             self._sigma_rows.clear()

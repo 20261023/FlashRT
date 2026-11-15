@@ -5,6 +5,46 @@ model, hardware path or numerical profile is qualified. Keep model weights,
 fixtures and generated outputs outside the source tree. Experiments must use
 an immutable source snapshot and explicitly named local inputs/checkpoints.
 
+## Selected methods versus author Native latency
+
+`latency_comparison.py` validates evidence labels and statistics for the four-model
+latency comparison. **Official Native means the author's original execution
+stack**, never FlashRT or this project's Torch-graph pipeline. Published numbers
+with a different GPU/input/sampling/statistical/timing protocol are context-only;
+the helper refuses to manufacture a speedup ratio from them. Missing values are
+NR, not zero latency. Hy's current semantic-BF16 Euler10 graph is a baseline until
+its new tradeoff campaign actually selects a winner; FastWAM's retained point is
+Euler20 after the expanded workload rejected13/14/16.
+
+`official_hyvla_latency.py` is an allocation-only timing wrapper around the
+unmodified author `HyVLA` APIs: original `prepare_images/state/language` followed
+by original `policy.model.sample_actions` with fixed noise, then completed CPU
+raw action output. It does not construct a FlashRT model, reuse action-queue hits
+or time an observed low-level operator as a full request. Author code is exported
+from a fixed Git revision and import paths/load completeness are checked. One
+untimed NFE control restores its observer before formal warmups/samples. This is
+an official-implementation self-test with an explicit host-to-CPU boundary, not
+an author-published latency or a robot-quality result. Cold load and warmup remain
+separate; raw arrays are written before a completed JSON result.
+
+`official_native_latency.py` adds direct author OpenPI JAX/PyTorch and FastWAM
+A800 measurements. Published results on other GPUs are reference material, not
+the main speed comparison. It records author-default and selected-matched Euler
+step counts separately. OpenPI uses its original model/Policy/model transforms;
+the resident LeRobot π0.5 checkpoint uses a temporary outer `model.` loading
+namespace and strict shared-weight-aware safetensors loading for its tied embedding.
+H50 and discrete-state settings are explicit.
+FastWAM uses the author's original compiled `infer_action` and cached T5 inputs.
+Cold compile/load is excluded and reported separately. These are author-source
+self-measurements in the recorded resident runtime, not replicas of paper timing.
+
+For an explicit FastWAM compiled candidate, use `backend="torch"` with
+`options={..., "compile_action_infer": True, "use_cuda_graph": False}` in the
+existing candidate JSON. This opt-in compiles both video prefill and raw denoise,
+rather than replaying only an unfused raw-denoise graph. Keep step count, shift,
+inputs and precision explicit; measure against the author's compiled API, not
+only an old eager baseline. Compile time is not steady-state inference latency.
+
 ## HyVLA recorded-oracle validation
 
 **Current optimization goal (2026-11-13):** use the shared v2 tradeoff contract
