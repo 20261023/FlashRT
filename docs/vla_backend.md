@@ -251,6 +251,13 @@ substituted on compilation failure. Actual coverage reports
 not fully native FlashRT execution. Cold compilation is separate from steady
 latency. Existing public raw-velocity evaluation stays uncompiled.
 
+On the recorded A800 E20/eight-case run, this opt-in measured137.65ms versus
+250.98ms for the previous raw-body graph and142.44ms for the author's compiled
+API. It met the existing numerical proxy, not a robot-quality guarantee. See
+[the latency report](reports/2026-11-14-vla-latency-comparison.zh-CN.md) for scope,
+compile cost, actual input conditions and the separately labelled partial-FlashRT
+baseline; do not generalize this one-allocation result to every device.
+
 Only the non-integrating raw-velocity body is captured. VAE and video KV prefill
 run once per request outside capture. Conditions are copied anew at the first
 evaluation of **every** request, even for reused input pointers; latent/time

@@ -2,8 +2,7 @@
   "date": "2026-11-15",
   "primary_four_model_comparison_complete": true,
   "all_optional_matched_step_points_complete": false,
-  "flashrt_baseline_column_complete": false,
-  "flashrt_baseline_and_fastwam_optimization_pending_job": "327380",
+  "flashrt_baseline_column_complete": true,
   "runtime_versions": {
     "author_pi0": {
       "jax": "0.5.3",
@@ -40,7 +39,11 @@
       "same_step_native_to_project_latency_ratio": 1.8503935302905354,
       "native10_to_project_latency_ratio": 2.6562026535828576,
       "ratio_note": "Observed latency only, not an equal-quality or pure-kernel claim; pi0 also differs in precision.",
-      "job_id": "326708"
+      "job_id": "326708",
+      "flashrt_baseline_median_ms": 40.3384435,
+      "flashrt_baseline_steps": 10,
+      "flashrt_baseline_job_id": "327380",
+      "flashrt_baseline_same_allocation_as_primary_pair": false
     },
     {
       "model": "pi05",
@@ -51,18 +54,26 @@
       "same_step_native_to_project_latency_ratio": null,
       "native10_to_project_latency_ratio": 1.515816976917313,
       "ratio_note": "Observed latency only, not an equal-quality or pure-kernel claim; pi0 also differs in precision.",
-      "job_id": "326869"
+      "job_id": "326869",
+      "flashrt_baseline_median_ms": 41.910786,
+      "flashrt_baseline_steps": 10,
+      "flashrt_baseline_job_id": "327380",
+      "flashrt_baseline_same_allocation_as_primary_pair": false
     },
     {
       "model": "fastwam",
-      "project_median_ms": 249.831304,
+      "project_median_ms": 137.6502975,
       "project_steps": 20,
-      "native_10step_median_ms": 85.271852,
-      "native_matched_step_median_ms": 141.38847299999998,
-      "same_step_native_to_project_latency_ratio": 0.5659357764069469,
-      "native10_to_project_latency_ratio": 0.3413177237388954,
+      "native_10step_median_ms": 85.7984235,
+      "native_matched_step_median_ms": 142.4363065,
+      "same_step_native_to_project_latency_ratio": 1.0347693327724192,
+      "native10_to_project_latency_ratio": 0.6233072144286502,
       "ratio_note": "Observed latency only, not an equal-quality or pure-kernel claim; pi0 also differs in precision.",
-      "job_id": "326708"
+      "job_id": "327380",
+      "flashrt_baseline_median_ms": 263.3573935,
+      "flashrt_baseline_steps": 20,
+      "flashrt_baseline_job_id": "327380",
+      "flashrt_baseline_same_allocation_as_primary_pair": true
     },
     {
       "model": "hyvla",
@@ -73,7 +84,11 @@
       "same_step_native_to_project_latency_ratio": 6.489549061550764,
       "native10_to_project_latency_ratio": 6.489549061550764,
       "ratio_note": "Observed latency only, not an equal-quality or pure-kernel claim; pi0 also differs in precision.",
-      "job_id": "326641"
+      "job_id": "326641",
+      "flashrt_baseline_median_ms": 121.280456,
+      "flashrt_baseline_steps": 10,
+      "flashrt_baseline_job_id": "327380",
+      "flashrt_baseline_same_allocation_as_primary_pair": false
     }
   ],
   "measurements": [
@@ -249,7 +264,7 @@
     {
       "model": "fastwam",
       "origin": "project",
-      "role": "project",
+      "role": "historical_project",
       "status": "complete",
       "gpu": "NVIDIA A800-SXM4-80GB",
       "batch": 1,
@@ -277,7 +292,7 @@
     {
       "model": "fastwam",
       "origin": "author",
-      "role": "author_default",
+      "role": "historical_author_default",
       "status": "complete",
       "gpu": "NVIDIA A800-SXM4-80GB",
       "batch": 1,
@@ -305,7 +320,7 @@
     {
       "model": "fastwam",
       "origin": "author",
-      "role": "author_matched",
+      "role": "historical_author_matched",
       "status": "complete",
       "gpu": "NVIDIA A800-SXM4-80GB",
       "batch": 1,
@@ -385,6 +400,343 @@
       "mean_ms": 802.2074468714286,
       "p95_ms": 810.7749944999999,
       "cold_compile_call_ms": null
+    },
+    {
+      "model": "fastwam",
+      "origin": "project",
+      "role": "project_previous_selected_fresh_control",
+      "status": "complete",
+      "gpu": "NVIDIA A800-SXM4-80GB",
+      "batch": 1,
+      "images": "2x224x224 ->224x448",
+      "history": 1,
+      "chunk_positions": 32,
+      "raw_action_dim": 7,
+      "public_action_dim": 7,
+      "case_count": 8,
+      "precision": "bf16",
+      "steps": 20,
+      "warmup_per_process": 8,
+      "processes": 1,
+      "timing_boundary": "host observation/noise to completed CPU raw action chunk",
+      "text_scope": "cached-T5",
+      "method": "Previous project Torch raw-denoise graph Euler20",
+      "source_url": "https://github.com/20261023/FlashRT/tree/227993d52b83aa769132cd5d04ade0a5b53d5a55",
+      "job_id": "327380",
+      "samples": 80,
+      "median_ms": 250.9825745,
+      "mean_ms": 251.05150568750005,
+      "p95_ms": 251.90988779999998,
+      "cold_compile_call_ms": null,
+      "nfe_values": [
+        20
+      ],
+      "prepare_ms": 3197.920576,
+      "load_ms": 63549.231385,
+      "configured_options": {
+        "sigma_shift": 5.0,
+        "action_horizon": 32,
+        "use_cuda_graph": true,
+        "compile_action_infer": false
+      },
+      "execution_scope": {
+        "backend": "upstream_torch_reference",
+        "fully_native": false,
+        "cuda_graph": true,
+        "compiled_action_infer": false,
+        "compiled_regions": []
+      }
+    },
+    {
+      "model": "fastwam",
+      "origin": "project",
+      "role": "project",
+      "status": "complete",
+      "gpu": "NVIDIA A800-SXM4-80GB",
+      "batch": 1,
+      "images": "2x224x224 ->224x448",
+      "history": 1,
+      "chunk_positions": 32,
+      "raw_action_dim": 7,
+      "public_action_dim": 7,
+      "case_count": 8,
+      "precision": "bf16",
+      "steps": 20,
+      "warmup_per_process": 8,
+      "processes": 1,
+      "timing_boundary": "host observation/noise to completed CPU raw action chunk",
+      "text_scope": "cached-T5",
+      "method": "Project Torch compiled video-prefill + raw-denoise Euler20",
+      "source_url": "https://github.com/20261023/FlashRT/tree/227993d52b83aa769132cd5d04ade0a5b53d5a55",
+      "job_id": "327380",
+      "samples": 80,
+      "median_ms": 137.6502975,
+      "mean_ms": 137.742207925,
+      "p95_ms": 138.1892708,
+      "cold_compile_call_ms": null,
+      "nfe_values": [
+        20
+      ],
+      "prepare_ms": 24597.036979,
+      "load_ms": 50941.343079,
+      "configured_options": {
+        "sigma_shift": 5.0,
+        "action_horizon": 32,
+        "use_cuda_graph": false,
+        "compile_action_infer": true
+      },
+      "execution_scope": {
+        "backend": "upstream_torch_reference",
+        "fully_native": false,
+        "cuda_graph": false,
+        "compiled_action_infer": true,
+        "compiled_regions": [
+          "video_prefill",
+          "raw_denoise"
+        ]
+      },
+      "quality_scope": "normalized-fastwam7-postselection-eight-cases-v1",
+      "worst_relative_l2": 0.039333574212969194,
+      "minimum_cosine": 0.9992527670445327,
+      "max_abs": 0.2265625,
+      "quality_gate": {
+        "max_relative_l2": 0.05,
+        "min_cosine": 0.999
+      },
+      "selection_status": "selected_within_original_eight_case_proxy"
+    },
+    {
+      "model": "fastwam",
+      "origin": "project",
+      "role": "flashrt_baseline",
+      "status": "complete",
+      "gpu": "NVIDIA A800-SXM4-80GB",
+      "batch": 1,
+      "images": "2x224x224 ->224x448",
+      "history": 1,
+      "chunk_positions": 32,
+      "raw_action_dim": 7,
+      "public_action_dim": 7,
+      "case_count": 8,
+      "precision": "bf16",
+      "steps": 20,
+      "warmup_per_process": 8,
+      "processes": 1,
+      "timing_boundary": "host observation/noise to completed CPU raw action chunk",
+      "text_scope": "cached-T5",
+      "method": "Partial FlashRT Linear cached-plan + raw graph Euler20",
+      "source_url": "https://github.com/20261023/FlashRT/tree/227993d52b83aa769132cd5d04ade0a5b53d5a55",
+      "job_id": "327380",
+      "samples": 80,
+      "median_ms": 263.3573935,
+      "mean_ms": 263.4317100625,
+      "p95_ms": 263.9882627,
+      "cold_compile_call_ms": null,
+      "nfe_values": [
+        20
+      ],
+      "prepare_ms": 2643.38156,
+      "load_ms": 49087.736884,
+      "configured_options": {
+        "sigma_shift": 5.0,
+        "action_horizon": 32,
+        "use_cuda_graph": true,
+        "native_linear_backend": "cached",
+        "compile_action_infer": false
+      },
+      "execution_scope": {
+        "backend": "flashrt_bf16_linear_partial",
+        "fully_native": false,
+        "cuda_graph": true,
+        "compiled_action_infer": false,
+        "compiled_regions": []
+      },
+      "quality_scope": "Reference-role timing only; not independent numerical/robot validation"
+    },
+    {
+      "model": "pi0",
+      "origin": "project",
+      "role": "flashrt_baseline",
+      "status": "complete",
+      "gpu": "NVIDIA A800-SXM4-80GB",
+      "batch": 1,
+      "images": "3x224x224",
+      "history": 1,
+      "chunk_positions": 50,
+      "raw_action_dim": 32,
+      "public_action_dim": 7,
+      "case_count": 1,
+      "precision": "fp16",
+      "steps": 10,
+      "warmup_per_process": 8,
+      "processes": 1,
+      "timing_boundary": "host observation/noise to completed CPU raw action chunk",
+      "text_scope": "project prompt caching/implementation-specific handling",
+      "method": "FlashRT FP16 Euler10 graph",
+      "source_url": "https://github.com/20261023/FlashRT/tree/227993d52b83aa769132cd5d04ade0a5b53d5a55",
+      "job_id": "327380",
+      "samples": 50,
+      "median_ms": 40.3384435,
+      "mean_ms": 40.424394719999995,
+      "p95_ms": 40.79714065,
+      "cold_compile_call_ms": null,
+      "nfe_values": [
+        10
+      ],
+      "prepare_ms": 2313.114141,
+      "load_ms": 32958.511799,
+      "configured_options": {
+        "num_views": 3,
+        "chunk_size": 50,
+        "use_cuda_graph": true
+      },
+      "quality_scope": "Reference-role timing only; not independent numerical/robot validation"
+    },
+    {
+      "model": "pi05",
+      "origin": "project",
+      "role": "flashrt_baseline",
+      "status": "complete",
+      "gpu": "NVIDIA A800-SXM4-80GB",
+      "batch": 1,
+      "images": "3x224x224",
+      "history": 1,
+      "chunk_positions": 50,
+      "raw_action_dim": 32,
+      "public_action_dim": 7,
+      "case_count": 4,
+      "precision": "bf16",
+      "steps": 10,
+      "warmup_per_process": 8,
+      "processes": 1,
+      "timing_boundary": "host observation/noise to completed CPU raw action chunk",
+      "text_scope": "project prompt caching/implementation-specific handling",
+      "method": "FlashRT BF16 Euler10 graph",
+      "source_url": "https://github.com/20261023/FlashRT/tree/227993d52b83aa769132cd5d04ade0a5b53d5a55",
+      "job_id": "327380",
+      "samples": 40,
+      "median_ms": 41.910786,
+      "mean_ms": 41.976384949999996,
+      "p95_ms": 42.3033427,
+      "cold_compile_call_ms": null,
+      "nfe_values": [
+        10
+      ],
+      "prepare_ms": 2831.441408,
+      "load_ms": 5819.970965,
+      "configured_options": {
+        "num_views": 3,
+        "chunk_size": 50,
+        "use_cuda_graph": true,
+        "state_prompt_mode": "exact"
+      },
+      "quality_scope": "Reference-role timing only; not independent numerical/robot validation"
+    },
+    {
+      "model": "hyvla",
+      "origin": "project",
+      "role": "flashrt_baseline",
+      "status": "complete",
+      "gpu": "NVIDIA A800-SXM4-80GB",
+      "batch": 1,
+      "images": "3x6x480x640 ->224x224",
+      "history": 6,
+      "chunk_positions": 40,
+      "raw_action_dim": 32,
+      "public_action_dim": 20,
+      "case_count": 7,
+      "precision": "bf16",
+      "steps": 10,
+      "warmup_per_process": 8,
+      "processes": 1,
+      "timing_boundary": "host observation/noise to completed CPU raw action chunk",
+      "text_scope": "project prompt caching/implementation-specific handling",
+      "method": "FlashRT semantic-BF16 Euler10 graph; same configuration as selected baseline",
+      "source_url": "https://github.com/20261023/FlashRT/tree/227993d52b83aa769132cd5d04ade0a5b53d5a55",
+      "job_id": "327380",
+      "samples": 70,
+      "median_ms": 121.280456,
+      "mean_ms": 122.11759445714287,
+      "p95_ms": 128.2098148,
+      "cold_compile_call_ms": null,
+      "nfe_values": [
+        10
+      ],
+      "prepare_ms": 4445.707184,
+      "load_ms": 8537.8315,
+      "configured_options": {
+        "use_cuda_graph": true,
+        "numerical_profile": "semantic_bf16"
+      },
+      "quality_scope": "Reference-role timing only; not independent numerical/robot validation"
+    },
+    {
+      "model": "fastwam",
+      "origin": "author",
+      "role": "author_default",
+      "status": "complete",
+      "gpu": "NVIDIA A800-SXM4-80GB",
+      "batch": 1,
+      "images": "2x224x224 ->224x448",
+      "history": 1,
+      "chunk_positions": 32,
+      "raw_action_dim": 7,
+      "public_action_dim": 7,
+      "case_count": 8,
+      "precision": "bf16",
+      "steps": 10,
+      "warmup_per_process": 8,
+      "processes": 1,
+      "timing_boundary": "host prepared observation/seed to completed CPU raw action chunk",
+      "text_scope": "cached-T5",
+      "method": "author FastWAM.infer_action compiled",
+      "source_url": "https://github.com/yuantianyuan01/FastWAM/tree/7faa71108368fbb3b6885649f112af607427a2d4",
+      "job_id": "327380",
+      "samples": 80,
+      "median_ms": 85.7984235,
+      "mean_ms": 85.9070399875,
+      "p95_ms": 86.53869195,
+      "cold_compile_call_ms": 13378.186119,
+      "nfe_values": [
+        10
+      ],
+      "prepare_ms": null,
+      "load_ms": 48792.157526,
+      "noise_mode": "Author original Torch CPU noise generator with documented fixture seed"
+    },
+    {
+      "model": "fastwam",
+      "origin": "author",
+      "role": "author_matched",
+      "status": "complete",
+      "gpu": "NVIDIA A800-SXM4-80GB",
+      "batch": 1,
+      "images": "2x224x224 ->224x448",
+      "history": 1,
+      "chunk_positions": 32,
+      "raw_action_dim": 7,
+      "public_action_dim": 7,
+      "case_count": 8,
+      "precision": "bf16",
+      "steps": 20,
+      "warmup_per_process": 8,
+      "processes": 1,
+      "timing_boundary": "host prepared observation/seed to completed CPU raw action chunk",
+      "text_scope": "cached-T5",
+      "method": "author FastWAM.infer_action compiled",
+      "source_url": "https://github.com/yuantianyuan01/FastWAM/tree/7faa71108368fbb3b6885649f112af607427a2d4",
+      "job_id": "327380",
+      "samples": 80,
+      "median_ms": 142.4363065,
+      "mean_ms": 142.52395650000003,
+      "p95_ms": 143.01053445,
+      "cold_compile_call_ms": 142.258233,
+      "nfe_values": [
+        20
+      ],
+      "prepare_ms": null,
+      "load_ms": 48792.157526,
+      "noise_mode": "Author original Torch CPU noise generator with documented fixture seed"
     }
   ],
   "official_published_reference_only": [
@@ -508,14 +860,100 @@
   "limitations": [
     "Pi0 FP16 Euler2 has no established quality equivalence to the author BF16 Euler10 default.",
     "Pi05 resident LeRobot H50 weights are loaded into author OpenPI with a shared-aware strict loading namespace; H50/three-image/frontend-ready inputs are not the author default LIBERO H10 adapter.",
-    "FastWAM author compiled uses the same cached-T5 boundary here, unlike its text-inclusive paper timing; the author compiled path is faster than the selected project graph.",
     "Hy project row is a baseline, not a search winner; runtime and prompt/preprocessing implementations differ.",
     "No new tests, reviews or numerical-quality experiments were run after the user requested speed/no tests.",
-    "Pi05 optional8-step compiled timing is NR because the process budget expired, not a zero/infinite latency measurement."
+    "Pi05 optional8-step compiled timing is NR because the process budget expired, not a zero/infinite latency measurement.",
+    "FastWAM old graph is retained as historical data. New compiled path improves that baseline45.16% and is3.36% below the author compiled20 point in this allocation; this small advantage is not a cross-hardware claim.",
+    "The new FlashRT baseline column is job327380. Pi0/Pi05/Hy primary Native/project pairs remain their earlier same-allocation pairs; do not silently divide across these allocations.",
+    "FastWAM baseline is only partial FlashRT Linear execution, not a full FlashRT model port. Hy FlashRT baseline and selected configuration are the same method; inter-run differences are not algorithm gains."
   ],
   "jobs": {
     "326641": "COMPLETED0:0; all10first-batch bundles returned",
     "326708": "FAILED1:0 partial; Pi0/FastWAM and all3project controls completed, Pi05 tied embedding alias load failed",
-    "326869": "FAILED1:0 partial; Pi05 Native10 and same-allocation project8 completed, optional Native8 compilation exceeded process budget"
+    "326869": "FAILED1:0 partial; Pi05 Native10 and same-allocation project8 completed, optional Native8 compilation exceeded process budget",
+    "327380": "COMPLETED0:0; all8point bundles from7processes returned; no profiling/tests/reviews"
+  },
+  "historical_main_comparison_before_round044": [
+    {
+      "model": "pi0",
+      "project_median_ms": 26.116350500000003,
+      "project_steps": 2,
+      "native_10step_median_ms": 69.3703195,
+      "native_matched_step_median_ms": 48.325525999999996,
+      "same_step_native_to_project_latency_ratio": 1.8503935302905354,
+      "native10_to_project_latency_ratio": 2.6562026535828576,
+      "ratio_note": "Observed latency only, not an equal-quality or pure-kernel claim; pi0 also differs in precision.",
+      "job_id": "326708"
+    },
+    {
+      "model": "pi05",
+      "project_median_ms": 39.2392145,
+      "project_steps": 8,
+      "native_10step_median_ms": 59.4794675,
+      "native_matched_step_median_ms": null,
+      "same_step_native_to_project_latency_ratio": null,
+      "native10_to_project_latency_ratio": 1.515816976917313,
+      "ratio_note": "Observed latency only, not an equal-quality or pure-kernel claim; pi0 also differs in precision.",
+      "job_id": "326869"
+    },
+    {
+      "model": "fastwam",
+      "project_median_ms": 249.831304,
+      "project_steps": 20,
+      "native_10step_median_ms": 85.271852,
+      "native_matched_step_median_ms": 141.38847299999998,
+      "same_step_native_to_project_latency_ratio": 0.5659357764069469,
+      "native10_to_project_latency_ratio": 0.3413177237388954,
+      "ratio_note": "Observed latency only, not an equal-quality or pure-kernel claim; pi0 also differs in precision.",
+      "job_id": "326708"
+    },
+    {
+      "model": "hyvla",
+      "project_median_ms": 123.935473,
+      "project_steps": 10,
+      "native_10step_median_ms": 804.2853325000001,
+      "native_matched_step_median_ms": 804.2853325000001,
+      "same_step_native_to_project_latency_ratio": 6.489549061550764,
+      "native10_to_project_latency_ratio": 6.489549061550764,
+      "ratio_note": "Observed latency only, not an equal-quality or pure-kernel claim; pi0 also differs in precision.",
+      "job_id": "326641"
+    }
+  ],
+  "fastwam_optimization": {
+    "status": "measured_and_selected_within_recorded_proxy",
+    "job_id": "327380",
+    "source_revision": "227993d52b83aa769132cd5d04ade0a5b53d5a55",
+    "previous_graph_median_ms": 250.9825745,
+    "new_compiled_median_ms": 137.6502975,
+    "author_compiled_same20_median_ms": 142.4363065,
+    "latency_ratio_previous_to_new": 1.8233347770279975,
+    "latency_reduction_percent": 45.155436478320134,
+    "author_to_new_latency_ratio": 1.0347693327724192,
+    "observed_latency_lower_than_author_percent": 3.36010467949055,
+    "same_steps": 20,
+    "same_precision": "bf16",
+    "same_sigma_shift": 5.0,
+    "same_action_horizon": 32,
+    "cases": 8,
+    "samples_per_point": 80,
+    "compiled_regions": [
+      "video_prefill",
+      "raw_denoise"
+    ],
+    "default_changed": false,
+    "activation_options": {
+      "backend": "torch",
+      "num_steps": 20,
+      "compile_action_infer": true,
+      "use_cuda_graph": false
+    },
+    "quality_vs_previous_graph": {
+      "worst_relative_l2": 0.039333574212969194,
+      "minimum_cosine": 0.9992527670445327,
+      "max_abs": 0.2265625
+    },
+    "all80_saved_outputs_exact_to_author_compiled20": true,
+    "additional_gpu_requests_for_output_comparison": 0,
+    "scope": "One actual A800 allocation, fixed synthetic/numerical cases; no closed-loop robot success proof, no global best claim, no FlashRT-native-kernel claim."
   }
 }

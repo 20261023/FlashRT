@@ -4,46 +4,75 @@
 实际延迟。附加的π0.5 Native8步点因二次编译触及进程总预算而未完成，明确保留NR；
 不为此再排作业，也不把已有10步结果或失败记录改写掉。文献数字只作参考，不用于异卡比值。
 
-**新增请求进行中：** 用户要求增加独立FlashRT列，并优化FastWAM。作业`327380`已经提交，
-包含四个FlashRT固定步数基线、Fast当前路径／新compiled候选／作者compiled强对照。
-新候选不改20步、BF16、shift5、H32或八案例；拿到结果前不填性能数字。
+**新增请求已完成：** 作业`327380`以COMPLETED 0:0结束，四个FlashRT基线列已补齐。
+FastWAM保持20步／BF16／shift5／H32／八案例，接入prefill＋denoise编译后，
+同卡中位数 **250.98 → 137.65 ms，降低45.16%（1.8233×）**；作者同20步compiled为
+142.44 ms。这一轮略低3.36%，不外推为跨硬件／任务的普遍优势。
 
 机器可读：[CSV](2026-11-14-vla-latency-comparison.csv)／[JSON](2026-11-14-vla-latency-comparison.json)。
-共11条点记录：10条完成计时、1条未完成；JSON另外保留作者文献参考与限制说明，不含私有输入／路径。
+共19条点记录：18条完成计时、1条未完成，保留旧Fast路径和旧Native对照的历史行；
+JSON另外保留作者文献参考与限制说明，不含私有输入／路径。
 
 ## A800实测大表
 
 全部使用 **NVIDIA A800-SXM4-80GB**。每个模型的项目／Native配对在同一张卡、同一
-allocation内完成：π0／FastWAM为`326708`，π0.5为`326869`，Hy为`326641`；没有跨allocation相除。
+allocation内完成：π0为`326708`，π0.5为`326869`，Hy为`326641`，Fast新路径和强对照均为`327380`。
+新增FlashRT列四行都来自`327380`；π0／π0.5／Hy这一列与各自旧主配对不是同allocation，
+只同为A800型号，不据此新增跨作业加速比。Fast三条当前路径在同一张卡同一作业内配对。
 每个方法8次warmup。表内均为毫秒；Native“10步”仅指默认采样步数，其他输入几何按本轮固定。
 
-| 模型 | 本项目固定方法 | 本项目Median / Mean / P95 | FlashRT固定步数基线Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | 每点样本数 | 官方文献参考，非同卡基线 |
+| 模型 | 本项目当前已选方法 | 本项目Median / Mean / P95 | FlashRT固定步数基线Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | 样本数（项目／FlashRT／Native） | 官方文献参考，非同卡基线 |
 |---|---|---:|---:|---:|---:|---:|---|
-| π0 | FlashRT FP16 Euler2，H50、3view | **26.1164 / 26.1463 / 26.4021** | FP16 Euler10：待`327380` | JAX BF16：**69.3703 / 69.4761 / 70.1619** | Euler2 BF16：**48.3255 / 48.3931 / 48.9294** | 50 | 73 ms，RTX4090、Euler10 |
-| π0.5 | FlashRT BF16 Euler8，H50、3view | **39.2392 / 39.3056 / 39.5815** | BF16 Euler10：待`327380` | 作者PyTorch compiled：**59.4795 / 59.5625 / 59.8169** | Euler8：**NR，二次编译触及预算** | 40 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
-| FastWAM | 本项目Torch graph BF16 Euler20，H32、shift5、cached-T5 | **249.8313 / 250.1130 / 251.4323** | partial FlashRT Linear cached＋graph Euler20：待`327380` | 作者compiled：**85.2719 / 85.3118 / 85.5855** | Euler20 compiled：**141.3885 / 141.4799 / 142.3182** | 80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
-| Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | 相同E10配置重新计时：待`327380` | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | 140 | 作者未报告完整推理延迟 |
+| π0 | FlashRT FP16 Euler2，H50、3view | **26.1164 / 26.1463 / 26.4021** | FP16 Euler10：**40.3384 / 40.4244 / 40.7971** | JAX BF16：**69.3703 / 69.4761 / 70.1619** | Euler2 BF16：**48.3255 / 48.3931 / 48.9294** | 50／50／50 | 73 ms，RTX4090、Euler10 |
+| π0.5 | FlashRT BF16 Euler8，H50、3view | **39.2392 / 39.3056 / 39.5815** | BF16 Euler10：**41.9108 / 41.9764 / 42.3033** | 作者PyTorch compiled：**59.4795 / 59.5625 / 59.8169** | Euler8：**NR，二次编译触及预算** | 40／40／40 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
+| FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | 80／80／80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
+| Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | 相同E10配置重新计时：**121.2805 / 122.1176 / 128.2098** | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | 140／70／140 | 作者未报告完整推理延迟 |
 
 新增FlashRT列指本fork当前可用的明确执行绑定，不是官方Native。FastWAM这一列仅为部分
 Linear换成FlashRT GEMM，其他算子仍使用上游Torch，不能冒充完整FlashRT移植；采用已有
 cached-plan＋raw graph路径，不故意用更慢的legacy规划充当对照。Hy基线与当前已选配置
 本来相同，不把独立重测的自然抖动说成算法优化。
 
-**FastWAM不能宣称加速：** 相同20步、BF16、H32、cached-T5下，作者原生compiled约
-141.39 ms，本项目Torch graph约249.83 ms，当前项目方法反而约慢 **1.77×**。
-保留的Euler20只是既有项目候选范围内的选择，不代表击败作者编译实现；不改历史选择记录。
+**历史对照仍保留：** 优化前`326708`中，作者compiled20步141.39 ms、旧项目Torch graph
+249.83 ms，旧方法约慢1.77×，该结论不被抹掉。新`327380`是在保持20步等条件下补齐编译
+后的新结果，不是把旧记录改名或用新数据回填历史。
 
-### 为什么旧报告约3.2×，现在仍输给官方compiled？
+### FastWAM新执行路径的实际收益（327380，同卡同负载）
+
+| 路径 | NFE | Median ms | Mean ms | P95 ms |
+|---|---:|---:|---:|---:|
+| 旧项目Torch raw-denoise graph | 20 | 250.9826 | 251.0515 | 251.9099 |
+| **新项目compiled prefill＋denoise** | **20** | **137.6503** | **137.7422** | **138.1893** |
+| 作者原始compiled API | 20 | 142.4363 | 142.5240 | 143.0105 |
+| partial FlashRT Linear cached＋graph | 20 | 263.3574 | 263.4317 | 263.9883 |
+
+新路径相对本轮旧路径降低45.1554%中位延迟、延迟比1.8233×；相对作者compiled在本轮低3.3601%。
+不把旧800 ms eager当主要分母，不改步数／精度／几何，不声称新写了更快的原生FlashRT kernel。
+这次是将作者已有编译思想接进本项目固定noise／采样接口，并保留预计算时间表等现有编排。
+作者API含按seed生成等值CPU noise，新接口接受显式noise；小幅差异属于整套接口编排，不是纯kernel收益。
+
+由**同批已保存的正式输出**计算：相对旧graph最坏relative L2为0.0393335742、最低cosine为
+0.9992527670，满足原定public7 L2≤0.05／cosine≥0.999；最大绝对差0.2265625，最坏点为
+`context-minus0p0625`数值压力案例。这不是无损／闭环任务成功证明，阈值未调整。
+新路径80份保存输出与本轮作者compiled20步的80份对应输出**逐元素相同**；该结论只针对这批输入。
+上述计算没有新增GPU请求或额外质量测试。
+
+启用方式：在已有FastWAM Torch配置中设`num_steps=20`、
+`options={..., "use_cuda_graph": false, "compile_action_infer": true}`。
+此flag仍默认关闭，避免改变现有调用／冷启动行为；新已选配置显式开启，不和partial-native Linear混用。
+编译是冷成本：本轮新路径prepare阶段约24.60 s（含编译／首轮准备），不在137.65 ms稳态统计内。
+
+### 旧3.2×为什么不代表击败官方compiled（优化前的口径说明）
 
 旧[迭代报告§6.1](2026-11-09-vla-autotune-report.zh-CN.md#61-library-graph-保持性)的
 作业`309187`同为20步：**Torch eager804.6938 → raw-head graph255.0711 ms，约3.15×**。
-当前约249.83 ms与旧graph点接近，不是突然退回804 ms；但作者compiled20步141.39 ms
+本次优化前约249.83 ms与旧graph点接近，不是突然退回804 ms；但作者compiled20步141.39 ms
 是更强的对照。旧eager→graph的收益不能转述成“比作者compiled快3.2倍”。
 
 代码上，我们的旧graph只捕获raw denoise，video prefill仍为eager；作者同时compile
 prefill和denoise。Graph合并提交不等于编译器融合，因此已有大幅graph收益仍可能落后。
 这不是对约103 ms差距的分段定量归因：本轮没有另跑profiling去测各部分占比。
-新候选把这两个编译区域接入现有固定noise／Euler20接口，默认保持关闭，待实际结果。
+新路径把这两个编译区域接入现有固定noise／Euler20接口，默认保持关闭；实测结果见上节。
 
 π0即使都用2步，仍是作者BF16与项目FP16，不是纯后端或等质量对比；10步与2步之差也不能
 全部算作后端收益。这里只并列真实延迟，不把原本没有证明的Euler2质量等价补写出来。
@@ -68,6 +97,7 @@ FastWAM −0.1459%、Hy −2.3852%；作者Hy −0.3714%。这些是固定配置
 [OpenPI作者源码dd5](https://github.com/Physical-Intelligence/openpi/tree/dd5c5ca93ce229017477a75fdda9f16654ab91ef)，
 [FastWAM作者源码7faa](https://github.com/yuantianyuan01/FastWAM/tree/7faa71108368fbb3b6885649f112af607427a2d4)，
 [Hy作者源码af57](https://github.com/Tencent-Hunyuan/Hy-Embodied-0.5-VLA/tree/af57e7507ec5964b52fdf6296741e553cbcd3288)。
+新增FlashRT列／Fast编译路径源码：[227993d5](https://github.com/20261023/FlashRT/tree/227993d52b83aa769132cd5d04ade0a5b53d5a55)。
 
 ## 1. 术语与测量目标
 
@@ -149,7 +179,7 @@ NR表示来源未报告，不能用当前默认配置补填历史条件。
 |---|---|---|---|
 | π0 | B1；3×224×224 RGB uint8，无历史 | 已准备FP32 state[8]；每次作者原tokenizer/resize/pad，本项目可缓存prompt | CPU raw[50,32]，public7；Native BF16 Euler10及2，项目FP16 Euler2 |
 | π0.5 | B1；3×224×224 RGB uint8，无历史 | 已准备FP32 state[8]；H50权重的discrete state prompt，作者max token200，项目exact prompt | CPU raw[50,32]，public7；Native BF16 Euler10及8，项目BF16 Euler8 |
-| FastWAM | B1；2×224×224水平拼接，FP32[1,3,224,448] | FP32 proprio[1,8]、cached-T5[1,128,4096]及bool mask[1,128]；不含现场T5编码 | CPU FP32[1,32,7]；shift5，Native compiled Euler10及20，项目Euler20 graph |
+| FastWAM | B1；2×224×224水平拼接，FP32[1,3,224,448] | FP32 proprio[1,8]、cached-T5[1,128,4096]及bool mask[1,128]；不含现场T5编码 | CPU FP32[1,32,7]；shift5，Native compiled Euler10及20，项目Euler20 compiled prefill＋denoise |
 | Hy | B1；3路×6帧原始uint8[6,480,640,3]，预处理到224×224 | FP32 normalized state[20]及任务字符串；固定noise[40,32] | CPU raw[40,32]，public20；双方Euler10；40位置为20relative＋20absolute |
 
 所有计时均以完整CPU动作返回为结束，不用异步enqueue时间充当推理时间；不含权重加载、
@@ -169,8 +199,9 @@ Transformers4.53.2加作者原始`transformers_replace`任务overlay；FastWAM�
 | `326641` | COMPLETED 0:0 | 四个项目方法各reference/bookend、作者Hy各reference/bookend，10份完整结果 |
 | `326708` | FAILED 1:0，部分完成 | 作者π0两步数、FastWAM两步数、三个项目配对点；π0.5首次严格加载失败 |
 | `326869` | FAILED 1:0，部分完成 | π0.5作者10步及同卡项目8步完成；附加作者8步二次编译未完成 |
+| `327380` | COMPLETED 0:0 | 四个FlashRT基线、Fast旧／新路径、作者compiled10／20，共8份点结果 |
 
-上述首轮三个作业均已结束；新增FlashRT列／Fast优化作业`327380`另行执行。用户要求停止测试后未再运行pytest、smoke测试、
+所有本轮作业均已结束；没有仍在占用GPU的任务。用户要求停止测试后未再运行pytest、smoke测试、
 额外数值探针或评审；只执行实际计时、读取产物和统计汇总。本报告不声称新的闭环任务质量验证。
 
 ### 6.1 已确认的同卡补测
