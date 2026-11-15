@@ -17,7 +17,20 @@
     "public_action_dim": 14,
     "steps": 10,
     "author_execution": "default backend; vision SDPA; no Liger",
-    "author_status": "environment_ready_assets_transferring",
+    "author_status": "formal_timing_retry_submitted_after_import_failure",
+    "author_job_id": "329331",
+    "author_attempts": [
+      {
+        "job_id": "329232",
+        "state": "FAILED",
+        "exit_code": "1:0",
+        "elapsed_seconds": 41,
+        "failure_stage": "dependency_import_before_model_load",
+        "error": "resident pyarrow26 requires NumPy2; author stack uses NumPy1.26.4",
+        "full_model_outputs": 0
+      }
+    ],
+    "dependency_fix": "pyarrow23.0.1 installed only in new task overlay; existing environments and NumPy unchanged",
     "flashrt_status": "not_implemented",
     "apxinf_status": "native_port_in_progress"
   },

@@ -5,8 +5,9 @@
 不为此再排作业，也不把已有10步结果或失败记录改写掉。文献数字只作参考，不用于异卡比值。
 
 新增DM0.5固定为`Dexmal/DM05`基础模型，三相机448×448、无历史、H50／公共14维、
-内部32维、10步；不是两图H10／7维LIBERO变体。官方default／vision SDPA参考正在
-部署；FastWAM与DM0.5的ApxInf需要新增原生family，不能把Torch包装改名填数。
+内部32维、10步；不是两图H10／7维LIBERO变体。官方default／vision SDPA参考首轮
+`329232`在模型加载前因依赖导入失败，无输出；新overlay固定兼容PyArrow后已提交
+`329331`正式计时，结果待返回。FastWAM与DM0.5的ApxInf需要新增原生family，不能把Torch包装改名填数。
 详见[架构与ApxInf接入说明](2026-11-15-fastwam-architecture-and-apxinf.zh-CN.md)。
 
 **新增请求已完成：** 作业`327380`以COMPLETED 0:0结束，四个FlashRT基线列已补齐。
@@ -33,7 +34,7 @@ allocation内完成：π0为`326708`，π0.5为`326869`，Hy为`326641`，Fast�
 | π0.5 | FlashRT BF16 Euler8，H50、3view | **39.2392 / 39.3056 / 39.5815** | BF16 Euler10：**41.9108 / 41.9764 / 42.3033** | 作者PyTorch compiled：**59.4795 / 59.5625 / 59.8169** | Euler8：**NR，二次编译触及预算** | NR；历史prepared边界39.16 ms另列 | 40／40／40 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
 | FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | **NR，原生接入中** | 80／80／80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
 | Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | 相同E10配置重新计时：**121.2805 / 122.1176 / 128.2098** | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | NR；历史raw-policy约270.9 ms另列 | 140／70／140 | 作者未报告完整推理延迟 |
-| **DM0.5 base** | NR，未接入FlashRT | **NR** | **NR** | **NR，作者default参考部署中** | 同为10步，待实测 | **NR，原生接入中** | 0／0／0 | 不将其他GPU或LIBERO变体数字填为本例结果 |
+| **DM0.5 base** | NR，未接入FlashRT | **NR** | **NR** | **NR，作者default作业329331待结果** | 同为10步，待实测 | **NR，原生接入中** | 0／0／0 | 不将其他GPU或LIBERO变体数字填为本例结果 |
 
 **ApxInf历史记录不回填本轮同口径列。** 已向旧会话询问并读取其原始报告：π0.5
 job229581的39.16 ms排除了tokenization／state normalization／公共decoding；Hy旧
