@@ -238,6 +238,19 @@ Both engines accept `options={..., "use_cuda_graph": True}`. The default remains
 `False`. FlashRT+graph additionally requires `"native_linear_backend": "cached"`;
 legacy+graph is rejected before model/device loading, not silently upgraded.
 
+The Torch engine also has an opt-in compiler path:
+`options={..., "use_cuda_graph": False, "compile_action_infer": True}`. It
+compiles **both video KV prefill and raw denoise** with the author's
+`torch.compile(mode="reduce-overhead", fullgraph=True)` recipe. Prefill KV
+outputs are cloned before the following graph steps, as in the author API.
+It preserves caller-provided noise, the chosen sampler and exact step budget.
+The flag defaults to `False`, requires CUDA and `backend="torch"`, and cannot
+be combined with manual raw-body graphs or native Linear. No eager fallback is
+substituted on compilation failure. Actual coverage reports
+`compiled_action_infer` and `compiled_regions`; this is a Torch compiler path,
+not fully native FlashRT execution. Cold compilation is separate from steady
+latency. Existing public raw-velocity evaluation stays uncompiled.
+
 Only the non-integrating raw-velocity body is captured. VAE and video KV prefill
 run once per request outside capture. Conditions are copied anew at the first
 evaluation of **every** request, even for reused input pointers; latent/time

@@ -38,6 +38,13 @@ FastWAM uses the author's original compiled `infer_action` and cached T5 inputs.
 Cold compile/load is excluded and reported separately. These are author-source
 self-measurements in the recorded resident runtime, not replicas of paper timing.
 
+For an explicit FastWAM compiled candidate, use `backend="torch"` with
+`options={..., "compile_action_infer": True, "use_cuda_graph": False}` in the
+existing candidate JSON. This opt-in compiles both video prefill and raw denoise,
+rather than replaying only an unfused raw-denoise graph. Keep step count, shift,
+inputs and precision explicit; measure against the author's compiled API, not
+only an old eager baseline. Compile time is not steady-state inference latency.
+
 ## HyVLA recorded-oracle validation
 
 **Current optimization goal (2026-11-13):** use the shared v2 tradeoff contract
