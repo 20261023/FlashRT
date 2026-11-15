@@ -35,6 +35,7 @@ PROBEFLOW_DEFAULT_MAX = {'pi0': 10, 'pi05': 10, 'hyvla': 10, 'fastwam': 20}
 OPTION_DEFAULTS = {
     'pi05': {'state_prompt_mode': 'exact', 'vision_pool_factor': 1},
     'hyvla': {'numerical_profile': 'semantic_bf16'},
+    'fastwam': {'compile_action_infer': False},
 }
 EULER_STEPS = {'pi0': (5, 6, 7, 8, 9), 'pi05': (5, 6, 7, 8, 9), 'hyvla': (5, 6, 7, 8, 9),
                'fastwam': (10, 12, 13, 14, 16, 18)}
@@ -210,6 +211,10 @@ def _propose_cuda_graph(tool, baseline):
         # registry: FastWAM native CUDA graph requires native_linear_backend="cached".
         options['native_linear_backend'] = 'cached'
         change += ' with native_linear_backend=cached (required by the FastWAM native graph)'
+    if config.model == 'fastwam' and options.get('compile_action_infer'):
+        # registry: compile_action_infer requires use_cuda_graph=False.
+        options['compile_action_infer'] = False
+        change += '; replaces torch.compile (compile_action_infer=False, mutually exclusive with graphs)'
     return finalize(baseline, [make_candidate(baseline, tool, 'graph', 'on',
                                               _with(baseline, options=options), change)])
 
@@ -221,6 +226,9 @@ def _propose_fastwam_linear(tool, baseline, *, variants=FASTWAM_LINEAR_VARIANTS)
     candidates = []
     for variant in variants:
         changed = dict(options)
+        if variant != 'torch' and changed.get('compile_action_infer'):
+            # registry: compile_action_infer requires backend="torch".
+            changed['compile_action_infer'] = False
         if variant == 'torch':
             changed.pop('native_linear_backend', None)
             record, change = _with(baseline, backend='torch', options=changed), \
@@ -238,6 +246,19 @@ def _propose_fastwam_linear(tool, baseline, *, variants=FASTWAM_LINEAR_VARIANTS)
             record = _with(baseline, backend='flashrt', options=changed)
         candidates.append(make_candidate(baseline, tool, 'linear', variant, record, change))
     return finalize(baseline, candidates)
+
+
+def _propose_fastwam_compile(tool, baseline):
+    check_baseline(tool, baseline)
+    config = baseline.backend
+    if effective_backend(config)['options']['compile_action_infer']:
+        return []
+    options = {**config.options, 'compile_action_infer': True, 'use_cuda_graph': False}
+    options.pop('native_linear_backend', None)
+    change = ('compile video prefill and raw denoise with torch.compile (compile_action_infer=True; '
+              'backend=torch, use_cuda_graph=False, as the registry requires)')
+    return finalize(baseline, [make_candidate(baseline, tool, 'compile', 'on',
+                                              _with(baseline, backend='torch', options=options), change)])
 
 
 def _propose_vision_pool(tool, baseline, *, factors=(2, 4)):
@@ -328,6 +349,17 @@ def builtin_tools() -> tuple:
               lane='config', stages=('kernel.gemm', 'host.launch', 'denoise.velocity'), models=('fastwam',),
               exactness='exact', status='ready', skills=config_skills,
               parameters={'variants': list(FASTWAM_LINEAR_VARIANTS)}),
+        _tool(_propose_fastwam_compile, tool_id='compile.fastwam_inductor',
+              title='FastWAM torch.compile of video prefill + raw denoise (author recipe)',
+              lane='config', stages=('host.launch', 'denoise.velocity', 'prefix.prefill'),
+              models=('fastwam',), exactness='approximate', status='ready', skills=config_skills,
+              parameters={},
+              reason='Opt-in compile_action_infer (frontends/torch/fastwam.py, models/fastwam/pipeline.py): '
+                     'torch.compile(mode="reduce-overhead", fullgraph=True) of mot.prefill_video_cache_tensor '
+                     'and _denoise_action_with_video_cache. Requires backend="torch" and use_cuda_graph=False '
+                     '(registry.validate_config). Cold compile is outside steady-state latency: record it and '
+                     'the break-even call count. Inductor fusions change BF16 rounding, so the quality gate '
+                     'applies.'),
         _tool(_propose_vision_pool, tool_id='prefix.vision_pool', title='pi0.5 vision token pooling',
               lane='config', stages=('prefix.prefill', 'vision.project'), models=('pi05',),
               exactness='approximate', status='ready', skills=config_skills,
@@ -418,20 +450,29 @@ def builtin_tools() -> tuple:
               title='Factorial lever pricing (each lever, all, all-minus-one)', lane='analysis',
               stages=STAGE_IDS, models=('*',), exactness='n/a', status='ready',
               skills=(SKILLS['config'],), parameters={'levers': None, 'stage': None}),
-        _tool(tool_id='baseline.official_impl', title='Direct official/upstream implementation baseline',
+        _tool(tool_id='baseline.official_impl', title='Direct official/author implementation baseline',
               lane='baseline', stages=('host.input', 'vision.encode', 'prefix.prefill', 'denoise.velocity',
                                        'host.output'),
-              models=('*',), exactness='n/a', status='needs_implementation', skills=(SKILLS['map'],),
-              adapter='examples/vla_autotune/validate_fastwam.py',
-              reason='No direct-upstream execution mode for pi0/pi05/hyvla in this tree (Hy has only '
-                     'recorded official traces: examples/vla_autotune/hy_trace/reference_observer.py).',
-              model_status={'fastwam': (
-                  'ready',
-                  'examples/vla_autotune/validate_fastwam.py --reference (parser(): "Direct pinned upstream '
-                  'infer_action Euler"; run_actions -> load_upstream_reference -> model.infer_action, '
-                  'execution backend "direct_pinned_upstream_infer_action") at FastWAM@7faa711. Limits: '
-                  'Euler only (main() rejects other samplers), sigma_shift=5 and action_horizon=32 '
-                  'hard-coded, Slurm GPU allocation required (require_allocation), T5 context prepared '
-                  'separately (--prepare-context); writes its own report (compare with --compare), not '
-                  'a controller worker bundle.')}),
+              models=('*',), exactness='n/a', status='ready', skills=(SKILLS['map'],),
+              adapter='examples/vla_autotune/official_native_latency.py',
+              reason='Author implementations timed on the same GPU; each writes its own JSON result '
+                     '(origin "author"), not a controller worker bundle, so it carries no stage profile '
+                     'or bookend. Compare only within the same input, sampling and timing protocol '
+                     '(examples/vla_autotune/latency_comparison.py validates the rows).',
+              model_status={
+                  'pi0': ('ready', 'examples/vla_autotune/official_native_latency.py --model pi0: author OpenPI '
+                                   'JAX (module_jit) on the GPU, with --source/--source-revision/--checkpoint/'
+                                   '--workload/--output/--repeats; allocation only.'),
+                  'pi05': ('ready', 'examples/vla_autotune/official_native_latency.py --model pi05: author OpenPI '
+                                    'PyTorch (default max-autotune compile); the resident LeRobot checkpoint uses '
+                                    'shared-weight-aware safetensors loading.'),
+                  'fastwam': ('ready', 'examples/vla_autotune/official_native_latency.py --model fastwam: author '
+                                       'FastWAM.infer_action with the author compile_action_infer=True and cached '
+                                       'T5 inputs (cold compile reported separately). Also '
+                                       'examples/vla_autotune/validate_fastwam.py --reference (direct pinned '
+                                       'upstream infer_action, Euler only).'),
+                  'hyvla': ('ready', 'examples/vla_autotune/official_hyvla_latency.py: unmodified author HyVLA '
+                                     'prepare_images/state/language + policy.model.sample_actions with fixed noise '
+                                     '(--official-source/--checkpoint/--fixtures/--source-revision/--output).'),
+              }),
     )

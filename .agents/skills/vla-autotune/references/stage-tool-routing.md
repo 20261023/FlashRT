@@ -25,10 +25,10 @@ python -m flash_rt.vla.autotune.stages show $S       # playbook 症状行和默�
 | `vision.encode` | 图片/帧数一多就慢 | stage 区间；视觉 token 数 | `profile.ncu_kernel`、`kernel.forgekernel`、`kernel.kernelagent`、`compile.aitune` | `vla-stage-profile`、`vla-kernel-candidate` |
 | `vision.project` | 同上 | 投影或 merger 的形状 | `prefix.vision_pool`（π0.5，近似方法） | `vla-config-sweep` |
 | `prefix.prefill` | prefix 占比大，减步数省得很少 | `profile.pi05_dataflow`；prefix 行数 | `prefix.vision_pool`、`prefix.state_prompt_mode`、`fusion.hy_rope_qknorm_kvwrite`；`engine.apxinf` 只作 π0.5 的外部对照，不是候选 | `vla-config-sweep`、`vla-port-workflow` |
-| `denoise.velocity` | expert 很小却不快；去噪总耗时高 | 每次调用的耗时（区间总和除以 NFE）；每步重复做的工作 | `launch.cuda_graph`、`gemm.fastwam_linear_backend`、`cache.fastwam_text_crossattn_kv`、kernel 工具 | `vla-config-sweep`、`vla-patch-candidate`、`vla-kernel-candidate` |
+| `denoise.velocity` | expert 很小却不快；去噪总耗时高 | 每次调用的耗时（区间总和除以 NFE）；每步重复做的工作 | `launch.cuda_graph`、`gemm.fastwam_linear_backend`、`compile.fastwam_inductor`、`cache.fastwam_text_crossattn_kv`、kernel 工具 | `vla-config-sweep`、`vla-patch-candidate`、`vla-kernel-candidate` |
 | `denoise.schedule` | 步数少了，端到端却几乎没变；probe 方案没有收益 | `per_call_ms`、NFE、prefix 占比 | `sampler.euler_steps`、`sampler.probeflow` | `vla-config-sweep` |
 | `denoise.routing` | 小 tensor 的 `.item()` / `.cpu()` 很贵 | 同步点的位置 | `sampler.probeflow` | `perf-torch-sync-free` |
-| `host.launch` | GPU 时间线有长空洞；很多短 kernel | eager 和 graph 对比；kernel 计算时间之和与总耗时对比 | `launch.cuda_graph`、`prefix.state_prompt_mode`（避免重录 graph） | `perf-torch-cuda-graphs`、`perf-nsight-systems` |
+| `host.launch` | GPU 时间线有长空洞；很多短 kernel | eager 和 graph 对比；kernel 计算时间之和与总耗时对比 | `launch.cuda_graph`、`prefix.state_prompt_mode`（避免重录 graph）、`compile.fastwam_inductor`（FastWAM 的 torch.compile，与 CUDA Graph 互斥） | `perf-torch-cuda-graphs`、`perf-nsight-systems` |
 | `host.output` | 读回和解码慢 | 拷贝和同步 | `profile.stage_intervals` | `perf-workload-profiling` |
 | `kernel.gemm` / `kernel.attention` / `kernel.norm_elementwise` / `kernel.conv` | 已经定位到少数几个热点 kernel | 这几个 kernel 的 ncu 指标 | `kernel.forgekernel`、`kernel.kernelagent`、`gemm.fastwam_linear_backend`、`compile.aitune` | `vla-kernel-candidate`、`perf-nsight-compute-analysis`、`kernel-triton-writing`、`forge-start` |
 | `precision.weights` | 带宽受限，且精度有余量 | 权重字节数，硬件是否支持该精度 | `quant.int8_pi05`（port）；`quant.fp8` 和 `quant.nvfp4` 在 sm_80 上不可用 | `vla-port-workflow` |

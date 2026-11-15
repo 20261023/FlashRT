@@ -83,9 +83,9 @@ python -m flash_rt.vla.autotune.tools list --all --markdown
 
 | 类型 | 工具 | 状态 |
 |---|---|---|
-| 配置（现成） | `sampler.euler_steps`、`sampler.probeflow`、`launch.cuda_graph`、`gemm.fastwam_linear_backend`、`prefix.vision_pool`、`prefix.state_prompt_mode`、`precision.hy_numerical_profile` | ready |
+| 配置（现成） | `sampler.euler_steps`、`sampler.probeflow`、`launch.cuda_graph`、`gemm.fastwam_linear_backend`、`compile.fastwam_inductor`（FastWAM 的 torch.compile）、`prefix.vision_pool`、`prefix.state_prompt_mode`、`precision.hy_numerical_profile` | ready |
 | 分析 | `profile.stage_intervals`、`profile.pi05_dataflow`、`analysis.lever_pricing` 为 ready；`profile.ncu_kernel` 需要 ncu 权限 | — |
-| 官方基线 | `baseline.official_impl` | FastWAM ready，其余模型待补 |
+| 官方基线 | `baseline.official_impl`：π0 / π0.5 / FastWAM 用 `official_native_latency.py`，Hy 用 `official_hyvla_latency.py` | ready |
 | 现成的外部项目 | `kernel.forgekernel`（OpenBMB/ForgeKernel）、`kernel.kernelagent`（meta-pytorch/KernelAgent）、`engine.apxinf`（infinigence/ApxInf，只支持 π0.5）、`compile.aitune`（NVIDIA AITune） | needs_setup |
 | 待实现（这一游没有现成方法） | `cache.fastwam_text_crossattn_kv`、`fusion.hy_rope_qknorm_kvwrite`、`quant.int8_pi05` | needs_implementation |
 | 在 A800 上做不了 | `quant.fp8`、`quant.nvfp4`；以及语义会变的 `cache.pi05_cross_frame_kv` 和面向吞吐的 `throughput.pi05_batch` | blocked |
@@ -144,6 +144,6 @@ python -m flash_rt.vla.autotune.decisions summary --log $AT/decisions.jsonl --ma
 ## 八、还没做的
 
 - 所有新代码只在 CPU 上测过，还没在 A800 上端到端跑过快照 campaign 和外部工具。
-- π0 / π0.5 / Hy 在 A800 上的官方实现基线还没测。
+- 官方实现基线脚本输出的是独立 JSON，还没接进 controller 的 campaign（没有 stage profile 和复测）。
 - ForgeKernel 的 sm80 补丁、KernelAgent 的环境、ApxInf 和 AITune 的构建都还没装。
 - `cache.fastwam_text_crossattn_kv`、`fusion.hy_rope_qknorm_kvwrite`、`quant.int8_pi05` 还要写实现。

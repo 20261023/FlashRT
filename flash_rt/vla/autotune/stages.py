@@ -131,6 +131,7 @@ REFERENCED_TOOL_IDS = frozenset({
     'kernel.forgekernel', 'kernel.kernelagent', 'engine.apxinf',
     'profile.stage_intervals', 'profile.pi05_dataflow', 'profile.ncu_kernel',
     'analysis.lever_pricing', 'baseline.official_impl', 'compile.aitune',
+    'compile.fastwam_inductor',
 })
 
 STAGE_KINDS = ('compute', 'host', 'count', 'kernel', 'precision')
@@ -204,13 +205,14 @@ _STAGE_LIST = (
               'evaluation reads (FastWAM: 30-layer first-frame video-expert prefill).',
               ('TTFT 很高、生成后较快', '图片/帧数增加导致很慢', 'step 少了但端到端几乎没变'),
               ('prefix.vision_pool', 'prefix.state_prompt_mode', 'fusion.hy_rope_qknorm_kvwrite',
-               'profile.pi05_dataflow', 'engine.apxinf', 'kernel.forgekernel', 'compile.aitune')),
+               'profile.pi05_dataflow', 'engine.apxinf', 'kernel.forgekernel', 'compile.aitune',
+               'compile.fastwam_inductor')),
     StageInfo('denoise.velocity', 'Action-expert evaluation', 'compute',
               'ONE action-expert (velocity field) evaluation; total cost is per-call time x NFE.',
               ('VLA expert 很小却不快', 'denoising 总耗时高'),
               ('launch.cuda_graph', 'gemm.fastwam_linear_backend', 'cache.fastwam_text_crossattn_kv',
                'fusion.hy_rope_qknorm_kvwrite', 'profile.pi05_dataflow', 'kernel.forgekernel',
-               'kernel.kernelagent', 'compile.aitune')),
+               'kernel.kernelagent', 'compile.aitune', 'compile.fastwam_inductor')),
     StageInfo('denoise.schedule', 'Denoising schedule (NFE)', 'count',
               'Number of action-expert calls chosen by the sampler (Euler N steps or ProbeFlow '
               'probe + adaptive schedule). A count, not a time interval.',
@@ -226,7 +228,8 @@ _STAGE_LIST = (
               'by CUDA graph capture.',
               ('GPU 时间线存在长空洞', 'VLA expert 很小却不快', '小 tensor 的 .cpu/.item/NumPy 很贵',
                'warmup 后偶发大尖峰', '§1 launch/依赖延迟'),
-              ('launch.cuda_graph', 'gemm.fastwam_linear_backend', 'prefix.state_prompt_mode')),
+              ('launch.cuda_graph', 'gemm.fastwam_linear_backend', 'prefix.state_prompt_mode',
+               'compile.fastwam_inductor')),
     StageInfo('host.output', 'Host output', 'host',
               'Device-to-host copy of the action chunk and CPU action decoding '
               '(unnormalize, slicing, checkpoint action processor).',

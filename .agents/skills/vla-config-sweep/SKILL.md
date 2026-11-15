@@ -76,8 +76,8 @@ py -m flash_rt.vla.autotune.tools propose --baseline baseline.json \
 Parameters per tool (`tools show` is authoritative): `sampler.euler_steps steps`,
 `sampler.probeflow epsilons, max_steps`, `gemm.fastwam_linear_backend variants`,
 `prefix.vision_pool factors`, `prefix.state_prompt_mode modes`,
-`precision.hy_numerical_profile profiles`; `launch.cuda_graph` has none and emits
-nothing when graphs are already on.
+`precision.hy_numerical_profile profiles`. `launch.cuda_graph` and
+`compile.fastwam_inductor` take none and emit nothing when the baseline already uses them.
 
 Coupled knobs: price them as levers instead of a full grid. Each lever alone, all
 together and all-minus-one are emitted; identical encoded backends are dropped:
@@ -205,6 +205,10 @@ in the log and the baseline you carry forward.
 - `gemm.fastwam_linear_backend=flashrt-legacy` turns the velocity graph off: compare it
   with the graph-on baseline, not an eager one.
 - `precision.hy_numerical_profile` is an alignment knob, not a speed knob.
+- `compile.fastwam_inductor` (torch.compile, `compile_action_infer=True`) and CUDA graphs are
+  mutually exclusive, and the compiled path needs `backend=torch`. The graph and native-linear
+  tools switch compile off when they propose from a compiled baseline. Record the cold compile
+  time separately: it is not in the steady-state samples, so work out the break-even call count.
 
 ## Stop rules
 

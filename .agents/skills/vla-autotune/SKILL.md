@@ -77,7 +77,11 @@ python -m flash_rt.vla.autotune.decisions add --log $AT/decisions.jsonl --kind n
 
 ### 1. 建 baseline（两个）
 
-1. **同一硬件上的官方实现**：先看 `python -m flash_rt.vla.autotune.tools show baseline.official_impl`。FastWAM 已经有 direct-upstream 模式，其他模型目前缺失。缺失时要告诉人，由人决定是否补。不要拿论文里其他 GPU 上的数字来比。
+1. **同一硬件上的官方实现**：先看 `python -m flash_rt.vla.autotune.tools show baseline.official_impl`，四个模型都有作者实现的计时脚本：
+   - π0 / π0.5 / FastWAM：`examples/vla_autotune/official_native_latency.py --model <m>`；
+   - Hy：`examples/vla_autotune/official_hyvla_latency.py`。
+
+   它们输出自己的 JSON（`origin: author`），不是 controller 的 campaign 结果，没有 stage profile，也没有复测。比较前先对齐输入、采样设置和计时边界，再用 `examples/vla_autotune/latency_comparison.py` 校验对比表的每一行。不要拿论文里其他 GPU 上的数字来比。
 2. **当前 FlashRT 配置**：建一个只有 baseline 的 campaign。不传候选时，`controller init` 会只生成 reference + bookend，用来测噪声底线（两次测量的漂移），同时拿到带 profile 的结果。
 
 ### 2. 测 profile，归因到 stage

@@ -189,11 +189,11 @@ def test_list_filters_by_model_stage_lane_and_readiness():
     assert {'prefix.vision_pool', 'prefix.state_prompt_mode', 'sampler.euler_steps',
             'profile.pi05_dataflow'} <= pi05
     assert not {'gemm.fastwam_linear_backend', 'precision.hy_numerical_profile'} & pi05
-    assert 'baseline.official_impl' not in pi05
-    assert 'baseline.official_impl' in {tool.tool_id for tool in tools.list_tools(model='pi05',
-                                                                                  include_unavailable=True)}
+    # The author latency scripts make the official baseline ready for every model.
+    assert 'baseline.official_impl' in pi05
+    assert 'compile.fastwam_inductor' not in pi05
     fastwam = {tool.tool_id for tool in tools.list_tools(model='fastwam')}
-    assert {'gemm.fastwam_linear_backend', 'baseline.official_impl'} <= fastwam
+    assert {'gemm.fastwam_linear_backend', 'baseline.official_impl', 'compile.fastwam_inductor'} <= fastwam
     assert 'prefix.vision_pool' not in fastwam
     hy = {tool.tool_id for tool in tools.list_tools(model='hyvla')}
     assert 'precision.hy_numerical_profile' in hy and 'gemm.fastwam_linear_backend' not in hy
@@ -203,14 +203,51 @@ def test_list_filters_by_model_stage_lane_and_readiness():
     assert all(tool.lane == 'patch' for tool in tools.list_tools(lane='patch', include_unavailable=True))
 
 
-def test_official_impl_status_is_decided_per_model_from_validate_fastwam():
+def test_official_impl_is_ready_per_model_from_the_author_latency_scripts():
     tool = tools.get_tool('baseline.official_impl')
-    assert tool.status_for('fastwam') == 'ready'
-    assert all(tool.status_for(model) == 'needs_implementation' for model in ('pi0', 'pi05', 'hyvla'))
-    source = Path('examples/vla_autotune/validate_fastwam.py').read_text()
-    assert "Direct pinned upstream infer_action Euler" in source
-    assert 'direct_pinned_upstream_infer_action' in source
+    assert all(tool.status_for(model) == 'ready' for model in ('pi0', 'pi05', 'hyvla', 'fastwam'))
+    native = Path('examples/vla_autotune/official_native_latency.py').read_text()
+    assert "choices=('pi0','pi05','fastwam')" in native
+    assert 'author FastWAM.infer_action' in native
+    hy = Path('examples/vla_autotune/official_hyvla_latency.py').read_text()
+    assert 'policy.model.sample_actions' in hy
+    for model in ('pi0', 'pi05', 'fastwam'):
+        assert f'official_native_latency.py --model {model}' in tool.reason_for(model)
+    assert 'official_hyvla_latency.py' in tool.reason_for('hyvla')
+    fastwam = Path('examples/vla_autotune/validate_fastwam.py').read_text()
+    assert 'direct_pinned_upstream_infer_action' in fastwam
     assert 'validate_fastwam.py --reference' in tool.reason_for('fastwam')
+
+
+def _fastwam_baseline(**options):
+    config = BackendConfig(model='fastwam', checkpoint='/ckpt', backend=options.pop('backend', 'torch'),
+                           num_steps=20, options={'sigma_shift': 5.0, 'action_horizon': 32,
+                                                  'model_config': '/cfg.json', 'backbone_dir': '/wan',
+                                                  **options})
+    return Candidate(candidate_id='fw', backend=config, workload_id='w')
+
+
+def test_fastwam_compile_tool_emits_a_registry_valid_compiled_candidate():
+    out = tools.propose('compile.fastwam_inductor', _fastwam_baseline(use_cuda_graph=True))
+    assert len(out) == 1
+    backend = out[0].backend
+    assert backend.backend == 'torch'
+    assert backend.options['compile_action_infer'] is True and backend.options['use_cuda_graph'] is False
+    assert 'native_linear_backend' not in backend.options
+    validate_config(backend)
+    assert out[0].tool == 'compile.fastwam_inductor' and out[0].stage == 'host.launch'
+    assert tools.propose('compile.fastwam_inductor', _fastwam_baseline(compile_action_infer=True)) == []
+
+
+def test_graph_and_native_linear_tools_turn_compile_off_on_a_compiled_baseline():
+    compiled = _fastwam_baseline(compile_action_infer=True)
+    graph = tools.propose('launch.cuda_graph', compiled)
+    assert len(graph) == 1 and graph[0].backend.options['compile_action_infer'] is False
+    validate_config(graph[0].backend)
+    for candidate in tools.propose('gemm.fastwam_linear_backend', compiled):
+        validate_config(candidate.backend)
+        if candidate.backend.backend == 'flashrt':
+            assert candidate.backend.options['compile_action_infer'] is False
 
 
 def test_tool_models_follow_registry_options():
