@@ -1,0 +1,280 @@
+{
+  "scope": "Recorded usage for the original unified-backend task plus same-root DM/Fast extensions; not lifetime upstream cost or VLA inference tokens.",
+  "window": {
+    "start_utc": "2026-11-08T14:20:41.449000+00:00",
+    "legacy_cutoff_utc": "2026-11-15T12:12:39.409000+00:00",
+    "cutoff_ms": 1794822537044,
+    "cutoff_utc": "2026-11-16T09:48:57.044000+00:00",
+    "rule": "message creation timestamp; completion snapshot includes DM project/FlashRT work before cutoff, later work excluded",
+    "initial_token_request_cutoff_ms": 1794818933180
+  },
+  "legacy_source": "2026-11-15-vla-migration-token-usage.json",
+  "legacy_values_preserved": true,
+  "models": {
+    "pi0": {
+      "input": 351724,
+      "output": 37684,
+      "reasoning": 43457,
+      "cache_read": 17871104,
+      "cache_write": 0,
+      "uncached_work_tokens": 432865,
+      "all_processed_tokens": 18303969,
+      "legacy_window": {
+        "input": 351149,
+        "output": 37192,
+        "reasoning": 31186,
+        "cache_read": 16795904,
+        "cache_write": 0,
+        "uncached_work_tokens": 419527,
+        "all_processed_tokens": 17215431
+      },
+      "new_window": {
+        "input": 575,
+        "output": 492,
+        "reasoning": 12271,
+        "cache_read": 1075200,
+        "cache_write": 0,
+        "uncached_work_tokens": 13338,
+        "all_processed_tokens": 1088538
+      },
+      "usage_records": 87,
+      "missing_usage_records": 0
+    },
+    "pi05": {
+      "input": 86436,
+      "output": 35149,
+      "reasoning": 47885,
+      "cache_read": 42308480,
+      "cache_write": 0,
+      "uncached_work_tokens": 169470,
+      "all_processed_tokens": 42477950,
+      "legacy_window": {
+        "input": 86436,
+        "output": 35149,
+        "reasoning": 47885,
+        "cache_read": 42308480,
+        "cache_write": 0,
+        "uncached_work_tokens": 169470,
+        "all_processed_tokens": 42477950
+      },
+      "new_window": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "uncached_work_tokens": 0,
+        "all_processed_tokens": 0
+      },
+      "usage_records": 89,
+      "missing_usage_records": 0
+    },
+    "fastwam": {
+      "input": 2688332,
+      "output": 305256,
+      "reasoning": 292382,
+      "cache_read": 160312064,
+      "cache_write": 0,
+      "uncached_work_tokens": 3285970,
+      "all_processed_tokens": 163598034,
+      "legacy_window": {
+        "input": 1857130,
+        "output": 206104,
+        "reasoning": 238933,
+        "cache_read": 116914176,
+        "cache_write": 0,
+        "uncached_work_tokens": 2302167,
+        "all_processed_tokens": 119216343
+      },
+      "new_window": {
+        "input": 831202,
+        "output": 99152,
+        "reasoning": 53449,
+        "cache_read": 43397888,
+        "cache_write": 0,
+        "uncached_work_tokens": 983803,
+        "all_processed_tokens": 44381691
+      },
+      "usage_records": 578,
+      "missing_usage_records": 0
+    },
+    "hyvla": {
+      "input": 11899134,
+      "output": 1130448,
+      "reasoning": 1459200,
+      "cache_read": 758644736,
+      "cache_write": 0,
+      "uncached_work_tokens": 14488782,
+      "all_processed_tokens": 773133518,
+      "legacy_window": {
+        "input": 11308008,
+        "output": 1129375,
+        "reasoning": 1446433,
+        "cache_read": 756510976,
+        "cache_write": 0,
+        "uncached_work_tokens": 13883816,
+        "all_processed_tokens": 770394792
+      },
+      "new_window": {
+        "input": 591126,
+        "output": 1073,
+        "reasoning": 12767,
+        "cache_read": 2133760,
+        "cache_write": 0,
+        "uncached_work_tokens": 604966,
+        "all_processed_tokens": 2738726
+      },
+      "usage_records": 2161,
+      "missing_usage_records": 3
+    },
+    "dm05": {
+      "input": 2678208,
+      "output": 140983,
+      "reasoning": 130928,
+      "cache_read": 85078656,
+      "cache_write": 0,
+      "uncached_work_tokens": 2950119,
+      "all_processed_tokens": 88028775,
+      "legacy_window": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "uncached_work_tokens": 0,
+        "all_processed_tokens": 0
+      },
+      "new_window": {
+        "input": 2678208,
+        "output": 140983,
+        "reasoning": 130928,
+        "cache_read": 85078656,
+        "cache_write": 0,
+        "uncached_work_tokens": 2950119,
+        "all_processed_tokens": 88028775
+      },
+      "usage_records": 298,
+      "missing_usage_records": 0
+    },
+    "shared": {
+      "input": 25792420,
+      "output": 611573,
+      "reasoning": 757885,
+      "cache_read": 587889280,
+      "cache_write": 0,
+      "uncached_work_tokens": 27161878,
+      "all_processed_tokens": 615051158,
+      "legacy_window": {
+        "input": 21956614,
+        "output": 520174,
+        "reasoning": 633453,
+        "cache_read": 515770496,
+        "cache_write": 0,
+        "uncached_work_tokens": 23110241,
+        "all_processed_tokens": 538880737
+      },
+      "new_window": {
+        "input": 3835806,
+        "output": 91399,
+        "reasoning": 124432,
+        "cache_read": 72118784,
+        "cache_write": 0,
+        "uncached_work_tokens": 4051637,
+        "all_processed_tokens": 76170421
+      },
+      "usage_records": 1571,
+      "missing_usage_records": 11
+    }
+  },
+  "new_window_sessions": 7,
+  "new_window_usage_records": 679,
+  "new_window_missing_usage_records": 0,
+  "new_window_assistant_compaction_records": 679,
+  "new_window_assignment_bases": [
+    {
+      "model": "dm05",
+      "basis": "dedicated_child_title",
+      "records": 222
+    },
+    {
+      "model": "dm05",
+      "basis": "single_model_current_text",
+      "records": 6
+    },
+    {
+      "model": "dm05",
+      "basis": "single_model_tool_input",
+      "records": 70
+    },
+    {
+      "model": "fastwam",
+      "basis": "dedicated_child_title",
+      "records": 147
+    },
+    {
+      "model": "fastwam",
+      "basis": "single_model_tool_input",
+      "records": 33
+    },
+    {
+      "model": "hyvla",
+      "basis": "single_model_current_text",
+      "records": 2
+    },
+    {
+      "model": "hyvla",
+      "basis": "single_model_tool_input",
+      "records": 4
+    },
+    {
+      "model": "pi0",
+      "basis": "single_model_tool_input",
+      "records": 2
+    },
+    {
+      "model": "shared",
+      "basis": "main_context_compaction",
+      "records": 1
+    },
+    {
+      "model": "shared",
+      "basis": "mixed_model_tool_input",
+      "records": 62
+    },
+    {
+      "model": "shared",
+      "basis": "mixed_or_unlabelled_child",
+      "records": 12
+    },
+    {
+      "model": "shared",
+      "basis": "mixed_or_unlabelled_main_step",
+      "records": 118
+    }
+  ],
+  "attribution_is_activity_based_estimate": true,
+  "counters_are_native_recorded_usage": true,
+  "shared_not_allocated_to_models": true,
+  "new_window_grand_total": {
+    "input": 7936917,
+    "output": 333099,
+    "reasoning": 333847,
+    "cache_read": 203804288,
+    "cache_write": 0,
+    "uncached_work_tokens": 8603863,
+    "all_processed_tokens": 212408151
+  },
+  "cumulative_grand_total": {
+    "input": 43496254,
+    "output": 2261093,
+    "reasoning": 2731737,
+    "cache_read": 1652104320,
+    "cache_write": 0,
+    "uncached_work_tokens": 48489084,
+    "all_processed_tokens": 1700593404
+  },
+  "tests_run": false,
+  "model_computation": false,
+  "late_usage_settlement_records": 1,
+  "late_usage_settlement_note": "One message created before cutoff was active during collection; native usage was read after completion without changing the cutoff."
+}

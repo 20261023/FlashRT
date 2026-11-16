@@ -10,7 +10,8 @@ FlashRT registry 增加后端，也不宣称公开 ApxInf 上游已经内置这�
 
 DM0.5包中的23份运行时代码保持实测身份；12份后补文档／helper／许可副本明确为
 未执行。它同样依赖私有Hy foundation，不是干净上游的自包含重建包。该外部ApxInf
-源码包**不是正在补接入的FlashRT项目内DM0.5路径**，不得将两者的结果或身份混用。
+源码包**不是另已实跑的FlashRT项目内DM0.5路径**，不得将两者的结果或身份混用；
+项目内Torch／FlashRT mixed基线的入口与用法见[DM0.5说明](../../../docs/dm05_usage.md)。
 
 ## FastWAM SM80，实验性
 

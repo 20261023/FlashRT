@@ -4,8 +4,9 @@
 实际延迟。附加的π0.5 Native8步点因二次编译触及进程总预算而未完成，明确保留NR；
 不为此再排作业，也不把已有10步结果或失败记录改写掉。文献数字只作参考，不用于异卡比值。
 
-**仍有缺项：DM0.5的本项目执行路径与FlashRT固定步数基线尚在补接入，未取得这两列计时，
-继续保留NR。作者／ApxInf完成不等于整张大表已补齐。**
+**DM0.5此前缺失的两列现已补齐：** 项目自有Torch全图基线194.2449 ms，FlashRT
+混合算子基线206.0562 ms，均来自正式作业`334487`。后者明确为partial native，
+比同作业项目Torch慢6.0806%，不是最快／winner，也不称全原生FlashRT。
 
 新增DM0.5固定为`Dexmal/DM05`基础模型，三相机448×448、无历史、H50／公共14维、
 内部32维、10步；不是两图H10／7维LIBERO变体。官方default／vision SDPA参考首轮
@@ -23,9 +24,10 @@ FastWAM保持20步／BF16／shift5／H32／八案例，接入prefill＋denoise�
 142.44 ms。这一轮略低3.36%，不外推为跨硬件／任务的普遍优势。
 
 机器可读：[CSV](2026-11-14-vla-latency-comparison.csv)／[JSON](2026-11-14-vla-latency-comparison.json)。
-共22条点记录：21条完成计时、1条未完成，保留旧Fast路径和旧Native对照的历史行；
+共25条点记录：24条完成计时、1条未完成，保留旧Fast路径和旧Native对照的历史行；
 新增三条分别为DM0.5作者完整policy、FastWAM与DM0.5 ApxInf完整public policy。
 JSON另外保留内部模型／graph边界、作者文献参考与限制说明，不含私有输入／路径。
+新增DM0.5项目／FlashRT／Torch bookend三点与原22点分列，旧测量值未改写。
 
 ## A800实测大表
 
@@ -36,21 +38,24 @@ allocation内完成：π0为`326708`，π0.5为`326869`，Hy为`326641`，Fast�
 原四模型及新增FastWAM ApxInf各八次warmup；DM0.5为每case五次，见下节。新增ApxInf
 `329256`、DM0.5作者`329331`及ApxInf`329543`是另外三个allocation，不冒称同卡配对。表内均为毫秒；
 Native“10步”仅指采样步数，其他输入几何按本轮固定。
+DM0.5项目Torch／FlashRT／Torch bookend在同一A800 allocation `334487`中串行完成，
+并非与较早作者／ApxInf作业同卡配对。
 
 | 模型 | 本项目当前已选方法 | 本项目Median / Mean / P95 | FlashRT固定步数基线Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | ApxInf完整路径，边界见注 | 样本数（项目／FlashRT／Native） | 官方文献参考，非同卡基线 | Agent Token累计：总处理／非缓存（M） |
 |---|---|---:|---:|---:|---:|---|---:|---|---:|
 | π0 | FlashRT FP16 Euler2，H50、3view | **26.1164 / 26.1463 / 26.4021** | FP16 Euler10：**40.3384 / 40.4244 / 40.7971** | JAX BF16：**69.3703 / 69.4761 / 70.1619** | Euler2 BF16：**48.3255 / 48.3931 / 48.9294** | NR | 50／50／50 | 73 ms，RTX4090、Euler10 | **18.304 / 0.433** |
 | π0.5 | FlashRT BF16 Euler8，H50、3view | **39.2392 / 39.3056 / 39.5815** | BF16 Euler10：**41.9108 / 41.9764 / 42.3033** | 作者PyTorch compiled：**59.4795 / 59.5625 / 59.8169** | Euler8：**NR，二次编译触及预算** | NR；历史prepared边界39.16 ms另列 | 40／40／40 | 76 ms，RTX4090、BF16、5步、GPU-only mean | **42.478 / 0.169** |
-| FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | 原生研究实现BF16/E20：**215.3437 / 215.5861 / 216.6183**，非性能胜点 | 80／80／80；Apx80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 | **163.089 / 3.285** |
+| FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | 原生研究实现BF16/E20：**215.3437 / 215.5861 / 216.6183**，非性能胜点 | 80／80／80；Apx80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 | **163.598 / 3.286** |
 | Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | 相同E10配置重新计时：**121.2805 / 122.1176 / 128.2098** | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | NR；历史raw-policy约270.9 ms另列 | 140／70／140 | 作者未报告完整推理延迟 | **773.134 / 14.489** |
-| **DM0.5 base** | NR，项目内／FlashRT路径正在补接入 | **NR** | **NR** | 作者default／vision SDPA／无Liger：**277.6579 / 277.5912 / 278.9247** | 同左，10步 | 原生研究实现BF16/E10：**149.3522 / 149.3726 / 150.1001** | 0／0／40；Apx40 | 不将其他GPU或LIBERO变体数字填为本例结果 | **54.712 / 2.438** |
+| **DM0.5 base** | 项目自有Torch全图 BF16 Euler10 **基线**，H50／3view448 | **194.2449 / 194.3161 / 195.2568** | partial FlashRT GEMM＋FA2＋GELU／Torch其余算子 E10：**206.0562 / 206.2177 / 207.8401** | 作者default／vision SDPA／无Liger：**277.6579 / 277.5912 / 278.9247** | 同左，10步 | 原生研究实现BF16/E10：**149.3522 / 149.3726 / 150.1001** | 40／40／40；Apx40；bookend另40 | 不将其他GPU或LIBERO变体数字填为本例结果 | **88.029 / 2.950** |
 
 **Token列不是VLA推理token长度，也不是每次推理消耗。** 它是截至北京时间
-2026-11-16 16:48:53的Agent开发任务累计，含cache-read反复读取；usage实记、模型归属估算。
-另有共有／混合开销**604.637 M总处理／27.133 M非缓存**，没有硬摊到模型行。
-DM0.5项目内／FlashRT补接入发生在该统计截点之后，当前Token快照尚不含这部分工作。
-完整计数、窗口与限制见[Token说明](2026-11-16-vla-development-token-usage.zh-CN.md)，
-[Token CSV](2026-11-16-vla-development-token-usage.csv)按`model`关联，避免重复累计多条计时点。
+2026-11-16 **17:48:57**的Agent开发任务累计，现已包括DM0.5项目／FlashRT实现及正式
+计时，含cache-read反复读取；usage实记、模型归属估算。
+另有共有／混合开销**615.051 M总处理／27.162 M非缓存**，没有硬摊到模型行。
+较早16:48:53快照完整保留，不与新快照的重叠增量重复相加。
+完整计数、窗口与限制见[更新Token说明](2026-11-16-vla-development-token-usage-post-dm05.zh-CN.md)，
+[Token CSV](2026-11-16-vla-development-token-usage-post-dm05.csv)按`model`关联，避免重复累计多条计时点。
 
 **ApxInf历史记录不回填本轮同口径列。** 已向旧会话询问并读取其原始报告：π0.5
 job229581的39.16 ms排除了tokenization／state normalization／公共decoding；Hy旧
@@ -102,6 +107,43 @@ canonical CPU输入→normalized `[50,32]` CPU输出中位数139.0278 ms是另�
 arena使用9,393,563,008／9,361,718,656字节，保留16 GiB容量，不冒充总显存或活跃峰值。
 本轮仅覆盖三图、无历史、882／876 token、热态BF16 suffix及provided-noise；未运行
 padding／history／通用shape、eager FP32分支或generated-noise路径的额外测试和评审。
+
+### DM0.5项目与FlashRT两列补测（334487）
+
+实际入口为`BackendConfig → load_backend → VLABackend.infer`，新建SM80专属
+frontend／pipeline，自己执行vision、prefix、raw velocity、Euler10和全图；没有调用
+作者完整`inference_action`或外部ApxInf。作者源码只用于固定的CPU输入处理和公共
+绝对动作还原。源码见[cbacd878](https://github.com/20261023/FlashRT/tree/cbacd878b7d5f58231de7780c545b3e09c0542af)，
+使用说明见[`docs/dm05_usage.md`](../dm05_usage.md)。顶层`load_model`也接到同一frontend，
+但没有另跑顶层API探针，不把它额外算作验证。
+
+| 同allocation路径 | Median / Mean / P95 ms | 正式完整输出 | 最坏relL2 / 最低cosine，相对作者329331 |
+|---|---:|---:|---:|
+| 项目Torch全图 | **194.2449 / 194.3161 / 195.2568** | 40 | 0.0077728340 / 0.9999727883 |
+| FlashRT mixed／partial native | **206.0562 / 206.2177 / 207.8401** | 40 | 0.0086970135 / 0.9999650775 |
+| Torch bookend | 194.1798 / 194.4545 / 196.4995 | 40 | 0.0077728340 / 0.9999727883 |
+
+四案例各5次warmup＋10次正式样本；全部FP32 CPU `[50,14]`动作有限，同case重复
+逐元素一致，项目／bookend对应输出也逐元素一致；中位数有符号漂移−0.03354%。
+主会话已从保存数组独立复算。依旧是public14 L2≤0.05／cos≥0.999代理范围，
+没有据此宣称闭环、通用shape或release验收。与作者旧测量之间仍保留provided-noise
+对seeded CUDA RNG、以及不同allocation的差异，不填纯engine加速比。
+
+FlashRT graph计算体包含逻辑上2801次cached BF16 GEMM、367次BF16 FA2及401次
+strict BF16 GELU；另710次时间条件GEMM仅在加载阶段。**这是捕获计算体的算子调用
+计数，不是Nsight测得的GPU kernel数量或耗时分摊。** patch conv、LayerNorm、Gemma
+FP32 plus-one RMSNorm、AdaRMS、RoPE、masked prefix SDPA、pooling、gate／residual、
+Euler及CPU transforms仍是Torch，所以明确标partial。FlashRT比本次Torch慢6.0806%，
+不以“使用了原生算子”推出它更快，也不把单项差距无profile地归给某一个算子。
+
+项目load45.0674 s／capture3.5911 s，FlashRT load26.0545 s／capture3.7242 s均在稳态
+之外；load先后次序和缓存条件不同，不把这两次加载差值当作冷启动算法胜点。
+新图使用882／876两个profile；保存输入显示同prompt改变state时更新3个token、
+复用882图但raw动作发生变化。冻结清单564份文件的字节已独立核对，内容摘要
+`e16bb373…106b`，不是只拿freeze时HEAD冒充包含未提交候选的实际运行身份。
+Native模块只复制／构建到候选快照；未覆盖生产`.so`，没有新CUDA源码、binding或CMake改动。
+首轮334440虽完成cached GEMM构建，却在warmup CPU-list输入契约处失败，无有效稳态
+样本；修复后334487以COMPLETED 0:0结束。按用户要求未运行测试、smoke或额外评审。
 
 **FastWAM ApxInf，329256：** 独立Rust/CUDA family完成WanVAE38、VideoDiT30、
 ActionDiT30×Euler20，包含请求级文本cross-KV缓存，实际捕获whole-model graph。
@@ -299,7 +341,7 @@ Transformers4.53.2加作者原始`transformers_replace`任务overlay；FastWAM�
 | `326869` | FAILED 1:0，部分完成 | π0.5作者10步及同卡项目8步完成；附加作者8步二次编译未完成 |
 | `327380` | COMPLETED 0:0 | 四个FlashRT基线、Fast旧／新路径、作者compiled10／20，共8份点结果 |
 
-上述原四模型配对作业均已结束；不代表后续DM0.5 ApxInf正式执行也已结束。用户要求停止测试后未再运行pytest、smoke测试、
+上述原四模型以及新增DM0.5作者／ApxInf／项目与FlashRT正式作业现均已终态。用户要求停止测试后未再运行pytest、smoke测试、
 额外数值探针或评审；只执行实际计时、读取产物和统计汇总。本报告不声称新的闭环任务质量验证。
 
 ### 6.1 已确认的同卡补测

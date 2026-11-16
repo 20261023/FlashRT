@@ -237,7 +237,20 @@ FP32 CPU动作，policy中位数277.6579 ms，内部模型267.1751 ms，加载�
 DM0.5外部ApxInf源码增量见
 [`examples/vla_autotune/apxinf/dm05-sm80/`](../../examples/vla_autotune/apxinf/dm05-sm80/README.md)。
 它的23份运行时代码保留实测身份；后补helper未执行，且仍依赖私有Hy foundation。
-这是外部引擎的研究源码，不代表正在补接入的本项目DM0.5／FlashRT基线已经完成。
+这是外部引擎的研究源码，不能与下面单独完成的本项目DM0.5／FlashRT身份混用。
+
+### DM0.5项目与FlashRT基线另已完成
+
+补接入后的正式作业334487通过项目公共VLA API取得Torch全图194.2449 ms、FlashRT
+混合算子206.0562 ms及Torch bookend194.1798 ms，各40份完整CPU public14动作。
+最坏relative L2分别0.0077728340／0.0086970135，最低cosine分别0.9999727883／
+0.9999650775；原代理门槛未变，project/bookend输出逐元素相同、延迟漂移约0.03354%。
+
+新FlashRT路径实际使用cached BF16 GEMM、FA2和strict GELU，但norm、RoPE、
+masked prefix attention等仍为Torch，明确是partial native，不是完整native迁移。
+同allocation下它比项目Torch慢6.0806%，不是winner。作者277.6579 ms与外部ApxInf
+149.3522 ms仍属于之前独立allocation和原接口，不混用其计时／源码身份。
+项目源码与用法见[`docs/dm05_usage.md`](../dm05_usage.md)，全部边界及Token更新见大表。
 
 ## 8. 本文证据限制
 
