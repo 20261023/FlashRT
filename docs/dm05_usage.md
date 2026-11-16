@@ -52,6 +52,14 @@ config = BackendConfig(
 )
 ```
 
+Paired formal job335362 measured this explicit option at96.1659ms median /
+97.8755ms P95, against unchanged original mixed FlashRT206.3909ms and unchanged
+ApxInf151.1550ms (faster bookend150.7088ms) in the same allocation and full public
+CPU-action boundary. All four cases met the original public14 numerical budget.
+This is fixed-profile evidence, not general release acceptance or a default
+change. See the [paired report](reports/2026-11-16-dm05-competitive-optimization.zh-CN.md)
+for source identities, compiler cold cost, memory limits and failure history.
+
 ## Fixed first profile
 
 - NVIDIA compute capability8.0 (`cuda_sm80`), Torch only.

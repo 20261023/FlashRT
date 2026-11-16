@@ -252,6 +252,12 @@ masked prefix attention等仍为Torch，明确是partial native，不是完整na
 149.3522 ms仍属于之前独立allocation和原接口，不混用其计时／源码身份。
 项目源码与用法见[`docs/dm05_usage.md`](../dm05_usage.md)，全部边界及Token更新见大表。
 
+后续只针对项目方法做编译／数据流优化，335362同allocation配对结果已达到用户目标：
+项目compiled96.1659 ms，未改动FlashRT206.3909 ms，未改动ApxInf151.1550 ms／
+bookend150.7088 ms；对同作业更快APX端仍低36.19095%。历史基线不改写。
+方法和独立阶段观测见[配对优化报告](2026-11-16-dm05-competitive-optimization.zh-CN.md)；
+该组合主要改善velocity和prefix，不能把组合收益归因给未经消融的单个改动。
+
 ## 8. 本文证据限制
 
 架构／工具能力核对基于拉取后的`e98653d4`代码；Fast延迟仍绑定`227993d5`的已保存
