@@ -92,6 +92,8 @@ def detect_arch() -> str:
             "gfx950 (MI350 series / CDNA4), or gfx1151 "
             "(Radeon 8060S / Ryzen AI Max+ 395).")
     major, minor = torch.cuda.get_device_capability()
+    if (major, minor) == (8, 0):
+        return "cuda_sm80"
     if (major, minor) == (11, 0):
         return "thor"
     if (major, minor) in ((12, 0), (12, 1)):
@@ -112,6 +114,8 @@ def detect_arch() -> str:
 # drag in every backend. External plugins may add entries to this dict
 # to register new models — see ``docs/plugin_model_template.md``.
 _PIPELINE_MAP: dict[tuple[str, str, str], tuple[str, str]] = {
+    ("dm05", "torch", "cuda_sm80"):
+        ("flash_rt.frontends.torch.dm05_cuda_sm80", "Dm05TorchFrontendCudaSm80"),
     # ── Spark-X2.5-4B ──
     # Discovery only, like qwen3_vl: this is a text decoder, not a VLA, so it is
     # constructed directly rather than through load_model's wrapper. SM120 only

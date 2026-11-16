@@ -15,6 +15,7 @@ _ALIASES = {
     'pi0': 'pi0', 'π0': 'pi0',
     'pi05': 'pi05', 'pi0.5': 'pi05', 'π0.5': 'pi05',
     'fastwam': 'fastwam',
+    'dm05': 'dm05', 'dm0.5': 'dm05', 'dm0_5': 'dm05',
     'hyvla': 'hyvla', 'hy-embodied-vla': 'hyvla',
     'hy-embodied-0.5-vla': 'hyvla', 'hy-embadding-vla': 'hyvla',
 }
@@ -37,7 +38,7 @@ class BackendConfig:
         try:
             model = _ALIASES[self.model.lower()]
         except (KeyError, AttributeError):
-            raise ValueError(f'Unknown VLA model {self.model!r}; use pi0, pi05, fastwam or hyvla') from None
+            raise ValueError(f'Unknown VLA model {self.model!r}; use pi0, pi05, fastwam, hyvla or dm05') from None
         object.__setattr__(self, 'model', model)
         try:
             checkpoint = fspath(self.checkpoint)
@@ -47,8 +48,8 @@ class BackendConfig:
             raise ValueError('checkpoint must be a nonempty local path')
         object.__setattr__(self, 'checkpoint', checkpoint)
         if self.backend != 'flashrt' and not (
-                self.backend == 'torch' and model == 'fastwam' and self.framework == 'torch'):
-            raise ValueError('backend="torch" is supported only for Torch FastWAM; otherwise use backend="flashrt"')
+                self.backend == 'torch' and model in ('fastwam', 'dm05') and self.framework == 'torch'):
+            raise ValueError('backend="torch" supports Torch FastWAM/DM05; otherwise use backend="flashrt"')
         if self.sampler not in ('euler', 'probeflow'):
             raise ValueError('sampler must be euler or probeflow')
         if self.framework not in ('torch', 'jax'):

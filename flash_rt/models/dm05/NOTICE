@@ -1,0 +1,16 @@
+DM0.5 integration provenance
+
+Model equations and checkpoint tensor names follow dexmal/opendm,
+revision 03f799120d425ead51d9482bb1da950b6dabade9,
+opendm/model/dm05/dm05_arch.py and dm05_utils.py (Apache License 2.0).
+https://github.com/dexmal/opendm
+
+The Gemma3 and SigLIP architecture semantics are described by Transformers
+5.3.0, transformers/models/gemma3/modeling_gemma3.py and
+transformers/models/siglip/modeling_siglip.py (Apache License 2.0).
+Gemma3 source copyright 2025 Google Inc. and HuggingFace Inc. team.
+
+FlashRT's SM80 schedule, public backend integration, weight loader, scratch
+ownership and formal driver are maintained here. The original author's complete
+GPU inference wrapper and ApxInf are not called by this implementation.
+The repository's root LICENSE contains the Apache License 2.0 terms.

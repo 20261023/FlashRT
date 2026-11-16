@@ -29,7 +29,7 @@ def load_model(
     autotune: int = 3,              # 0=off, 3=default, 5+=thorough
     recalibrate: bool = False,
     weight_cache: bool = True,      # JAX only
-    config: str = "pi05",           # "pi05" | "pi0" | "groot" | "groot_n17" | "pi0fast" | "motus" | "wan22_ti2v_5b" | "cosmos3_video" | "cosmos3_edge" | "chameleon" | "hyvla"
+    config: str = "pi05",           # "pi05" | "pi0" | "groot" | "groot_n17" | "pi0fast" | "motus" | "wan22_ti2v_5b" | "cosmos3_video" | "cosmos3_edge" | "chameleon" | "hyvla" | "dm05"
     device=None,                    # reserved
     # Pi0-FAST-specific:
     decode_cuda_graph: bool = False,
@@ -64,6 +64,9 @@ def load_model(
     use_fp16: bool = False,
     # Robot output schema (RDNA Pi0.5 / Jetson Pi):
     action_dim: int | None = None,
+    # DM0.5 fixed-base SM80 profile (trailing keyword-only options):
+    source_dir: str | None = None,
+    use_cuda_graph: bool = True,
 ) -> VLAModel
 ```
 
@@ -339,6 +342,8 @@ from flash_rt.hardware import detect_arch, resolve_pipeline_class
 Returns `"thor"`, `"rtx_sm120"`, `"rtx_sm89"`, or `"rtx_sm87"` based on
 the current CUDA device's compute capability. SM87 is currently supported
 only for `config="pi05", framework="torch"`.
+Compute capability8.0 additionally returns `"cuda_sm80"`; the top-level
+pipeline resolver registers the DM0.5 fixed-base Torch frontend on that target.
 
 ### `resolve_pipeline_class(config, framework, arch)`
 
@@ -694,6 +699,24 @@ registering an external-plugin model via `_PIPELINE_MAP`.
 ---
 
 ## Adaptation / extension guides
+
+### DM0.5 fixed-base SM80 profile
+
+`BackendConfig(model="dm05" | "dm0.5", backend="torch" | "flashrt",
+hardware="cuda_sm80", precision="bf16", num_steps=10)` loads the dedicated
+`Dm05TorchFrontendCudaSm80`. Required `options["source_dir"]` identifies the
+pinned read-only OpenDM CPU transforms. Options also include `num_views=3`,
+`use_cuda_graph=True`, and bounded `max_graph_profiles=2`. `VLABackend.infer`
+returns complete absolute FP32 CPU `[50,14]` actions and explicit mixed/native
+coverage, with optional provided noise `[1,50,32]` or `[50,32]`.
+
+`load_model(..., config="dm05", backend="torch"|"flashrt", num_views=3,
+use_fp8=False, precision="bf16", num_steps=10, source_dir=..., use_cuda_graph=True)`
+uses the same public construction route. The two new trailing keyword arguments
+`source_dir=None` and `use_cuda_graph=True` leave every existing model/default
+unchanged. No other architecture, step count, precision or robot profile is
+silently substituted. See [DM0.5 usage](dm05_usage.md) for fixed checkpoint
+identity, input schema, actual native operator coverage and acceptance limits.
 
 ### Pi0.5 RTX Sampling Exports
 

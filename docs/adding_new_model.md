@@ -95,6 +95,9 @@ All four combinations together: **~3500-4500 lines**.
 A single `(framework, hardware)` combination: **~800-1200 lines** (of which ~120 lines are declarative spec).
 
 Reference implementations:
+- **dm05** — fixed-base BF16 Torch/FlashRT mixed-operator SM80 integration:
+  [`dm05_usage.md`](dm05_usage.md). Own vision/prefix/raw-velocity/Euler and graph
+  lifetimes, explicit read-only CPU preprocessing source, no external engine.
 - **pi05** — all four combinations complete: `models/pi05/{pipeline_thor.py, pipeline_rtx.py}` plus four frontends
 - **pi0** — Thor is done, RTX is being refactored in stage 8
 - **groot** — Thor and RTX are done (jax only on Thor)

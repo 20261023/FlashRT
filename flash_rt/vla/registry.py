@@ -12,6 +12,13 @@ from .config import BackendConfig
 
 
 _CAPABILITIES = {
+    'dm05': {
+        'name': 'Dexmal DM0.5 fixed base', 'precision': 'bf16',
+        'frameworks': ('torch',), 'hardware': ('cuda_sm80',),
+        'action_domain': 'denormalized-absolute-dos-w1-14d',
+        'options': ('source_dir', 'use_cuda_graph', 'max_graph_profiles', 'num_views'),
+        'execution_coverage': 'partial-native-gemm-fa2-gelu-torch-norm-rope-prefix-attention',
+    },
     'pi0': {
         'name': 'Physical Intelligence pi0', 'precision': 'fp16',
         'frameworks': ('torch', 'jax'),
@@ -66,6 +73,8 @@ def describe_backend(config: BackendConfig) -> dict:
         'runtime_verified': False,
         **({'execution_coverage': ('upstream-torch-operators-shared-pipeline'
                                   if config.model == 'fastwam' and config.backend == 'torch'
+                                  else 'project-owned-torch-operators'
+                                  if config.model == 'dm05' and config.backend == 'torch'
                                   else spec['execution_coverage'])}
            if 'execution_coverage' in spec else {}),
         **({'blocker': spec['blocker']} if 'blocker' in spec else {}),
@@ -128,6 +137,17 @@ def validate_config(config: BackendConfig) -> dict:
     if config.model == 'hyvla' and config.options.get('numerical_profile', 'semantic_bf16') not in (
             'semantic_bf16', 'official_local_fp32'):
         raise ValueError('Unknown HyVLA numerical_profile')
+    if config.model == 'dm05':
+        if config.sampler != 'euler' or config.num_steps not in (None, 10):
+            raise ValueError('DM05 first profile requires fixed Euler10')
+        source = config.options.get('source_dir')
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError('DM05 requires source_dir pointing to the pinned read-only OpenDM CPU transforms')
+        if config.options.get('num_views', 3) != 3:
+            raise ValueError('DM05 first profile requires num_views=3')
+        capacity = config.options.get('max_graph_profiles', 2)
+        if type(capacity) is not int or capacity < 1:
+            raise ValueError('max_graph_profiles must be a positive integer')
     if config.model == 'fastwam':
         compiled = config.options.get('compile_action_infer', False)
         if not isinstance(compiled, bool):
@@ -183,7 +203,11 @@ def load_backend(config: BackendConfig) -> VLABackend:
     kwargs.update(sampler=config.sampler, probeflow_config=config.probeflow)
     if config.num_steps is not None and config.model != 'fastwam':
         kwargs['num_steps'] = config.num_steps
-    if config.model == 'fastwam':
+    if config.model == 'dm05':
+        module = 'flash_rt.frontends.torch.dm05_cuda_sm80'
+        name = 'Dm05TorchFrontendCudaSm80'
+        kwargs['backend'] = config.backend
+    elif config.model == 'fastwam':
         module = 'flash_rt.frontends.torch.fastwam'
         name = 'FastWAMTorchFrontend'
         # This binding is deliberately PARTIAL native execution, recorded in

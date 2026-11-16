@@ -363,7 +363,9 @@ def load_model(checkpoint, framework="torch", num_views=2, autotune=3,
                decoder_gate_up_variant=10,
                attention=None,
                fuse=None,
-               compile_mode=None):
+                compile_mode=None,
+                source_dir=None,
+                use_cuda_graph=True):
     """Load a FlashRT model.
 
     Args:
@@ -544,6 +546,27 @@ def load_model(checkpoint, framework="torch", num_views=2, autotune=3,
     Returns:
         VLAModel instance with .predict() method.
     """
+    # DM05's first profile is intentionally isolated from legacy precision and
+    # backend defaults (backend='cpu' belongs to Jetson-PI, not DM05).
+    if config == 'dm05':
+        if framework != 'torch' or hardware not in ('auto', 'cuda_sm80'):
+            raise ValueError('DM05 supports framework="torch", hardware="cuda_sm80" only')
+        if (use_fp8 or use_fp16 or use_fp4 or use_fp4_decoder or use_fa4
+                or precision not in ('auto', 'bf16')):
+            raise ValueError('DM05 requires BF16: use_fp8=False, no FP16/FP4/FA4')
+        if backend not in ('torch', 'flashrt'):
+            raise ValueError('DM05 requires explicit backend="torch" or "flashrt"')
+        from flash_rt.vla import BackendConfig, load_backend
+        configuration = BackendConfig(
+            model='dm05', checkpoint=checkpoint, backend=backend, hardware=hardware,
+            precision='bf16', num_steps=num_steps,
+            options={'source_dir': source_dir, 'num_views': num_views,
+                     'use_cuda_graph': use_cuda_graph})
+        # Same frontend construction as the measured VLA public path. VLAModel
+        # owns it after this temporary loader wrapper goes out of scope.
+        execution = load_backend(configuration)
+        return VLAModel(execution.frontend, framework)
+
     # Qwen3-VL is a chat-style VLM, not a VLA predict(images, ...) model. It
     # is registered in _PIPELINE_MAP for resolve_pipeline_class/discovery, but
     # load_model's VLAModel wrapper would expose the wrong runtime surface.
