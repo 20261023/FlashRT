@@ -1,0 +1,536 @@
+{
+  "publication_identity": "PUBLIC curated source-only delta; not the private dirty foundation",
+  "format": "Git unified diff against full archived private Hy foundation content",
+  "self_contained_clean_7f37642_rebuild": false,
+  "private_dirty_foundation_bundled": false,
+  "private_measured_source_and_binaries_unmodified": true,
+  "foundation_archive": {
+    "name": "apxinf-foundation.tar.gz",
+    "sha256": "deee639fe413e4dc6e1a6fbd2c32224342b41c63bd49d83f714be8e71f07519a",
+    "bundled": false
+  },
+  "foundation_manifest": {
+    "name": "apxinf-foundation-manifest.json",
+    "sha256": "f432b4795f784ca0a941cb7d8074be498b689f0ab12ce05ac66a547817cafb21",
+    "bundled": false
+  },
+  "foundation_base_git_head": "7f37642dd6c5896bca66d7640d9944c2a3fe04b4",
+  "foundation_includes_uncommitted_changes": true,
+  "author_source_revision": "03f799120d425ead51d9482bb1da950b6dabade9",
+  "checkpoint_revision": "5cd18734814abb075a9ccfd9ad6d16777b5cf10e",
+  "checkpoint_identity_sha256": "b7da77f516ebd0c0c68faed2f0cfe1c68985b7b874e49dda4292d8d286de20dd",
+  "patch": {
+    "path": "dm05-apxinf-experimental.patch",
+    "sha256": "f00d6dfabd380fe67c6b348808ffb32258e47f919837cd545e983b3343eafa6a",
+    "bytes": 128080
+  },
+  "source_file_count": 37,
+  "measured_snapshot_file_count": 26,
+  "same_as_measured_file_count": 25,
+  "measured_runtime_file_count": 23,
+  "runtime_source_unchanged": true,
+  "post_measurement_files_NOT_RUN": [
+    "crates/apxinf-model/src/dm05/APXINF_LICENSE.txt",
+    "crates/apxinf-model/src/dm05/NOTICE",
+    "crates/apxinf-model/src/dm05/OPENDM_LICENSE.txt",
+    "crates/apxinf-model/src/dm05/TRANSFORMERS_LICENSE.txt",
+    "doc/dm05.md",
+    "python/apxinf/examples/dm05_experimental/README.md",
+    "python/apxinf/examples/dm05_experimental/benchmark_policy.py",
+    "python/apxinf/examples/dm05_experimental/build_native.sh",
+    "python/apxinf/examples/dm05_experimental/compare_saved.py",
+    "python/apxinf/examples/dm05_experimental/decode_core.py",
+    "python/apxinf/examples/dm05_experimental/prepare_inputs.py",
+    "python/apxinf/examples/dm05_experimental/summarize_saved.py"
+  ],
+  "public_wrapper_boundaries": [
+    {
+      "public_path": "python/apxinf/examples/dm05_experimental/prepare_inputs.py",
+      "preserved_private_origin_name": "export_formal_inputs.py",
+      "preserved_private_origin_sha256": "8b4c224128c833906a713030b3cbec678da7d9928d4fa206047eafc2d3d44eb1",
+      "public_sha256": "69fa9f288fa8df9053565249d3d65d98e451128ac8a481ef81c5b48f118f0769",
+      "public_adapter_post_measurement": true,
+      "public_adapter_run_or_imported_in_packaging": false,
+      "identity_note": "New public placement/header; not relabelled as job329543 private script bytes"
+    },
+    {
+      "public_path": "python/apxinf/examples/dm05_experimental/benchmark_policy.py",
+      "preserved_private_origin_name": "benchmark_public.py",
+      "preserved_private_origin_sha256": "1ee42f5431ee905aaf1fbf2027e5f16c42606ec77bd9b5a287190b11d072cfea",
+      "public_sha256": "4ad2083fcbcb0705ee5033a028faa5311197822121f9cca62ca8f6a13815ca60",
+      "public_adapter_post_measurement": true,
+      "public_adapter_run_or_imported_in_packaging": false,
+      "identity_note": "New public placement/header; not relabelled as job329543 private script bytes"
+    },
+    {
+      "public_path": "python/apxinf/examples/dm05_experimental/decode_core.py",
+      "preserved_private_origin_name": "compare_formal_outputs.py",
+      "preserved_private_origin_sha256": "2290acd526a65b71fb1243669016f63bbda5cb25bca71d27b62ea10a23227e81",
+      "public_sha256": "d64555c1937e48791e0138bfce777702d20d387899ad74bbb11f1a27af89c3ae",
+      "public_adapter_post_measurement": true,
+      "public_adapter_run_or_imported_in_packaging": false,
+      "identity_note": "New public placement/header; not relabelled as job329543 private script bytes"
+    },
+    {
+      "public_path": "python/apxinf/examples/dm05_experimental/compare_saved.py",
+      "preserved_private_origin_name": "formal_arithmetic.py",
+      "preserved_private_origin_sha256": "4a161bcf0826a2114b4aecf65563aca262ad5645716f8af1be7bffe88fe38bbb",
+      "public_sha256": "37e74c49ee764814c8b47d26b646d17eb131d422688964cfe5a36ab78c0ee15d",
+      "public_adapter_post_measurement": true,
+      "public_adapter_run_or_imported_in_packaging": false,
+      "identity_note": "New public placement/header; not relabelled as job329543 private script bytes"
+    },
+    {
+      "public_path": "python/apxinf/examples/dm05_experimental/summarize_saved.py",
+      "preserved_private_origin_name": "summarize_formal.py",
+      "preserved_private_origin_sha256": "41ac76666ecd00365166360a588fba24856799cc1d74c4d16e2223b4d4fa20cc",
+      "public_sha256": "e9a632a8ced3b50c1ad5c6ff0a773de710c625e378932426ae390e844bec061c",
+      "public_adapter_post_measurement": true,
+      "public_adapter_run_or_imported_in_packaging": false,
+      "identity_note": "New public placement/header; not relabelled as job329543 private script bytes"
+    }
+  ],
+  "public_build_helper_post_measurement_NOT_RUN": "python/apxinf/examples/dm05_experimental/build_native.sh",
+  "measured_builds": [
+    {
+      "target": "native",
+      "command": "cargo build --release --offline --locked -p apxinf-model --features cuda --example dm05_benchmark",
+      "exit_code": 0,
+      "reported_duration": "2m45s",
+      "private_log_sha256": "5a7559b7ce45055e0c2590171839ec89512fbc20d0d67036485a229cdc7033a9"
+    },
+    {
+      "target": "python",
+      "command": "cargo build --release --offline --locked -p apxinf-py --features cuda,extension-module",
+      "exit_code": 0,
+      "reported_duration": "16m22s",
+      "private_log_sha256": "3bbabc69c9aef85189df845ada329e9183e3f307a311f5ae4d258092037aab56"
+    }
+  ],
+  "configured_build_toolchain": {
+    "rust": "1.95.0",
+    "gcc": "11.4.0",
+    "cuda_toolkit": "12.8",
+    "cmake": "3.31.12",
+    "cuda_arch": "sm_80"
+  },
+  "measured_binary_identities_only": [
+    {
+      "name": "dm05_benchmark",
+      "bytes": 63217368,
+      "sha256": "445ebb12e1e1439c96dd9f4db66fd66c888e8852eea023798e2ae1703a52a113"
+    },
+    {
+      "name": "libapxinf_py.so",
+      "bytes": 74773576,
+      "sha256": "575b96f869fad10f0abbe04eb762b611e9ae016a8b4c0a0c45823c4dcc174d52"
+    },
+    {
+      "name": "apxinf_py.so",
+      "bytes": 74773576,
+      "sha256": "575b96f869fad10f0abbe04eb762b611e9ae016a8b4c0a0c45823c4dcc174d52"
+    }
+  ],
+  "measured_job329543_log_sha256": "88446bf5f7e5b6b3f0b89b84ba9d352ccee5d41f67cc6535fd6cdadf4cb05522",
+  "measured_job329543_driver": {
+    "version": null,
+    "status": "NR_not_recorded_for_job329543",
+    "evidence": "Saved actual329543 log records GPU model/SM, but no driver version",
+    "not_inferred_from_other_allocations_or_old_builds": true
+  },
+  "licenses": [
+    {
+      "path": "crates/apxinf-model/src/dm05/APXINF_LICENSE.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "verbatim": true
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/OPENDM_LICENSE.txt",
+      "sha256": "71816671f1537b7e616c5ff005fa4696adae4323549437913a45132e9c3f19c4",
+      "verbatim": true
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/TRANSFORMERS_LICENSE.txt",
+      "sha256": "77fd4710def9ec3c0f6225800e0235f15a425abd4a8b03559127fcd782612049",
+      "verbatim": true
+    }
+  ],
+  "files": [
+    {
+      "path": "crates/apxinf-cuda-new/cuda-operator.md",
+      "base_sha256": "be8ada22bb3d613c92231846e8b2670945584498d281f1877fc0712450b9366b",
+      "sha256": "1879d74bb4aad43aa23532cd8284331b98c39326d66f518d5abcd27a74ced360",
+      "bytes": 14515,
+      "measured_sha256": "1879d74bb4aad43aa23532cd8284331b98c39326d66f518d5abcd27a74ced360",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": false,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-cuda-new/native/adapters/tensor_ops/execution.cpp",
+      "base_sha256": "a7f767579870ab13cf29d1c0358ae83fb93087fbc4a16cabfe83d5499738797a",
+      "sha256": "e13f936298d62157dc7f09b4b4169bb3e86c3f5dd7d8f5fceba45cf788f37af9",
+      "bytes": 6774,
+      "measured_sha256": "e13f936298d62157dc7f09b4b4169bb3e86c3f5dd7d8f5fceba45cf788f37af9",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-cuda-new/native/include/apxinf_cuda/tensor_ops.h",
+      "base_sha256": "b851ba162e2c9fe423a106a6c4512d520a67a4497a07716f16a26d0c489b3287",
+      "sha256": "ba96cdec9c5df657d86ad02b8e2b855b434b1b9ab47e00aa6298bc51062ccd56",
+      "bytes": 2343,
+      "measured_sha256": "ba96cdec9c5df657d86ad02b8e2b855b434b1b9ab47e00aa6298bc51062ccd56",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.cu",
+      "base_sha256": "4f6e359a289813e206243509c47cccf6778d23be09148589f03cb9d04954bb5a",
+      "sha256": "d160cf7465a49844fd4f639b0f7c25faa2d1246a4de4d3f0fdceae70e418c006",
+      "bytes": 17842,
+      "measured_sha256": "d160cf7465a49844fd4f639b0f7c25faa2d1246a4de4d3f0fdceae70e418c006",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.h",
+      "base_sha256": "4cec59caa7d00d4129150bcc57de74815e4fed3e7fb8e0d0e8b3509b5d7db787",
+      "sha256": "b03c80aa9dc0ba08f9000052ccbddbc0dcbd83a572005152bfa4bccfc8fe1a7e",
+      "bytes": 1359,
+      "measured_sha256": "b03c80aa9dc0ba08f9000052ccbddbc0dcbd83a572005152bfa4bccfc8fe1a7e",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-cuda-new/src/ffi/abi/tensor_ops.rs",
+      "base_sha256": "70dce72bf07d37ce21fcb2f0494df4294108aa0738fbf8f75722e2889131d79c",
+      "sha256": "7133a8ee497dca8c50cb57cd67a9a67a406fa2804c3b89098c10e084018f8b5f",
+      "bytes": 3366,
+      "measured_sha256": "7133a8ee497dca8c50cb57cd67a9a67a406fa2804c3b89098c10e084018f8b5f",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-cuda-new/src/ops/tensor_ops.rs",
+      "base_sha256": "e5e847d4a2e499f9c037df2d29e67fafea810c871a7b07add2d02b8b98b7322a",
+      "sha256": "059011a7264f2670832fe20df1fff1dd8518879a35a1ba18dcc6777e1df302fc",
+      "bytes": 19102,
+      "measured_sha256": "059011a7264f2670832fe20df1fff1dd8518879a35a1ba18dcc6777e1df302fc",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-cuda/src/kernels/attention.rs",
+      "base_sha256": "0dbf59e03d02665922f04059f91dfa0c422b7886241f37a076e0c0d215ed7327",
+      "sha256": "411211d5403c3fd382e158b987af7951c5be4f0824851bdfb6ff5cc568de087f",
+      "bytes": 149055,
+      "measured_sha256": "411211d5403c3fd382e158b987af7951c5be4f0824851bdfb6ff5cc568de087f",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-cuda/src/kernels/attention/staged.rs",
+      "base_sha256": "f6f5bc685c394f3a54c503d93dae958d66cd0f426b2186739b9f1b23ade814e6",
+      "sha256": "f03d1e573eda831a1d39ad16c0390a7b6934d7e851d7189bcc65973b2eb0fc70",
+      "bytes": 8022,
+      "measured_sha256": "f03d1e573eda831a1d39ad16c0390a7b6934d7e851d7189bcc65973b2eb0fc70",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/Cargo.toml",
+      "base_sha256": "0aad799eb56fb2cd9e5e94bfd9f557729a5b1cd19505e08aae7a0cfd6a1c29f8",
+      "sha256": "6af29024f7c7f2cdb78545cc80e78e93389710283bb6779a7d1aed3b179f9229",
+      "bytes": 1096,
+      "measured_sha256": "6af29024f7c7f2cdb78545cc80e78e93389710283bb6779a7d1aed3b179f9229",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/examples/dm05_benchmark.rs",
+      "base_sha256": null,
+      "sha256": "09b4a5fce230b8aef9342c9e7ce7c32b3ec7c86572538c5fcd108fde4909045d",
+      "bytes": 3077,
+      "measured_sha256": "09b4a5fce230b8aef9342c9e7ce7c32b3ec7c86572538c5fcd108fde4909045d",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/auto.rs",
+      "base_sha256": "b524d9bde6fb3595eb06411b6d075d176c516c79b231341d17632290b3bb550c",
+      "sha256": "053946a4d36352f985f2a972c5a279e59bee60a93047f9da91979a089e59ac9d",
+      "bytes": 19952,
+      "measured_sha256": "053946a4d36352f985f2a972c5a279e59bee60a93047f9da91979a089e59ac9d",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/builtin.rs",
+      "base_sha256": "96ea19c2b7a1f948f032f59a8e37e254dcdd6262da7f9a292809c9c0b091fcf5",
+      "sha256": "78073ae113a3cdcb8f6d9777bcfd036c5ab4bb92b8e66bb354f5f2868b69067e",
+      "bytes": 4948,
+      "measured_sha256": "78073ae113a3cdcb8f6d9777bcfd036c5ab4bb92b8e66bb354f5f2868b69067e",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/APXINF_LICENSE.txt",
+      "base_sha256": null,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/NOTICE",
+      "base_sha256": null,
+      "sha256": "9e4ac9b428780194d8d6c885d34835362ee42613b3015ae2d8f11bdec3c8e6a0",
+      "bytes": 1740,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/OPENDM_LICENSE.txt",
+      "base_sha256": null,
+      "sha256": "71816671f1537b7e616c5ff005fa4696adae4323549437913a45132e9c3f19c4",
+      "bytes": 11336,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/TRANSFORMERS_LICENSE.txt",
+      "base_sha256": null,
+      "sha256": "77fd4710def9ec3c0f6225800e0235f15a425abd4a8b03559127fcd782612049",
+      "bytes": 11418,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/backend.rs",
+      "base_sha256": null,
+      "sha256": "c51337fca11327a2716aab523665f5ee322f2dae2cc209f06db1c4f456d5706e",
+      "bytes": 177,
+      "measured_sha256": "c51337fca11327a2716aab523665f5ee322f2dae2cc209f06db1c4f456d5706e",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/load.rs",
+      "base_sha256": null,
+      "sha256": "479528c7a1d41ef869cc78c9e8330fe198bf4bbc3aff33956086105619cf8358",
+      "bytes": 1112,
+      "measured_sha256": "479528c7a1d41ef869cc78c9e8330fe198bf4bbc3aff33956086105619cf8358",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/mod.rs",
+      "base_sha256": null,
+      "sha256": "2155f2cd08a236f9e32ca8f2eb05c7611b7ad03ac5ad87f550d6f34d57c521e4",
+      "bytes": 400,
+      "measured_sha256": "2155f2cd08a236f9e32ca8f2eb05c7611b7ad03ac5ad87f550d6f34d57c521e4",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/model.rs",
+      "base_sha256": null,
+      "sha256": "a480a0006a54aa63e3cf3c5ebdc37291ff4bc682b815aba207284d29d8d45f13",
+      "bytes": 10921,
+      "measured_sha256": "a480a0006a54aa63e3cf3c5ebdc37291ff4bc682b815aba207284d29d8d45f13",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/model_runner.rs",
+      "base_sha256": null,
+      "sha256": "5b716e3f8202257ed300433f6ae17bee6a62e3465847d3134b727477656fa454",
+      "bytes": 8477,
+      "measured_sha256": "5b716e3f8202257ed300433f6ae17bee6a62e3465847d3134b727477656fa454",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/dm05/weights.rs",
+      "base_sha256": null,
+      "sha256": "20641981032f480659c130029656257bb086504ed9795c485be22a97d2d735e3",
+      "bytes": 9179,
+      "measured_sha256": "20641981032f480659c130029656257bb086504ed9795c485be22a97d2d735e3",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-model/src/lib.rs",
+      "base_sha256": "07401953ee688e6fa52e12ba6683a7c8e67448ede031e255a89e4290fefc020f",
+      "sha256": "098ee784c71ad9d4230ad4f876b4a8b0aa0c67883baa471ec6b6241fe50fb57e",
+      "bytes": 1541,
+      "measured_sha256": "098ee784c71ad9d4230ad4f876b4a8b0aa0c67883baa471ec6b6241fe50fb57e",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "crates/apxinf-py/src/lib.rs",
+      "base_sha256": "643242995072b970bf964f6a0b892d05c248992a5b5dac6a20996dd7a2aae618",
+      "sha256": "29940eefc823ec3e2f6df884f1c781c09000a60cdfdbe7a3be2b6e4091226762",
+      "bytes": 70784,
+      "measured_sha256": "29940eefc823ec3e2f6df884f1c781c09000a60cdfdbe7a3be2b6e4091226762",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "doc/dm05.md",
+      "base_sha256": null,
+      "sha256": "3ef9eab6c54e2139fee273535e914e6fc78878de9cca8671aa85ce70a675f3f6",
+      "bytes": 5376,
+      "measured_sha256": "b4f446f3be64bf9de2d996f5fc8024e1961b68e7f6b6c90781cb111ff917fbc8",
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "doc/model-layer-architecture.md",
+      "base_sha256": "e9bc9fbcff73d4c3d8db6a42a86155d63237bdb4d39cb229fc6500edfc25b18d",
+      "sha256": "f919831a13544d1f5dbd382b78ab299bc5f4df0564bdf8de1cfc26c6afd1e7e0",
+      "bytes": 20893,
+      "measured_sha256": "f919831a13544d1f5dbd382b78ab299bc5f4df0564bdf8de1cfc26c6afd1e7e0",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": false,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "python/apxinf/apxinf/policies/__init__.py",
+      "base_sha256": "7d339d66b1d36bc3a770fd6e9d6a06b76ade9d0e80f1ac953076bf6606017fdf",
+      "sha256": "2c8f5043c2bc8a4549b00761cc7fd76b810730f4f1d9716c3ae68b8033d8be09",
+      "bytes": 2408,
+      "measured_sha256": "2c8f5043c2bc8a4549b00761cc7fd76b810730f4f1d9716c3ae68b8033d8be09",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "python/apxinf/apxinf/policies/impls/__init__.py",
+      "base_sha256": "b867ff89082bb4f4d755f50319359699e3f05978c56542654c5228a5e1351eef",
+      "sha256": "432aa0abdead6539ad5dbb5b7ff3a8309609506fad9bf90bbef200dac76546e6",
+      "bytes": 1410,
+      "measured_sha256": "432aa0abdead6539ad5dbb5b7ff3a8309609506fad9bf90bbef200dac76546e6",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "python/apxinf/apxinf/policies/impls/dm05.py",
+      "base_sha256": null,
+      "sha256": "19a4dde5df5cfdb354065c432d797dd0f9a3e3fc3439de9ada05a3fac52b061b",
+      "bytes": 4893,
+      "measured_sha256": "19a4dde5df5cfdb354065c432d797dd0f9a3e3fc3439de9ada05a3fac52b061b",
+      "same_as_measured_snapshot": true,
+      "measured_runtime_source": true,
+      "provenance": "measured_job329543_source"
+    },
+    {
+      "path": "python/apxinf/examples/dm05_experimental/README.md",
+      "base_sha256": null,
+      "sha256": "27dbf7f9e58b2185797474d5a56454c416649ea230c9331843c026d3b7401276",
+      "bytes": 4715,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "python/apxinf/examples/dm05_experimental/benchmark_policy.py",
+      "base_sha256": null,
+      "sha256": "4ad2083fcbcb0705ee5033a028faa5311197822121f9cca62ca8f6a13815ca60",
+      "bytes": 3565,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "python/apxinf/examples/dm05_experimental/build_native.sh",
+      "base_sha256": null,
+      "sha256": "5d611c1952a6164557ee5ea94c5c95ef34873b4734777fc176e98cd90dd06718",
+      "bytes": 946,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "python/apxinf/examples/dm05_experimental/compare_saved.py",
+      "base_sha256": null,
+      "sha256": "37e74c49ee764814c8b47d26b646d17eb131d422688964cfe5a36ab78c0ee15d",
+      "bytes": 3129,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "python/apxinf/examples/dm05_experimental/decode_core.py",
+      "base_sha256": null,
+      "sha256": "d64555c1937e48791e0138bfce777702d20d387899ad74bbb11f1a27af89c3ae",
+      "bytes": 3197,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "python/apxinf/examples/dm05_experimental/prepare_inputs.py",
+      "base_sha256": null,
+      "sha256": "69fa9f288fa8df9053565249d3d65d98e451128ac8a481ef81c5b48f118f0769",
+      "bytes": 3176,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    },
+    {
+      "path": "python/apxinf/examples/dm05_experimental/summarize_saved.py",
+      "base_sha256": null,
+      "sha256": "e9a632a8ced3b50c1ad5c6ff0a773de710c625e378932426ae390e844bec061c",
+      "bytes": 2801,
+      "measured_sha256": null,
+      "same_as_measured_snapshot": false,
+      "measured_runtime_source": false,
+      "provenance": "PUBLIC_post_measurement_NOT_RUN"
+    }
+  ],
+  "patch_application_or_check_run": false,
+  "new_builds_or_target_imports": false,
+  "tests_or_smoke_kernel_gates_run": false,
+  "extra_reviews_run": false,
+  "new_model_runs_or_gpu_submissions": 0,
+  "public_package_contains_raw_inputs_actions_env_weights_binaries_archives_secrets": false
+}

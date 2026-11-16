@@ -133,7 +133,19 @@
     "arena_capacity_bytes": 17179869184,
     "unsupported_or_unexercised": "padding/history/general shapes, eager FP32 suffix branch and generated-noise path not exercised by these formal runs",
     "native_executable_sha256": "445ebb12e1e1439c96dd9f4db66fd66c888e8852eea023798e2ae1703a52a113",
-    "python_extension_sha256": "575b96f869fad10f0abbe04eb762b611e9ae016a8b4c0a0c45823c4dcc174d52"
+    "python_extension_sha256": "575b96f869fad10f0abbe04eb762b611e9ae016a8b4c0a0c45823c4dcc174d52",
+    "public_source_delta": {
+      "path": "examples/vla_autotune/apxinf/dm05-sm80/dm05-apxinf-experimental.patch",
+      "sha256": "f00d6dfabd380fe67c6b348808ffb32258e47f919837cd545e983b3343eafa6a",
+      "measured_runtime_files": 23,
+      "same_as_measured_snapshot_files": 25,
+      "post_measurement_unexecuted_paths": 12,
+      "self_contained_clean_upstream_rebuild": false,
+      "requires_archived_private_hy_foundation": true,
+      "patch_application_check_run": false,
+      "driver_version": null,
+      "driver_evidence": "NR; not recorded in actual329543 log, not borrowed from another allocation"
+    }
   },
   "apxinf_fastwam_details": {
     "job_id": "329256",

@@ -1,0 +1,1918 @@
+diff --git a/crates/apxinf-cuda-new/cuda-operator.md b/crates/apxinf-cuda-new/cuda-operator.md
+--- a/crates/apxinf-cuda-new/cuda-operator.md
++++ b/crates/apxinf-cuda-new/cuda-operator.md
+@@ -214,3 +214,12 @@
+ The catalog test ensures only that semantics are neither missing nor duplicated; it cannot validate the written contracts. A new L3 semantic must also add a semantic test to `src/ops/tests/l3_behavior.rs` and an independent-reference all-candidate numerical test to `src/ops/tests/precision/precision.rs`.
+ 
+ Tests must run through `crates/apxinf-cuda-new/test-new.sh`; a normal `cargo test` from the repository root does not automatically test this crate.
++# Isolated DM05 port additions (runtime acceptance pending)
++
++The fixed `tensor_ops` provider additionally exposes caller-owned, asynchronous
++`rotary_rounded_bf16` (F32 frequency/BF16 sin-cos and product boundaries),
++`avg_pool2_bf16` (NHWC2x2 BF16, F32 mean), `bias_f32` (broadcast FP32 bias,
++exact input/output alias allowed) and `round_scaled_scores` (in-place BF16 QK
++and scale boundaries represented in F32 scratch). Source/ABI/kernel bytes are
++included in the existing tensor-ops build fingerprint. No tests were executed
++under the explicit user no-tests constraint; these are not accepted kernel claims.
+diff --git a/crates/apxinf-cuda-new/native/adapters/tensor_ops/execution.cpp b/crates/apxinf-cuda-new/native/adapters/tensor_ops/execution.cpp
+--- a/crates/apxinf-cuda-new/native/adapters/tensor_ops/execution.cpp
++++ b/crates/apxinf-cuda-new/native/adapters/tensor_ops/execution.cpp
+@@ -64,3 +64,15 @@
+ extern "C" apxinf_status_t apxinf_tensor_euler_mixed(const void*x,const void*v,void*y,int64_t n,float dt,apxinf_cuda_stream_t s) {
+   return abi_boundary([&]{require(x&&v&&y&&n>0&&n<=INT64_MAX/4&&std::isfinite(dt)&&std::abs(dt)<=3.3895314e38F,"invalid mixed Euler");check(impl::euler(x,v,y,n,dt,static_cast<cudaStream_t>(s)));});
+ }
++extern "C" apxinf_status_t apxinf_tensor_rotary_rounded_bf16(const void*x,const void*p,const void*f,void*y,int64_t t,int64_t h,int64_t d,apxinf_cuda_stream_t s) {
++ return abi_boundary([&]{require(x&&p&&f&&y&&product({t,h,d})&&d>=2&&d<=256&&d%2==0,"invalid rounded rotary");check(impl::rotary_rounded(x,p,f,y,t,h,d,static_cast<cudaStream_t>(s)));});
++}
++extern "C" apxinf_status_t apxinf_tensor_avg_pool2_bf16(const void*x,void*y,int64_t b,int64_t h,int64_t w,int64_t c,apxinf_cuda_stream_t s) {
++ return abi_boundary([&]{require(x&&y&&product({b,h,w,c})&&h%2==0&&w%2==0,"invalid average pool2");check(impl::avg_pool2(x,y,b,h,w,c,static_cast<cudaStream_t>(s)));});
++}
++extern "C" apxinf_status_t apxinf_tensor_bias_f32(const void*x,const void*b,void*y,int64_t r,int64_t c,apxinf_cuda_stream_t s) {
++ return abi_boundary([&]{require(x&&b&&y&&product({r,c}),"invalid F32 bias");check(impl::bias_f32(x,b,y,r,c,static_cast<cudaStream_t>(s)));});
++}
++extern "C" apxinf_status_t apxinf_tensor_round_scaled_scores(void*x,int64_t n,float scale,apxinf_cuda_stream_t s) {
++ return abi_boundary([&]{require(x&&n>0&&std::isfinite(scale)&&scale>0,"invalid BF16 score rounding");check(impl::round_scaled_scores(x,n,scale,static_cast<cudaStream_t>(s)));});
++}
+diff --git a/crates/apxinf-cuda-new/native/include/apxinf_cuda/tensor_ops.h b/crates/apxinf-cuda-new/native/include/apxinf_cuda/tensor_ops.h
+--- a/crates/apxinf-cuda-new/native/include/apxinf_cuda/tensor_ops.h
++++ b/crates/apxinf-cuda-new/native/include/apxinf_cuda/tensor_ops.h
+@@ -20,6 +20,10 @@
+ apxinf_status_t apxinf_tensor_group_mean_concat_bf16(const void*,void*,int64_t,int64_t,int64_t,int64_t,apxinf_cuda_stream_t);
+ apxinf_status_t apxinf_tensor_group_weighted_bf16(const void*,const void*,void*,int64_t,int64_t,int64_t,int64_t,apxinf_cuda_stream_t);
+ apxinf_status_t apxinf_tensor_euler_mixed(const void*,const void*,void*,int64_t,float,apxinf_cuda_stream_t);
++apxinf_status_t apxinf_tensor_rotary_rounded_bf16(const void*,const void*,const void*,void*,int64_t,int64_t,int64_t,apxinf_cuda_stream_t);
++apxinf_status_t apxinf_tensor_avg_pool2_bf16(const void*,void*,int64_t,int64_t,int64_t,int64_t,apxinf_cuda_stream_t);
++apxinf_status_t apxinf_tensor_bias_f32(const void*,const void*,void*,int64_t,int64_t,apxinf_cuda_stream_t);
++apxinf_status_t apxinf_tensor_round_scaled_scores(void*,int64_t,float,apxinf_cuda_stream_t);
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.cu b/crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.cu
+--- a/crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.cu
++++ b/crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.cu
+@@ -278,6 +278,34 @@
+ }
+ }
+ 
++namespace {
++__global__ void rounded_rope_kernel(const B*x,const int32_t*p,const float*f,B*y,int64_t n,int heads,int dim) {
++ for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<n;i+=int64_t(blockDim.x)*gridDim.x) {
++  int c=i%dim,half=dim/2;int64_t base=i-c;float angle=__fmul_rn(float(p[i/(heads*dim)]),f[c%half]);
++  B co=__float2bfloat16_rn(cosf(angle)),si=__float2bfloat16_rn(sinf(angle));
++  B other=x[base+(c+half)%dim];if(c<half)other=__float2bfloat16_rn(-load(other));
++  y[i]=__hadd(__hmul(x[i],co),__hmul(other,si));
++ }
++}
++__global__ void avg2_kernel(const B*x,B*y,int64_t n,int h,int w,int c) {
++ for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<n;i+=int64_t(blockDim.x)*gridDim.x) {
++  int ch=i%c,ow=(i/c)%(w/2),oh=(i/(c*(w/2)))%(h/2),b=i/(int64_t(c)*(w/2)*(h/2));
++  int64_t at=((int64_t(b)*h+oh*2)*w+ow*2)*c+ch;
++  float s=__fadd_rn(__fadd_rn(__fadd_rn(load(x[at]),load(x[at+c])),load(x[at+w*c])),load(x[at+w*c+c]));
++  y[i]=__float2bfloat16_rn(s*.25f);
++ }
++}
++__global__ void bias32_kernel(const float*x,const float*b,float*y,int64_t n,int c) {
++ for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<n;i+=int64_t(blockDim.x)*gridDim.x)y[i]=__fadd_rn(x[i],b[i%c]);
++}
++__global__ void rounded_score_kernel(float*x,int64_t n,float scale) {
++ for(int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;i<n;i+=int64_t(blockDim.x)*gridDim.x)x[i]=load(__float2bfloat16_rn(__fmul_rn(load(__float2bfloat16_rn(x[i])),scale)));
++}
++}
++int rotary_rounded(const void*x,const void*p,const void*f,void*y,int t,int h,int d,cudaStream_t s){int64_t n=int64_t(t)*h*d;rounded_rope_kernel<<<blocks(n),256,0,s>>>((const B*)x,(const int32_t*)p,(const float*)f,(B*)y,n,h,d);return int(cudaGetLastError());}
++int avg_pool2(const void*x,void*y,int b,int h,int w,int c,cudaStream_t s){int64_t n=int64_t(b)*(h/2)*(w/2)*c;avg2_kernel<<<blocks(n),256,0,s>>>((const B*)x,(B*)y,n,h,w,c);return int(cudaGetLastError());}
++int bias_f32(const void*x,const void*b,void*y,int r,int c,cudaStream_t s){int64_t n=int64_t(r)*c;bias32_kernel<<<blocks(n),256,0,s>>>((const float*)x,(const float*)b,(float*)y,n,c);return int(cudaGetLastError());}
++int round_scaled_scores(void*x,int64_t n,float scale,cudaStream_t s){rounded_score_kernel<<<blocks(n),256,0,s>>>((float*)x,n,scale);return int(cudaGetLastError());}
+ int broadcast_mul(const void*x,const void*w,void*y,int rows,int cols,cudaStream_t s) {
+   int64_t count=int64_t(rows)*cols; broadcast_kernel<<<blocks(count),256,0,s>>>((const B*)x,(const B*)w,(B*)y,count,cols); return int(cudaGetLastError());
+ }
+diff --git a/crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.h b/crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.h
+--- a/crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.h
++++ b/crates/apxinf-cuda-new/native/kernels/custom/tensor_ops.h
+@@ -15,4 +15,8 @@
+ int group_mean_concat(const void*,void*,int,int,int,int,cudaStream_t);
+ int group_weighted(const void*,const void*,void*,int,int,int,int,cudaStream_t);
+ int euler(const void*,const void*,void*,int64_t,float,cudaStream_t);
++int rotary_rounded(const void*,const void*,const void*,void*,int,int,int,cudaStream_t);
++int avg_pool2(const void*,void*,int,int,int,int,cudaStream_t);
++int bias_f32(const void*,const void*,void*,int,int,cudaStream_t);
++int round_scaled_scores(void*,int64_t,float,cudaStream_t);
+ }
+diff --git a/crates/apxinf-cuda-new/src/ffi/abi/tensor_ops.rs b/crates/apxinf-cuda-new/src/ffi/abi/tensor_ops.rs
+--- a/crates/apxinf-cuda-new/src/ffi/abi/tensor_ops.rs
++++ b/crates/apxinf-cuda-new/src/ffi/abi/tensor_ops.rs
+@@ -2,6 +2,10 @@
+ use std::ffi::c_void;
+ 
+ unsafe extern "C" {
++    pub(crate) fn apxinf_tensor_rotary_rounded_bf16(x:*const c_void,p:*const c_void,f:*const c_void,y:*mut c_void,t:i64,h:i64,d:i64,s:CudaStream)->i32;
++    pub(crate) fn apxinf_tensor_avg_pool2_bf16(x:*const c_void,y:*mut c_void,b:i64,h:i64,w:i64,c:i64,s:CudaStream)->i32;
++    pub(crate) fn apxinf_tensor_bias_f32(x:*const c_void,b:*const c_void,y:*mut c_void,r:i64,c:i64,s:CudaStream)->i32;
++    pub(crate) fn apxinf_tensor_round_scaled_scores(x:*mut c_void,n:i64,scale:f32,s:CudaStream)->i32;
+     pub(crate) fn apxinf_tensor_rms_bf16_rounded(
+         x: *const c_void,
+         w: *const c_void,
+diff --git a/crates/apxinf-cuda-new/src/ops/tensor_ops.rs b/crates/apxinf-cuda-new/src/ops/tensor_ops.rs
+--- a/crates/apxinf-cuda-new/src/ops/tensor_ops.rs
++++ b/crates/apxinf-cuda-new/src/ops/tensor_ops.rs
+@@ -9,6 +9,7 @@
+ 
+ /// Stable identities of the single built-in providers (implementation version1).
+ pub const SEMANTIC_IDS: &[&str] = &[
++    "rotary_rounded_bf16", "avg_pool2_bf16", "bias_f32", "round_scaled_scores",
+     "rms_bf16_rounded",
+     "rms_f32_row128",
+     "masked_softmax_f32_bf16",
+@@ -23,6 +24,36 @@
+     "euler_bf16_velocity_f32",
+ ];
+ pub const IMPLEMENTATION_VERSION: u32 = 1;
++
++/// Half-split RoPE: F32 frequencies/positions -> BF16 sin/cos; both products
++/// round to BF16 before the BF16 sum. Q/K normalization is a separate operation.
++pub fn rotary_rounded_bf16(ctx:&(impl CudaLaunchContext+?Sized),input:&Tensor,positions:&Tensor,frequency:&Tensor,out:&mut Tensor)->Result<()> {
++ let d=input.shape().dims();
++ if d.len()!=3 || d[2]<2 || d[2]>256 || d[2]%2!=0 || d[1].checked_mul(d[2]).is_none_or(|v|v>i32::MAX as usize) {return Err(invalid("rounded rotary geometry"));}
++ let x=storage(ctx,input,DType::BF16,d)?; let p=storage(ctx,positions,DType::I32,&[d[0]])?;
++ let f=storage(ctx,frequency,DType::F32,&[d[2]/2])?; let y=storage(ctx,out,DType::BF16,d)?;
++ for v in [&x,&p,&f] {disjoint(&y,v,false)?;}
++ with_launch_device(ctx,|s|unsafe{status::check(abi::apxinf_tensor_rotary_rounded_bf16(x.ptr(),p.ptr(),f.ptr(),y.ptr(),d[0] as i64,d[1] as i64,d[2] as i64,s))})
++}
++/// 2x2 nonoverlapping average pool on contiguous NHWC BF16, F32 accumulation.
++pub fn avg_pool2_bf16(ctx:&(impl CudaLaunchContext+?Sized),input:&Tensor,out:&mut Tensor)->Result<()> {
++ let d=group_dims(input)?; if d[1].checked_mul(d[2]).and_then(|v|v.checked_mul(d[3])).is_none_or(|v|v>i32::MAX as usize){return Err(invalid("pool per-image indexing exceeds i32"));}let x=storage(ctx,input,DType::BF16,&d)?;
++ let y=storage(ctx,out,DType::BF16,&[d[0],d[1]/2,d[2]/2,d[3]])?;disjoint(&y,&x,false)?;
++ with_launch_device(ctx,|s|unsafe{status::check(abi::apxinf_tensor_avg_pool2_bf16(x.ptr(),y.ptr(),d[0] as i64,d[1] as i64,d[2] as i64,d[3] as i64,s))})
++}
++/// Add F32 row-broadcast bias. Exact input/output alias is permitted.
++pub fn bias_f32(ctx:&(impl CudaLaunchContext+?Sized),input:&Tensor,bias:&Tensor,out:&mut Tensor)->Result<()> {
++ let d=input.shape().dims();if d.len()!=2{return Err(invalid("F32 bias expects matrix"));}
++ let x=storage(ctx,input,DType::F32,d)?;let b=storage(ctx,bias,DType::F32,&[d[1]])?;let y=storage(ctx,out,DType::F32,d)?;
++ disjoint(&y,&x,true)?;disjoint(&y,&b,false)?;
++ with_launch_device(ctx,|s|unsafe{status::check(abi::apxinf_tensor_bias_f32(x.ptr(),b.ptr(),y.ptr(),d[0] as i64,d[1] as i64,s))})
++}
++/// In-place score boundaries for eager BF16 attention: BF16(QK), then BF16(scale*QK).
++pub fn round_scaled_scores(ctx:&(impl CudaLaunchContext+?Sized),scores:&mut Tensor,scale:f32)->Result<()> {
++ if !scale.is_finite()||scale<=0. {return Err(invalid("invalid score scale"));}
++ let n=extents(scores.shape().dims())?;let x=storage(ctx,scores,DType::F32,scores.shape().dims())?;
++ with_launch_device(ctx,|s|unsafe{status::check(abi::apxinf_tensor_round_scaled_scores(x.ptr(),n,scale,s))})
++}
+ 
+ /// BF16 RMS profile for >=16 rows, width divisible by4 in (128,8192].
+ /// FP32 square/mean uses four independent accumulators and ascending warp
+diff --git a/crates/apxinf-cuda/src/kernels/attention.rs b/crates/apxinf-cuda/src/kernels/attention.rs
+--- a/crates/apxinf-cuda/src/kernels/attention.rs
++++ b/crates/apxinf-cuda/src/kernels/attention.rs
+@@ -1,7 +1,7 @@
+ //! Model-neutral attention contracts and workspace orchestration.
+ 
+ mod staged;
+-pub use staged::mixed_staged_bf16;
++pub use staged::{mixed_staged_bf16,eager_staged_bf16};
+ 
+ use crate::kernels::fixed_profile::FIXED_SCENE_TOKENS;
+ use apxinf_core::{DType, Device, Error, KvCache, Result, Shape, Tensor};
+@@ -2615,6 +2615,24 @@
+     ))
+ }
+ 
++/// Noncausal, all-visible BF16 grouped-query attention. This deliberately has
++/// no mask argument: callers must establish that every key is visible.
++pub fn full_gqa_bf16(
++    ctx: &CudaContext, q: &Tensor, k: &Tensor, v: &Tensor,
++) -> Result<Tensor> {
++    let a=q.shape().dims(); let b=k.shape().dims();
++    if a.len()!=3 || b.len()!=3 || a.contains(&0) || b.contains(&0)
++        || v.shape()!=k.shape() || a[2]!=b[2] || a[1]%b[1]!=0
++        || ![64,72,128,256].contains(&a[2])
++        || [q,k,v].iter().any(|t|t.dtype()!=DType::BF16 || t.device()!=Device::Cuda(ctx.device_id())) {
++        return Err(Error::Other("full BF16 GQA requires valid CUDA Q[T,H,D], K/V[S,HK,D]".into()));
++    }
++    #[cfg(any(apxinf_fa2_sm80, apxinf_fa2_f16_sm100))]
++    { return fa2_attention(ctx,q,k,v,1,a[0],b[0],a[1],b[1],a[2]); }
++    #[cfg(not(any(apxinf_fa2_sm80, apxinf_fa2_f16_sm100)))]
++    Err(Error::Other("full BF16 GQA requires built FA2 provider".into()))
++}
++
+ pub fn mha_bf16(
+     ctx: &CudaContext,
+     q: &Tensor,
+diff --git a/crates/apxinf-cuda/src/kernels/attention/staged.rs b/crates/apxinf-cuda/src/kernels/attention/staged.rs
+--- a/crates/apxinf-cuda/src/kernels/attention/staged.rs
++++ b/crates/apxinf-cuda/src/kernels/attention/staged.rs
+@@ -16,6 +16,15 @@
+     out: &mut Tensor,
+     scale: f32,
+ ) -> Result<()> {
++    staged(ctx,q,k,v,mask,scores,probability,out,scale,false)
++}
++
++/// Eager BF16 QK/scale boundaries, FP32 softmax and BF16 PV. Q/K are F32
++/// promotions of already BF16-rounded projections/rotary results.
++pub fn eager_staged_bf16(ctx:&CudaContext,q:&Tensor,k:&Tensor,v:&Tensor,mask:&Tensor,scores:&mut Tensor,probability:&mut Tensor,out:&mut Tensor,scale:f32)->Result<()> {
++    staged(ctx,q,k,v,mask,scores,probability,out,scale,true)
++}
++fn staged(ctx:&CudaContext,q:&Tensor,k:&Tensor,v:&Tensor,mask:&Tensor,scores:&mut Tensor,probability:&mut Tensor,out:&mut Tensor,scale:f32,round_scores:bool)->Result<()> {
+     let qd = q.shape().dims();
+     let kd = k.shape().dims();
+     if qd.len() != 4
+@@ -152,12 +161,13 @@
+             }
+         }
+     }
++    if round_scores {apxinf_cuda_new::ops::tensor_ops::round_scaled_scores(ctx,scores,scale)?;}
+     apxinf_cuda_new::ops::tensor_ops::masked_softmax_f32_bf16(
+         ctx,
+         scores,
+         mask,
+         probability,
+-        scale,
++        if round_scores {1.0} else {scale},
+     )?;
+     unsafe {
+         for b in 0..batch {
+diff --git a/crates/apxinf-model/Cargo.toml b/crates/apxinf-model/Cargo.toml
+--- a/crates/apxinf-model/Cargo.toml
++++ b/crates/apxinf-model/Cargo.toml
+@@ -18,6 +18,10 @@
+ [features]
+ default = []
+ cuda = ["dep:apxinf-cuda", "dep:apxinf-cuda-new"]
++
++[[example]]
++name = "dm05_benchmark"
++required-features = ["cuda"]
+ 
+ [[example]]
+ name = "pi05_bench"
+diff --git a/crates/apxinf-model/examples/dm05_benchmark.rs b/crates/apxinf-model/examples/dm05_benchmark.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/examples/dm05_benchmark.rs
+@@ -0,0 +1,25 @@
++//! Formal full-model inference timing. No tests or synthetic model runs.
++use apxinf_core::{Backend,Device,Tensor};
++use apxinf_model::{dm05::{model::Dm05Model,model_runner::Dm05ModelRunner},ExecutionPolicy,InitialLatent,Observation,PreparedInference,VisionObservation,VlaRequest};
++use std::{path::Path,sync::Arc,time::Instant};
++fn main()->Result<(),Box<dyn std::error::Error>>{
++ if std::env::var_os("SLURM_JOB_ID").is_none()||std::env::var_os("SLURM_STEP_ID").is_none(){return Err("model computation requires allocated Slurm GPU step".into());}
++ let args=std::env::args().collect::<Vec<_>>();if args.len()!=4{return Err("usage: dm05_benchmark CHECKPOINT INPUT_ROOT OUTPUT_ROOT".into());}
++ let out=Path::new(&args[3]);std::fs::create_dir_all(out)?;
++ let backend=Arc::new(apxinf_cuda::CudaBackend::new(0)?);let start=Instant::now();
++ let model=Dm05Model::load(Path::new(&args[1]),Arc::clone(&backend))?;backend.synchronize()?;let eager_math=model.eager_math;
++ let runner=Dm05ModelRunner::new(model);let load_s=start.elapsed().as_secs_f64();let mut records=Vec::new();
++ for case in ["demo-seed0","demo-seed17","state-seed0","prompt-seed0"]{
++  let (mut map,_)=apxinf_loader::safetensors::load_native(&Path::new(&args[2]).join(case).join("inputs.safetensors"))?;
++  let ids=map.remove("input_ids").ok_or("missing input_ids")?.to_f32_vec()?.iter().map(|&v|v as u32).collect::<Vec<_>>();
++  let observation=Observation{vision:VisionObservation::Patches(map.remove("patches").ok_or("missing patches")?),token_ids:ids,state:None,action_mask:Some(map.remove("action_mask").ok_or("missing action_mask")?)};
++  let noise=map.remove("initial_noise").ok_or("missing initial_noise")?;let request=VlaRequest::provided(&observation,&noise);
++  let t=Instant::now();let plan=runner.prepare_request(&request,ExecutionPolicy::RequireGraph)?;backend.synchronize()?;let prepare_s=t.elapsed().as_secs_f64();
++  for _ in 0..5{plan.run(&request)?;backend.synchronize()?;}
++  let mut samples=Vec::new();let mut outputs=Vec::new();
++  for _ in 0..10{backend.synchronize()?;let t=Instant::now();let result=plan.run(&request)?;let values=backend.to_cpu(result.tensor())?.to_f32_vec()?;let ms=t.elapsed().as_secs_f64()*1e3;samples.push(ms);outputs.push(values);}
++  let record=serde_json::json!({"case":case,"samples_ms":samples,"normalized_actions":outputs,"load_s":load_s,"prepare_s":prepare_s,"arena_used_bytes":plan.arena_used(),"execution":"ApxInf-native Rust CUDA whole-model graph","author_math":if eager_math{"eager FP32 linear/latent"}else{"captured suffix BF16 linear/latent"},"boundary":"canonical CPU patches/token IDs/action mask/provided noise -> full normalized CPU actions50x32","tests_run":false,"job_id":std::env::var("SLURM_JOB_ID").ok()});
++  std::fs::write(out.join(format!("{case}.json")),serde_json::to_vec_pretty(&record)?)?;println!("{}",serde_json::json!({"case":case,"prepare_s":prepare_s,"samples_ms":samples}));records.push(record);
++ }
++ std::fs::write(out.join("result.json"),serde_json::to_vec_pretty(&serde_json::json!({"cases":records,"load_s":load_s,"tests_run":false}))?)?;Ok(())
++}
+diff --git a/crates/apxinf-model/src/auto.rs b/crates/apxinf-model/src/auto.rs
+--- a/crates/apxinf-model/src/auto.rs
++++ b/crates/apxinf-model/src/auto.rs
+@@ -310,7 +310,7 @@
+         if options.model_variant.is_some()
+             && !matches!(
+                 model_name,
+-                "pi05" | "pi05-cuda" | "qwen_drive" | "qwen_drive-cuda" | "hy" | "hy-cuda"
++                "pi05" | "pi05-cuda" | "qwen_drive" | "qwen_drive-cuda" | "hy" | "hy-cuda" | "dm05"
+             )
+         {
+             return Err(Error::Other(format!(
+diff --git a/crates/apxinf-model/src/builtin.rs b/crates/apxinf-model/src/builtin.rs
+--- a/crates/apxinf-model/src/builtin.rs
++++ b/crates/apxinf-model/src/builtin.rs
+@@ -19,6 +19,7 @@
+     registry::register("qwen3vl", load_qwen3vl);
+     registry::register("qwen_drive", load_qwen_drive);
+     registry::register("hy", crate::hyvla::load::load_registered);
++    registry::register("dm05", crate::dm05::load::load_registered);
+     registry::register("hy-cuda", crate::hyvla::load::load_registered);
+     registry::register("qwen38", load_qwen38);
+     registry::register("qwen3_8", load_qwen38);
+diff --git a/crates/apxinf-model/src/dm05/APXINF_LICENSE.txt b/crates/apxinf-model/src/dm05/APXINF_LICENSE.txt
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/APXINF_LICENSE.txt
+@@ -0,0 +1,201 @@
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright [yyyy] [name of copyright owner]
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
+diff --git a/crates/apxinf-model/src/dm05/NOTICE b/crates/apxinf-model/src/dm05/NOTICE
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/NOTICE
+@@ -0,0 +1,33 @@
++DM05 experimental native implementation provenance
++
++This family and its safe-backend additions are a Rust/CUDA implementation of
++DM05 inference semantics. It is not the authors' official execution stack and
++does not relabel Torch, TensorRT or another external model engine as ApxInf.
++
++OpenDM source: https://github.com/dexmal/opendm
++Revision: 03f799120d425ead51d9482bb1da950b6dabade9
++Semantic sources: opendm/model/dm05/dm05_arch.py,
++opendm/model/dm05/dm05_utils.py, opendm/exp/dm05_exp.py,
++opendm/data/transforms.py.
++Copyright 2026 Dexmal
++Licensed under the Apache License, Version 2.0.
++The author's license is preserved verbatim in OPENDM_LICENSE.txt.
++
++Transformers source: https://github.com/huggingface/transformers/tree/v5.3.0
++Gemma3 source copyright notice:
++Copyright 2025 Google Inc. HuggingFace Inc. team. All rights reserved.
++SigLIP source copyright notice:
++Copyright 2024 Google AI and The HuggingFace Team. All rights reserved.
++Semantic sources: transformers/models/gemma3/modeling_gemma3.py and
++transformers/models/siglip/modeling_siglip.py, from Transformers5.3.0.
++Licensed under the Apache License, Version 2.0.
++The distributed Transformers5.3.0 license is preserved in TRANSFORMERS_LICENSE.txt.
++
++ApxInf foundation license is preserved in APXINF_LICENSE.txt and remains
++applicable. Existing vendor sources and notices, including the inherited
++PYTORCH_LAYER_NORM_NOTICE, FlashAttention and CUTLASS licenses, are unchanged
++and must remain with the separately supplied complete foundation. This delta
++does not redistribute its dirty foundation, vendor trees or pretrained assets.
++
++Source-only package license/provenance additions were prepared after measured
++job329543. They are not new execution or release-acceptance evidence.
+diff --git a/crates/apxinf-model/src/dm05/OPENDM_LICENSE.txt b/crates/apxinf-model/src/dm05/OPENDM_LICENSE.txt
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/OPENDM_LICENSE.txt
+@@ -0,0 +1,201 @@
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright 2026 Dexmal
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
+diff --git a/crates/apxinf-model/src/dm05/TRANSFORMERS_LICENSE.txt b/crates/apxinf-model/src/dm05/TRANSFORMERS_LICENSE.txt
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/TRANSFORMERS_LICENSE.txt
+@@ -0,0 +1,203 @@
++Copyright 2018- The Hugging Face team. All rights reserved.
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright [yyyy] [name of copyright owner]
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
+diff --git a/crates/apxinf-model/src/dm05/backend.rs b/crates/apxinf-model/src/dm05/backend.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/backend.rs
+@@ -0,0 +1,3 @@
++//! Family CUDA seam: only safe model-neutral interfaces.
++pub use apxinf_cuda::{kernels,transfers,CudaBackend,CudaBuffer,CudaContext};
++pub use apxinf_cuda_new::ops::tensor_ops;
+diff --git a/crates/apxinf-model/src/dm05/load.rs b/crates/apxinf-model/src/dm05/load.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/load.rs
+@@ -0,0 +1,8 @@
++use crate::{LoadOptions,LoadedModel,ModelPrecision};
++use apxinf_core::{Backend,Device,Error,Result};
++use std::{path::Path,sync::Arc};
++pub(crate) fn load_registered(path:&Path,device:Device,backend:Arc<dyn Backend>,options:&LoadOptions)->Result<LoadedModel>{
++ if !matches!(options.precision,ModelPrecision::Auto|ModelPrecision::Bf16)||!matches!(options.model_variant.as_deref(),None|Some("auto")|Some("bf16"))||options.config.is_some()||options.synthetic.is_some()||options.uniform_fp8_scale.is_some()||options.calibration_path.is_some()||options.text_weight_dtype.is_some()||!options.assets.is_empty(){return Err(Error::Other("DM05 native supports fixed base BF16 checkpoint only".into()));}
++ #[cfg(feature="cuda")]{let _=device;let backend=crate::accelerator::cuda::downcast_arc(backend).ok_or_else(||Error::Other("DM05 native requires CUDA".into()))?;let model=super::model::Dm05Model::load(path,backend)?;Ok(LoadedModel::Vla(Box::new(super::model_runner::Dm05ModelRunner::new(model))))}
++ #[cfg(not(feature="cuda"))]{let _=(path,device,backend);Err(Error::Other("DM05 native requires CUDA feature".into()))}
++}
+diff --git a/crates/apxinf-model/src/dm05/mod.rs b/crates/apxinf-model/src/dm05/mod.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/mod.rs
+@@ -0,0 +1,8 @@
++//! DM05 base native CUDA family. Independent of other VLA families.
++//! Equations: dexmal/opendm 03f799120d425ead51d9482bb1da950b6dabade9,
++//! Transformers 5.3 Gemma3/SigLIP. Foundation Apache-2.0 license retained.
++#[cfg(feature="cuda")] pub mod backend;
++#[cfg(feature="cuda")] pub mod weights;
++#[cfg(feature="cuda")] pub mod model;
++#[cfg(feature="cuda")] pub mod model_runner;
++pub(crate) mod load;
+diff --git a/crates/apxinf-model/src/dm05/model.rs b/crates/apxinf-model/src/dm05/model.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/model.rs
+@@ -0,0 +1,66 @@
++//! DM05 forward equations only; no graph or public-request ownership.
++use super::{backend::*,weights::{Dm05Weights,Linear,Layer,Norm}};
++use apxinf_core::{Backend,DType,Device,Error,Result,Shape,Tensor};
++use half::bf16;
++use std::sync::Arc;
++pub struct Inputs {pub patches:Tensor,pub ids:Tensor,pub positions:Tensor,pub suffix_positions:Tensor,pub prefix_mask:Tensor,pub noise:Tensor,pub action_mask:Tensor}
++pub struct Workspace {pub keys:Vec<Tensor>,pub values:Vec<Tensor>,pub latent:Tensor,pub scores:Tensor,pub probability:Tensor,pub attended:Tensor,pub n:usize}
++struct Modulation {input:Vec<Tensor>,mlp:Vec<Tensor>,last:Tensor}
++pub struct Dm05Model {pub backend:Arc<CudaBackend>,pub weights:Dm05Weights,frequency:[Tensor;2],steps:Vec<Modulation>,pub eager_math:bool}
++fn invalid(s:&str)->Error{Error::Other(format!("dm05 model: {s}"))}
++pub fn alloc(ctx:&CudaContext,dtype:DType,shape:&[usize])->Result<Tensor>{let size=shape.iter().try_fold(dtype.size_in_bytes(),|a,&b|a.checked_mul(b)).ok_or_else(||invalid("allocation overflow"))?;kernels::scratch_buffer(ctx,size)?.as_tensor(Shape::new(shape.to_vec()),dtype).map_err(Error::Cuda)}
++pub fn copy(ctx:&CudaContext,x:&Tensor,y:&Tensor)->Result<()>{if x.dtype()!=y.dtype()||x.numel()!=y.numel()||x.device()!=y.device()||x.device()!=Device::Cuda(ctx.device_id()){return Err(invalid("device copy shape/dtype/device"));}CudaBuffer::from_tensor(y).map_err(Error::Cuda)?.copy_from_device_async(&CudaBuffer::from_tensor(x).map_err(Error::Cuda)?,x.size_in_bytes(),ctx.stream()).map_err(Error::Cuda)}
++fn bf(ctx:&CudaContext,x:&Tensor)->Result<Tensor>{if x.dtype()==DType::BF16{return Ok(x.clone());}let y=alloc(ctx,DType::BF16,x.shape().dims())?;kernels::linear_attention::cast_f32_to_bf16(ctx,x,&y)?;Ok(y)}
++fn fp(ctx:&CudaContext,x:&Tensor)->Result<Tensor>{if x.dtype()==DType::F32{return Ok(x.clone());}let y=alloc(ctx,DType::F32,x.shape().dims())?;kernels::linear_attention::cast_bf16_to_f32(ctx,x,&y)?;Ok(y)}
++fn lin(ctx:&CudaContext,x:&Tensor,w:&Linear)->Result<Tensor>{
++ if w.weight.dtype()==DType::F32{let x=fp(ctx,x)?;let d=x.shape().dims();let mut y=alloc(ctx,DType::F32,&[d[0],w.weight.shape().dims()[1]])?;kernels::gemm::write(ctx,DType::F32,d[0],w.weight.shape().dims()[1],d[1],1.,&CudaBuffer::from_tensor(&x).map_err(Error::Cuda)?,&CudaBuffer::from_tensor(&w.weight).map_err(Error::Cuda)?,0.,&CudaBuffer::from_tensor(&y).map_err(Error::Cuda)?)?;if let Some(b)=&w.bias{let before=y.clone();tensor_ops::bias_f32(ctx,&before,b,&mut y)?;}return Ok(y);}
++ match &w.bias{Some(b)=>kernels::gemm::bf16_bias(ctx,x,&w.weight,b),None=>kernels::gemm::bf16(ctx,x,&w.weight)}
++}
++fn norm(ctx:&CudaContext,x:&Tensor,w:&Tensor)->Result<Tensor>{kernels::linear_attention::rms_norm_plus1(ctx,x,w,1e-6)}
++fn ln(ctx:&CudaContext,x:&Tensor,w:&Norm)->Result<Tensor>{let mut y=alloc(ctx,DType::BF16,x.shape().dims())?;tensor_ops::layer_norm_welford_bf16(ctx,x,&w.weight,&w.bias,&mut y,1e-6)?;Ok(y)}
++fn mlp(ctx:&CudaContext,x:&Tensor,l:&Layer)->Result<Tensor>{let gate=lin(ctx,x,&l.gate)?;let gate=kernels::activation::gelu_tanh(ctx,&gate)?;let up=lin(ctx,x,&l.up)?;lin(ctx,&kernels::elementwise::mul(ctx,&gate,&up)?,&l.down)}
++fn gated(ctx:&CudaContext,residual:&Tensor,branch:&Tensor,style:&Tensor)->Result<Tensor>{let gate=kernels::elementwise::contiguous_rows(ctx,&style.reshape(vec![3,1024])?,2,1)?.reshape(vec![1024])?;let mut product=alloc(ctx,DType::BF16,branch.shape().dims())?;tensor_ops::broadcast_mul_bf16(ctx,branch,&gate,&mut product)?;kernels::elementwise::add(ctx,residual,&product)}
++impl Dm05Model {
++ pub fn load(path:&std::path::Path,backend:Arc<CudaBackend>)->Result<Self>{
++  if backend.context().caps().sm!=80{return Err(invalid("first BF16 native profile requires SM80"));}
++  let weights=Dm05Weights::load(path,&backend)?;let mut freq=Vec::new();for (theta,factor) in [(10000f32,1f32),(1000000f32,8f32)]{let f=(0..128).map(|i|1./theta.powf(2.*i as f32/256.)/factor).collect::<Vec<_>>();freq.push(backend.to_device(&Tensor::from_f32(vec![128],&f)?)?);}
++  let mut result=Self{backend,weights,frequency:[freq.remove(0),freq.remove(0)],steps:Vec::new(),eager_math:std::env::var_os("APXINF_DM05_EAGER_MATH").is_some()};
++  // Fixed schedule conditioning depends on weights and ten scalar times only;
++  // compute it natively once, retaining device tensors for every replay.
++  let ctx=result.backend.context();
++  for step in 0..10{let t=bf16::from_f32((1.-step as f64*0.1) as f32).to_f32();let mut e=Vec::new();for cosine in [false,true]{for i in 0..512{let period=0.004f32*1000f32.powf(i as f32/511.);let angle=((1./period)*2.*std::f32::consts::PI)*t;e.push(bf16::from_f32(if cosine{angle.cos()}else{angle.sin()}));}}
++   let e=result.backend.to_device(&Tensor::from_bf16((1,1024),&e)?)?;let cond=kernels::activation::silu(ctx,&lin(ctx,&e,&result.weights.time_in)?)?;let cond=kernels::activation::silu(ctx,&lin(ctx,&cond,&result.weights.time_out)?)?;
++   let input=result.weights.input_mod.iter().map(|w|Ok(lin(ctx,&cond,w)?.reshape(vec![3072])?)).collect::<Result<Vec<_>>>()?;
++   let mlp=result.weights.mlp_mod.iter().map(|w|Ok(lin(ctx,&cond,w)?.reshape(vec![3072])?)).collect::<Result<Vec<_>>>()?;
++   let last=lin(ctx,&cond,&result.weights.final_mod)?.reshape(vec![3072])?;result.steps.push(Modulation{input,mlp,last});
++  }Ok(result)
++ }
++ pub fn workspace(&self,n:usize)->Result<Workspace>{let ctx=self.backend.context();let mut keys=Vec::new();let mut values=Vec::new();for _ in 0..34{keys.push(alloc(ctx,DType::BF16,&[n+50,1024])?);values.push(alloc(ctx,DType::BF16,&[n+50,1024])?);}Ok(Workspace{keys,values,latent:alloc(ctx,if self.eager_math{DType::F32}else{DType::BF16},&[50,32])?,scores:alloc(ctx,DType::F32,&[1,8,n,n])?,probability:alloc(ctx,DType::BF16,&[1,8,n,n])?,attended:alloc(ctx,DType::BF16,&[1,n,8,256])?,n})}
++ fn rotary(&self,x:&Tensor,w:&Tensor,pos:&Tensor,index:usize,heads:usize)->Result<Tensor>{let ctx=self.backend.context();let n=pos.numel();let x=norm(ctx,&x.reshape(vec![n*heads,256])?,w)?.reshape(vec![n,heads,256])?;let mut y=alloc(ctx,DType::BF16,&[n,heads,256])?;tensor_ops::rotary_rounded_bf16(ctx,&x,pos,&self.frequency[usize::from((index+1)%6==0)],&mut y)?;Ok(y)}
++ fn vision(&self,input:&Inputs)->Result<Tensor>{let ctx=self.backend.context();let mut features=Vec::new();for camera in 0..3{let patches=kernels::elementwise::contiguous_rows(ctx,&input.patches,camera*1024,1024)?;
++  let mut hidden=kernels::gemm::bf16(ctx,&patches,&self.weights.patch.weight)?;hidden=kernels::elementwise::bias_bf16(ctx,&hidden,self.weights.patch.bias.as_ref())?;hidden=kernels::elementwise::add(ctx,&hidden,&self.weights.position)?;
++  for l in &self.weights.vision{let x=ln(ctx,&hidden,&l.n1)?;let q=lin(ctx,&x,&l.q)?.reshape(vec![1024,16,72])?;let k=lin(ctx,&x,&l.k)?.reshape(vec![1024,16,72])?;let v=lin(ctx,&x,&l.v)?.reshape(vec![1024,16,72])?;let a=kernels::attention::mha_bf16(ctx,&q,&k,&v,1024)?.reshape(vec![1024,1152])?;hidden=kernels::elementwise::add(ctx,&hidden,&lin(ctx,&a,&l.o)?)?;let x=ln(ctx,&hidden,&l.n2)?;let x=kernels::activation::gelu_tanh(ctx,&lin(ctx,&x,&l.fc1)?)?;hidden=kernels::elementwise::add(ctx,&hidden,&lin(ctx,&x,&l.fc2)?)?;}
++  let hidden=ln(ctx,&hidden,&self.weights.vision_norm)?.reshape(vec![1,32,32,1152])?;let mut pooled=alloc(ctx,DType::BF16,&[1,16,16,1152])?;tensor_ops::avg_pool2_bf16(ctx,&hidden,&mut pooled)?;let pooled=norm(ctx,&pooled.reshape(vec![256,1152])?,&self.weights.projector_norm)?;features.push(kernels::gemm::bf16(ctx,&pooled,&self.weights.projector)?);
++ }let f=kernels::elementwise::concat_rows_bf16(ctx,&features[0],&features[1])?;kernels::elementwise::concat_rows_bf16(ctx,&f,&features[2])}
++ pub fn forward(&self,input:&Inputs,work:&mut Workspace,image_rows:&kernels::elementwise::PreparedRowIndices)->Result<Tensor>{
++  let ctx=self.backend.context();let n=work.n;let vision=self.vision(input)?;
++  let mut hidden=alloc(ctx,DType::BF16,&[n,2560])?;apxinf_cuda_new::ops::embedding_gather(ctx,&self.weights.embedding,&input.ids,&hidden)?;
++  hidden=kernels::elementwise::scale(ctx,&hidden,bf16::from_f32(2560f32.sqrt()).to_f32())?;hidden=kernels::elementwise::scatter_rows_bf16_prepared(ctx,&hidden,image_rows,&vision,false)?;
++  for (i,l) in self.weights.prefix.iter().enumerate(){let x=norm(ctx,&hidden,&l.input)?;let q=self.rotary(&lin(ctx,&x,&l.q)?,&l.qnorm,&input.positions,i,8)?;let k=self.rotary(&lin(ctx,&x,&l.k)?,&l.knorm,&input.positions,i,4)?;let v=lin(ctx,&x,&l.v)?;
++   copy(ctx,&k.reshape(vec![n,1024])?,&kernels::elementwise::contiguous_rows(ctx,&work.keys[i],0,n)?)?;copy(ctx,&v,&kernels::elementwise::contiguous_rows(ctx,&work.values[i],0,n)?)?;
++   let q=fp(ctx,&q)?.reshape(vec![1,n,8,256])?;let k=fp(ctx,&k)?.reshape(vec![1,n,4,256])?;
++   kernels::attention::eager_staged_bf16(ctx,&q,&k,&v.reshape(vec![1,n,4,256])?,&input.prefix_mask,&mut work.scores,&mut work.probability,&mut work.attended,0.0625)?;
++   let a=lin(ctx,&work.attended.reshape(vec![n,2048])?,&l.o)?;hidden=kernels::elementwise::add(ctx,&hidden,&norm(ctx,&a,&l.post_attention)?)?;let x=norm(ctx,&hidden,&l.pre_ff)?;hidden=kernels::elementwise::add(ctx,&hidden,&norm(ctx,&mlp(ctx,&x,l)?,&l.post_ff)?)?;
++  }
++  let noise=if self.eager_math{input.noise.clone()}else{bf(ctx,&input.noise)?};copy(ctx,&noise,&work.latent)?;
++  let mask=if self.eager_math{input.action_mask.clone()}else{bf(ctx,&input.action_mask)?};
++  for step in 0..10{let style=&self.steps[step];let masked=kernels::elementwise::mul(ctx,&work.latent,&mask)?;copy(ctx,&masked,&work.latent)?;let input_weight=if self.eager_math{&self.weights.action_in}else{&self.weights.action_in_bf16};let mut hidden=bf(ctx,&lin(ctx,&work.latent,input_weight)?)?;
++   for (i,l) in self.weights.action.iter().enumerate(){let x=kernels::norm::adaptive_rms_bf16(ctx,&hidden,&style.input[i],1e-6)?;let q=self.rotary(&lin(ctx,&x,&l.q)?,&l.qnorm,&input.suffix_positions,i,8)?;let k=self.rotary(&lin(ctx,&x,&l.k)?,&l.knorm,&input.suffix_positions,i,4)?;let v=lin(ctx,&x,&l.v)?;
++    copy(ctx,&k.reshape(vec![50,1024])?,&kernels::elementwise::contiguous_rows(ctx,&work.keys[i],n,50)?)?;copy(ctx,&v,&kernels::elementwise::contiguous_rows(ctx,&work.values[i],n,50)?)?;
++    let a=kernels::attention::full_gqa_bf16(ctx,&q,&work.keys[i].reshape(vec![n+50,4,256])?,&work.values[i].reshape(vec![n+50,4,256])?)?.reshape(vec![50,2048])?;
++    let a=norm(ctx,&lin(ctx,&a,&l.o)?,&l.post_attention)?;hidden=gated(ctx,&hidden,&a,&style.input[i])?;let x=kernels::norm::adaptive_rms_bf16(ctx,&hidden,&style.mlp[i],1e-6)?;let x=norm(ctx,&mlp(ctx,&x,l)?,&l.post_ff)?;hidden=gated(ctx,&hidden,&x,&style.mlp[i])?;
++   }
++   let hidden=kernels::norm::adaptive_rms_bf16(ctx,&hidden,&style.last,1e-6)?;let output_weight=if self.eager_math{&self.weights.action_out}else{&self.weights.action_out_bf16};let velocity=lin(ctx,&hidden,output_weight)?;let delta=kernels::elementwise::scale(ctx,&velocity,-0.1)?;let next=kernels::elementwise::add(ctx,&work.latent,&delta)?;copy(ctx,&next,&work.latent)?;
++  }Ok(work.latent.clone())
++ }
++}
+diff --git a/crates/apxinf-model/src/dm05/model_runner.rs b/crates/apxinf-model/src/dm05/model_runner.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/model_runner.rs
+@@ -0,0 +1,74 @@
++//! Fixed-profile owning execution, request binding, graph and cache lifetimes.
++use super::{backend::*,model::{Dm05Model,Inputs,Workspace}};
++use crate::vla::*;
++use apxinf_core::{Backend,DType,Device,Error,Graph,NormalGenerator,SamplingBackend,Result,Shape,Tensor};
++use half::bf16;
++use std::{cell::RefCell,rc::Rc,sync::Arc};
++fn invalid(s:&str)->Error{Error::Other(format!("dm05 runtime: {s}"))}
++fn cpu_f32(t:&Tensor)->Result<Tensor>{if t.device()!=Device::Cpu{return Err(invalid("public inputs must be CPU tensors"));}Tensor::from_f32(t.shape().clone(),&t.to_f32_vec()?)}
++fn cpu_bf16(t:&Tensor)->Result<Tensor>{if t.device()!=Device::Cpu{return Err(invalid("patches must be CPU tensors"));}Tensor::from_bf16(t.shape().clone(),&t.to_f32_vec()?.into_iter().map(bf16::from_f32).collect::<Vec<_>>())}
++struct Resources {graph:Option<Box<dyn Graph>>,output:Option<Tensor>,arena:kernels::GraphWorkspace,inputs:Inputs,work:Workspace,image_rows:kernels::elementwise::PreparedRowIndices,image_offsets:Vec<usize>,normal_generator:Box<dyn NormalGenerator>}
++pub struct Dm05Prepared {resources:RefCell<Resources>,model:Rc<Dm05Model>,spec:InferenceSpec,mode:ExecutionMode,tuning_session:Arc<apxinf_cuda::tuning::TuningSession>,tuning_generation:u64}
++pub struct Dm05ModelRunner {model:Rc<Dm05Model>,prepared:RefCell<Option<Rc<Dm05Prepared>>>}
++fn bind(model:&Dm05Model,r:&mut Resources,request:&VlaRequest<'_>)->Result<()>{
++ let o=request.observation;let n=r.work.n;let backend=&model.backend;
++ if o.token_ids.len()!=n || o.token_ids.iter().any(|&v|v==0||v==7||v>=262208){return Err(invalid("first native profile requires unpadded valid no-history token IDs"));}
++ if request.metadata.attention_mask.is_some_and(|m|m.len()!=n||m.iter().any(|&x|x!=1)){return Err(invalid("first native profile requires all-visible suffix prefix keys"));}
++ let offsets=o.token_ids.iter().enumerate().filter_map(|(i,&id)|(id==262144).then_some(i)).collect::<Vec<_>>();if offsets!=r.image_offsets{return Err(invalid("image token offsets differ from prepared profile"));}
++ let patches=match &o.vision{VisionObservation::Patches(t)=>t,_=>return Err(invalid("canonical patch tensors required"))};if patches.shape().dims()!=[3072,588]{return Err(invalid("expected3x1024x588 CHW patch rows"));}
++ transfers::copy_cpu_to_cuda(&cpu_bf16(patches)?,&r.inputs.patches)?;
++ transfers::copy_cpu_to_cuda(&Tensor::from_i32(vec![n],&o.token_ids.iter().map(|&x|if x==262144{0}else{x as i32}).collect::<Vec<_>>())?,&r.inputs.ids)?;
++ let mask=if let Some(t)=&o.action_mask{let v=t.to_f32_vec()?;if v.len()==32{v.repeat(50)}else if v.len()==1600{v}else{return Err(invalid("action mask must have32or1600values"));}}else{vec![1.;1600]};
++ if mask.iter().any(|&x|x!=0.&&x!=1.){return Err(invalid("action mask must be binary"));}
++ transfers::copy_cpu_to_cuda(&Tensor::from_f32((50,32),&mask)?,&r.inputs.action_mask)?;
++ match request.initial_latent{InitialLatent::Provided(t)=>{if t.numel()!=1600{return Err(invalid("provided noise must have50x32values"));}transfers::copy_cpu_to_cuda(&cpu_f32(t)?.reshape(vec![50,32])?,&r.inputs.noise)?;},InitialLatent::Generate{rng}=>{r.normal_generator.generate(rng)?;}}
++ Ok(())
++}
++impl Dm05ModelRunner {
++ pub fn new(model:Dm05Model)->Self{Self{model:Rc::new(model),prepared:RefCell::new(None)}}
++ pub fn backend(&self)->&CudaBackend{&self.model.backend}
++ pub fn prepare_request(&self,sample:&VlaRequest<'_>,policy:ExecutionPolicy)->Result<Dm05Prepared>{
++  let spec=sample.observation.inference_spec();let n=spec.token_count;
++  if spec.image_layout.is_some()||n<768||n+50>1024{return Err(invalid("native fixed prefix must have768..974tokens"));}
++  let offsets=sample.observation.token_ids.iter().enumerate().filter_map(|(i,&id)|(id==262144).then_some(i)).collect::<Vec<_>>();if offsets.len()!=768{return Err(invalid("three images must occupy768image tokens"));}
++  let b=&self.model.backend;let device=b.device_id();let f=|shape:Vec<usize>,dtype|b.to_device(&Tensor::zeros(shape,dtype));
++  let mut groups=vec![-1i32;n];let mut group=-1;for i in 0..n{if sample.observation.token_ids[i]==262144{if i==0||sample.observation.token_ids[i-1]!=262144{group+=1;}groups[i]=group;}}
++  let mask=(0..n).flat_map(|q|{let groups=&groups;(0..n).map(move|k|i8::from(k<=q||(groups[q]>=0&&groups[q]==groups[k])))}).collect::<Vec<_>>();
++  let inputs=Inputs{patches:f(vec![3072,588],DType::BF16)?,ids:f(vec![n],DType::I32)?,positions:b.to_device(&Tensor::from_i32(vec![n],&(0..n).map(|x|x as i32).collect::<Vec<_>>())?)?,suffix_positions:b.to_device(&Tensor::from_i32(vec![50],&(n..n+50).map(|x|x as i32).collect::<Vec<_>>())?)?,prefix_mask:b.to_device(&Tensor::from_i8((1,n,n),&mask)?)?,noise:f(vec![50,32],DType::F32)?,action_mask:f(vec![50,32],DType::F32)?};
++  let rows=kernels::elementwise::prepare_row_indices(b.context(),&offsets,n)?;
++  let capacity=std::env::var("APXINF_DM05_ARENA_GIB").ok().and_then(|s|s.parse::<usize>().ok()).unwrap_or(16);
++  let normal_generator=b.create_normal_generator(inputs.noise.clone())?;
++  let mut r=Resources{graph:None,output:None,arena:kernels::GraphWorkspace::new(capacity<<30,device)?,inputs,work:self.model.workspace(n)?,image_rows:rows,image_offsets:offsets,normal_generator};
++  bind(&self.model,&mut r,sample)?;
++  kernels::prepare_with_workspace(&r.arena,||self.model.forward(&r.inputs,&mut r.work,&r.image_rows))?;b.synchronize()?;
++  let mode=if policy!=ExecutionPolicy::Eager{let (graph,output)=b.capture_graph(||kernels::with_workspace(&r.arena,||self.model.forward(&r.inputs,&mut r.work,&r.image_rows)))?;r.graph=Some(graph);r.output=Some(output);ExecutionMode::Graph}else{ExecutionMode::Eager};
++  eprintln!("[dm05] prepared {:?}; arena_used={} capacity={}",mode,r.arena.used(),r.arena.capacity());
++  let tuning_session=b.context().tuning();let tuning_generation=tuning_session.generation();
++  Ok(Dm05Prepared{resources:RefCell::new(r),model:Rc::clone(&self.model),spec,mode,tuning_session,tuning_generation})
++ }
++}
++impl Dm05Prepared {pub fn arena_used(&self)->usize{self.resources.borrow().arena.used()}fn is_current(&self)->bool{let current=self.model.backend.context().tuning();Arc::ptr_eq(&current,&self.tuning_session)&&current.generation()==self.tuning_generation}}
++impl Drop for Dm05Prepared{fn drop(&mut self){let _=self.model.backend.synchronize();}}
++impl PreparedInference for Dm05Prepared {
++ fn spec(&self)->&InferenceSpec{&self.spec}
++ fn status(&self)->PreparationStatus{if self.is_current(){PreparationStatus::Ready{mode:self.mode,fallback_reason:None}}else{PreparationStatus::Invalidated}}
++ fn run(&self,request:&VlaRequest<'_>)->Result<Action>{
++  if !self.is_current(){return Err(invalid("prepared graph is stale after tuning session/generation change"));}
++  if !self.spec.matches(request.observation){return Err(invalid("request shape differs from prepared profile"));}
++  let mut r=self.resources.try_borrow_mut().map_err(|_|invalid("prepared runs must be serialized"))?;
++  self.model.backend.synchronize()?;bind(&self.model,&mut r,request)?;
++  if let Some(g)=&r.graph{g.replay()?;return Ok(Action::new(r.output.as_ref().unwrap().clone()));}
++  let Resources{arena,inputs,work,image_rows,..}=&mut *r;
++  kernels::with_workspace(arena,||self.model.forward(inputs,work,image_rows)).map(Action::new)
++ }
++}
++impl VlaRuntime for Dm05ModelRunner {
++ fn model_variant(&self)->Option<&'static str>{Some("bf16")}
++ fn contract(&self)->VlaContract{VlaContract{action_shape:[50,32],patch_shape:[3072,588],max_token_len:974,num_views:3,image_size:448,patch_size:14,accepts_rgb_u8:false}}
++ fn infer(&self,request:&VlaRequest<'_>)->Result<Action>{let plan=self.prepared.borrow().as_ref().filter(|p|p.is_current()&&p.spec.matches(request.observation)).cloned();let p=if let Some(p)=plan{p}else{let p=Rc::new(self.prepare_request(request,ExecutionPolicy::RequireGraph)?);*self.prepared.borrow_mut()=Some(Rc::clone(&p));p};p.run(request)}
++ fn prepare(&self,_:&InferenceSpec)->Result<Box<dyn PreparedInference>>{Err(invalid("use prepare_for with actual image token offsets"))}
++ fn prepare_for(&self,sample:&VlaRequest<'_>,policy:ExecutionPolicy)->Result<Box<dyn PreparedInference>>{Ok(Box::new(self.prepare_request(sample,policy)?))}
++ fn clear_prepared(&self)->Result<()>{self.model.backend.synchronize()?;self.prepared.borrow_mut().take();Ok(())}
++ fn execution_mode(&self)->&'static str{if self.prepared.borrow().is_some(){"graph"}else{"unprepared"}}
++ fn infer_host_f32(&self,r:&VlaRequest<'_>)->Result<Vec<f32>>{let a=self.infer(r)?;self.model.backend.to_cpu(a.tensor())?.to_f32_vec()}
++}
+diff --git a/crates/apxinf-model/src/dm05/weights.rs b/crates/apxinf-model/src/dm05/weights.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/apxinf-model/src/dm05/weights.rs
+@@ -0,0 +1,68 @@
++//! Explicit checkpoint mapping and immutable physical device representations.
++use super::backend::CudaBackend;
++use apxinf_core::{Backend,DType,Device,Error,Result,Tensor};
++use half::bf16;
++use std::{collections::HashMap,path::Path};
++pub struct Linear {pub weight:Tensor,pub bias:Option<Tensor>}
++pub struct Norm {pub weight:Tensor,pub bias:Tensor}
++pub struct VisionLayer {pub n1:Norm,pub n2:Norm,pub q:Linear,pub k:Linear,pub v:Linear,pub o:Linear,pub fc1:Linear,pub fc2:Linear}
++pub struct Layer {pub input:Tensor,pub post_attention:Tensor,pub pre_ff:Tensor,pub post_ff:Tensor,pub qnorm:Tensor,pub knorm:Tensor,pub q:Linear,pub k:Linear,pub v:Linear,pub o:Linear,pub gate:Linear,pub up:Linear,pub down:Linear}
++pub struct Dm05Weights {
++ pub patch:Linear,pub position:Tensor,pub vision:Vec<VisionLayer>,pub vision_norm:Norm,pub projector_norm:Tensor,pub projector:Tensor,pub embedding:Tensor,
++ pub prefix:Vec<Layer>,pub action:Vec<Layer>,pub input_mod:Vec<Linear>,pub mlp_mod:Vec<Linear>,pub final_mod:Linear,
++ pub time_in:Linear,pub time_out:Linear,pub action_in:Linear,pub action_out:Linear,pub action_in_bf16:Linear,pub action_out_bf16:Linear,
++}
++fn err(s:impl Into<String>)->Error{Error::Other(format!("dm05 weights: {}",s.into()))}
++struct Loader<'a>{map:HashMap<String,Tensor>,backend:&'a CudaBackend}
++impl Loader<'_>{
++ fn take(&mut self,name:&str,shape:&[usize])->Result<Tensor>{
++  let t=self.map.remove(name).ok_or_else(||err(format!("missing {name}")))?;
++  if t.device()!=Device::Cpu || t.dtype()!=DType::BF16 || t.shape().dims()!=shape{return Err(err(format!("{name} expected BF16 {shape:?}, got {} {:?}",t.dtype(),t.shape().dims())));}
++  Ok(t)
++ }
++ fn tensor(&mut self,name:&str,shape:&[usize])->Result<Tensor>{let t=self.take(name,shape)?;self.backend.to_device(&t)}
++ fn linear(&mut self,name:&str,input:usize,output:usize,bias:bool,f32_weight:bool)->Result<Linear>{
++  let t=self.take(&format!("{name}.weight"),&[output,input])?;
++  let v=t.as_bf16()?;let mut packed=vec![bf16::ZERO;v.len()];
++  for i in 0..output{for j in 0..input{packed[j*output+i]=v[i*input+j];}}
++  let w=if f32_weight{Tensor::from_f32((input,output),&packed.iter().map(|v|v.to_f32()).collect::<Vec<_>>())?}else{Tensor::from_bf16((input,output),&packed)?};
++  let b=if bias{let b=self.take(&format!("{name}.bias"),&[output])?;Some(self.backend.to_device(&if f32_weight{Tensor::from_f32(vec![output],&b.to_f32_vec()?)?}else{b})?)}else{None};
++  Ok(Linear{weight:self.backend.to_device(&w)?,bias:b})
++ }
++ fn norm(&mut self,name:&str,width:usize)->Result<Norm>{Ok(Norm{weight:self.tensor(&format!("{name}.weight"),&[width])?,bias:self.tensor(&format!("{name}.bias"),&[width])?})}
++ fn layer(&mut self,name:&str,d:usize,ff:usize)->Result<Layer>{
++  Ok(Layer{input:self.tensor(&format!("{name}.input_layernorm.weight"),&[d])?,post_attention:self.tensor(&format!("{name}.post_attention_layernorm.weight"),&[d])?,pre_ff:self.tensor(&format!("{name}.pre_feedforward_layernorm.weight"),&[d])?,post_ff:self.tensor(&format!("{name}.post_feedforward_layernorm.weight"),&[d])?,
++   qnorm:self.tensor(&format!("{name}.self_attn.q_norm.weight"),&[256])?,knorm:self.tensor(&format!("{name}.self_attn.k_norm.weight"),&[256])?,
++   q:self.linear(&format!("{name}.self_attn.q_proj"),d,2048,false,false)?,k:self.linear(&format!("{name}.self_attn.k_proj"),d,1024,false,false)?,v:self.linear(&format!("{name}.self_attn.v_proj"),d,1024,false,false)?,o:self.linear(&format!("{name}.self_attn.o_proj"),2048,d,false,false)?,
++   gate:self.linear(&format!("{name}.mlp.gate_proj"),d,ff,false,false)?,up:self.linear(&format!("{name}.mlp.up_proj"),d,ff,false,false)?,down:self.linear(&format!("{name}.mlp.down_proj"),ff,d,false,false)?})
++ }
++}
++impl Dm05Weights {
++ pub fn load(path:&Path,backend:&CudaBackend)->Result<Self>{
++  let root=if path.is_dir(){path}else{path.parent().unwrap_or(Path::new("."))};
++  let c:serde_json::Value=serde_json::from_slice(&std::fs::read(root.join("config.json")).map_err(|e|err(e.to_string()))?).map_err(|e|err(e.to_string()))?;
++  for (ptr,value) in [("/action_dim",32),("/chunk_size",50),("/action_config/hidden_size",1024),("/action_config/num_hidden_layers",34),("/vlm_config/text_config/hidden_size",2560),("/vlm_config/text_config/num_hidden_layers",34),("/vlm_config/vision_config/image_size",448),("/vlm_config/vision_config/num_hidden_layers",27)]{if c.pointer(ptr).and_then(|v|v.as_u64())!=Some(value){return Err(err(format!("unsupported config {ptr}")));}}
++  for (ptr,value) in [("/action_config/head_dim",256),("/action_config/num_attention_heads",8),("/action_config/num_key_value_heads",4),("/action_config/intermediate_size",4096),("/vlm_config/text_config/head_dim",256),("/vlm_config/text_config/num_attention_heads",8),("/vlm_config/text_config/num_key_value_heads",4),("/vlm_config/text_config/intermediate_size",10240),("/vlm_config/vision_config/hidden_size",1152),("/vlm_config/vision_config/intermediate_size",4304),("/vlm_config/vision_config/num_attention_heads",16),("/vlm_config/vision_config/patch_size",14),("/vlm_config/mm_tokens_per_image",256)]{if c.pointer(ptr).and_then(|v|v.as_u64())!=Some(value){return Err(err(format!("unsupported config {ptr}")));}}
++  for branch in ["action_config","vlm_config/text_config"]{let p=format!("/{branch}");let types=c.pointer(&format!("{p}/layer_types")).and_then(|v|v.as_array()).ok_or_else(||err("missing Gemma3 layer types"))?;if types.len()!=34||types.iter().enumerate().any(|(i,v)|v.as_str()!=Some(if(i+1)%6==0{"full_attention"}else{"sliding_attention"})){return Err(err("unsupported full/sliding layer order"));}for (suffix,value) in [("rms_norm_eps",1e-6),("rope_parameters/sliding_attention/rope_theta",10000.),("rope_parameters/full_attention/rope_theta",1000000.),("rope_parameters/full_attention/factor",8.)]{if c.pointer(&format!("{p}/{suffix}")).and_then(|v|v.as_f64())!=Some(value){return Err(err(format!("unsupported {branch}/{suffix}")));}}}
++  let (map,_)=apxinf_loader::safetensors::load_native_path(path).map_err(|e|err(e.to_string()))?;let mut l=Loader{map,backend};
++  let vp="model.vlm.model.vision_tower.vision_model";
++  let pw=l.take(&format!("{vp}.embeddings.patch_embedding.weight"),&[1152,3,14,14])?.reshape(vec![1152,588])?;
++  l.map.insert(format!("{vp}.embeddings.patch_embedding.weight"),pw);
++  let patch=l.linear(&format!("{vp}.embeddings.patch_embedding"),588,1152,true,false)?;
++  let position=l.tensor(&format!("{vp}.embeddings.position_embedding.weight"),&[1024,1152])?;
++  let mut vision=Vec::new();for i in 0..27{let p=format!("{vp}.encoder.layers.{i}");vision.push(VisionLayer{n1:l.norm(&format!("{p}.layer_norm1"),1152)?,n2:l.norm(&format!("{p}.layer_norm2"),1152)?,q:l.linear(&format!("{p}.self_attn.q_proj"),1152,1152,true,false)?,k:l.linear(&format!("{p}.self_attn.k_proj"),1152,1152,true,false)?,v:l.linear(&format!("{p}.self_attn.v_proj"),1152,1152,true,false)?,o:l.linear(&format!("{p}.self_attn.out_proj"),1152,1152,true,false)?,fc1:l.linear(&format!("{p}.mlp.fc1"),1152,4304,true,false)?,fc2:l.linear(&format!("{p}.mlp.fc2"),4304,1152,true,false)?});}
++  let vision_norm=l.norm(&format!("{vp}.post_layernorm"),1152)?;
++  let projector_norm=l.tensor("model.vlm.model.multi_modal_projector.mm_soft_emb_norm.weight",&[1152])?;
++  let projector=l.tensor("model.vlm.model.multi_modal_projector.mm_input_projection_weight",&[1152,2560])?;
++  let embedding=l.tensor("model.vlm.model.language_model.embed_tokens.weight",&[262208,2560])?;
++  let mut prefix=Vec::new();let mut action=Vec::new();let mut input_mod=Vec::new();let mut mlp_mod=Vec::new();
++  for i in 0..34{prefix.push(l.layer(&format!("model.vlm.model.language_model.layers.{i}"),2560,10240)?);action.push(l.layer(&format!("model.action_expert.layers.{i}"),1024,4096)?);input_mod.push(l.linear(&format!("model.action_expert.input_time_modulators.{i}"),1024,3072,true,false)?);mlp_mod.push(l.linear(&format!("model.action_expert.mlp_time_modulators.{i}"),1024,3072,true,false)?);}
++  for p in ["model.action_in_proj","model.action_out_proj"]{for suffix in ["weight","bias"]{let k=format!("{p}.{suffix}");let t=l.map.get(&k).ok_or_else(||err(format!("missing {k}")))?.clone();l.map.insert(format!("{p}_bf16.{suffix}"),t);}}
++  let result=Self{patch,position,vision,vision_norm,projector_norm,projector,embedding,prefix,action,input_mod,mlp_mod,final_mod:l.linear("model.action_expert.final_time_modulator",1024,3072,true,false)?,time_in:l.linear("model.time_mlp_in",1024,1024,true,false)?,time_out:l.linear("model.time_mlp_out",1024,1024,true,false)?,action_in:l.linear("model.action_in_proj",32,1024,true,true)?,action_out:l.linear("model.action_out_proj",1024,32,true,true)?,action_in_bf16:l.linear("model.action_in_proj_bf16",32,1024,true,false)?,action_out_bf16:l.linear("model.action_out_proj_bf16",1024,32,true,false)?};
++  // These norms do not influence action generation: prefix final output is
++  // discarded; adaptive final norm explicitly ignores its learned weight.
++  for name in ["model.vlm.model.language_model.norm.weight","model.action_expert.norm.weight","model.vlm.lm_head.weight"]{l.map.remove(name);}
++  if !l.map.is_empty(){return Err(err(format!("unmapped checkpoint tensors {:?}",l.map.keys().collect::<Vec<_>>())));}
++  Ok(result)
++ }
++}
+diff --git a/crates/apxinf-model/src/lib.rs b/crates/apxinf-model/src/lib.rs
+--- a/crates/apxinf-model/src/lib.rs
++++ b/crates/apxinf-model/src/lib.rs
+@@ -4,6 +4,7 @@
+ pub mod auto;
+ pub mod builtin;
+ pub mod debug;
++pub mod dm05;
+ mod generation_config;
+ pub mod gr00t;
+ pub mod hyvla;
+diff --git a/crates/apxinf-py/src/lib.rs b/crates/apxinf-py/src/lib.rs
+--- a/crates/apxinf-py/src/lib.rs
++++ b/crates/apxinf-py/src/lib.rs
+@@ -1052,7 +1052,7 @@
+         embodiment_id,
+         noise=None,
+         *, num_steps=None, max_new_tokens=None, min_new_tokens=0,
+-        terminator_ids=None, closing_ids=None,
++        terminator_ids=None, closing_ids=None, action_mask=None,
+     ))]
+     #[allow(clippy::too_many_arguments)]
+     fn infer_preprocessed<'py>(
+@@ -1070,8 +1070,9 @@
+         min_new_tokens: usize,
+         terminator_ids: Option<Vec<u32>>,
+         closing_ids: Option<Vec<u32>>,
++        action_mask: Option<PyReadonlyArray2<'py, f32>>,
+     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+-        let input = self.preprocessed_vla_input(
++        let mut input = self.preprocessed_vla_input(
+             "_infer_preprocessed",
+             pixel_values,
+             image_grid_thw,
+@@ -1081,6 +1082,7 @@
+             embodiment_id,
+             noise,
+         )?;
++        input.observation.action_mask = action_mask.map(|mask|self.action_mask_tensor(mask)).transpose()?;
+         use apxinf_model::vla::{PlanningOptions, ReasoningOptions};
+         let reasoning = match max_new_tokens {
+             Some(max_new_tokens) => Some(ReasoningOptions {
+diff --git a/doc/dm05.md b/doc/dm05.md
+new file mode 100644
+--- /dev/null
++++ b/doc/dm05.md
+@@ -0,0 +1,89 @@
++# DM05 base: experimental ApxInf-native fixed-profile implementation
++
++**PUBLIC post-measurement documentation, not new execution evidence.** Runtime
++source bytes in this delta retain the job329543 hashes recorded in the source
++manifest. This document supersedes the earlier build-time notes but was not
++executed, rebuilt, patch-applied or reviewed as a correctness gate.
++
++## Scope and ownership
++
++The `dm05` family has independent `weights.rs`, `model.rs`, `model_runner.rs`,
++`backend.rs` and `load.rs` modules. It does not import another model-family
++directory. The existing native `ModelRunner` binding and Python `Dm05Policy`
++connect author CPU input/output transforms to Rust/CUDA model computation.
++No Torch model, Torch graph or external inference engine is the native model.
++
++Supported measured tuple: A800-SXM4-80GB SM80, CUDA12.8 build target, BF16,
++batch1, three448x448 images, no history, unpadded prefix882or876, ten Euler
++steps, horizon50,32internal and14public actions. Source rejects padded/history
++profiles and prefix lengths above974. Other hardware/profiles are not accepted
++by this result. GPU driver version was not recorded in job329543 evidence;
++do not substitute a driver from an older build or another allocation.
++
++The model owns SigLIP27, 2x2 pooling and Gemma3 projection; Gemma3 prefix34 with
++four plus-one RMS norms, QK norm before half-split RoPE and image-block masks;
++and action34 with time AdaRMS, branch post-norms, BF16 gates and full10step flow.
++The safe CUDA facade supplies GEMM, FA2, normalization and tensor operations.
++Missing rounded rotary/pool/FP32-bias/score-rounding operations were added in
++this isolated backend snapshot, not to the author's implementation.
++
++Weights and packing have loaded-model lifetime. Schedule-derived modulation
++tensors are computed natively once and retained. Prepared inputs, masks,
++prefix KV, latent state and graph arena have owning runtime lifetime. Request
++values are copied into stable buffers; model computation and segment handoff
++remain on GPU until explicit public output download. Public preprocessing,
++token/state construction and action reconstruction are CPU policy work, not
++CPU model layers. Independent transfer tracing and lifetime tests were not run.
++
++## Author arithmetic and public wrapper boundaries
++
++The author's warmed suffix graph has BF16 Linear and persistent BF16 state;
++its first eager suffix uses FP32 action projection/Euler helpers. Job329543
++used the warmed BF16 branch, matching author329331's two captured profiles and
++zero disabled profiles. `APXINF_DM05_EAGER_MATH=1` selects an unmeasured alternate
++source path, not another result from this campaign.
++
++Native public inputs are canonical CPU patch rows, token IDs, action mask and
++provided noise. Formal fixture storage encodes token IDs below262208 exactly
++as F32 because the existing fixture reader lacks I32; the driver decodes u32
++and the runtime still uploads native I32. No precision threshold was changed.
++The policy uses the author's CPU resize/tokenization/normalization and final
++absolute-action transforms. It does not construct the author's Torch model.
++
++Native noise was the author's saved exact BF16 tensor, including upload in
++native timing. The author timing includes CUDA RNG generation. This boundary
++difference must accompany the nominal full-policy latency ratio. Neither
++canonical-CPU-to-normalized-CPU timing nor policy wall time is pure graph replay.
++
++## Actual formal result, not release acceptance
++
++Author source: dexmal/opendm `03f799120d425ead51d9482bb1da950b6dabade9`.
++Checkpoint: Dexmal/DM05 base `5cd18734814abb075a9ccfd9ad6d16777b5cf10e`.
++Reference job329331; native/public job329543 COMPLETED0:0 in2m25s.
++
++Forty full-policy samples: author median277.657942ms/mean277.5912135ms/
++p95278.9247174ms; native median149.352156ms/mean149.3726382ms/
++p95150.10012425ms. Nominal median ratio1.85908225x, with the noise/RNG caveat.
++Native canonical CPU input to normalized CPU output median139.0278145ms;
++it is not directly scope-compatible with author's267.1750877ms GPU-inner value.
++
++All four complete public14 cases meet original relL2<=0.05 and cosine>=0.999.
++Worst relL2 .009324395491569158; minimum cosine .9999608551974092;
++max absolute error .0156019926071167. Saved repetitions are exactly stable,
++core-decoded/public outputs agree, and changed seed/state/prompt change outputs.
++These are saved-output arithmetic facts, not independent operator or robot gates.
++
++Cold public setup45.151212521s is slower than author17.097278s. Whole-model
++arena used at most9,393,563,008bytes with17,179,869,184bytes reserved; this is
++not peak GPU memory. Packing/setup cost and arena capacity remain performance
++debt. No stage shares or gains from future changes were measured.
++
++No tests, smoke tests, kernel gates, extra reviews or closed-loop evaluation
++were run. Eager/graph parity and generated-noise public RNG are not exercised
++by the provided-noise evidence. This is experimental, not a general release or
++deployment acceptance. The public delta is NOT self-contained from clean
++`7f37642`; it depends on separately identified private dirty foundation content.
++The dirty foundation, assets and raw evidence are not published in this delta.
++
++See `python/apxinf/examples/dm05_experimental/README.md` for post-measurement,
++NOT-RUN portable adapters. Their presence grants no new GPU execution authority.
+diff --git a/doc/model-layer-architecture.md b/doc/model-layer-architecture.md
+--- a/doc/model-layer-architecture.md
++++ b/doc/model-layer-architecture.md
+@@ -120,6 +120,7 @@
+ | PI0.5 / `VlaRuntime` | `model/`, `model_runner/`, `weights/`; explicit preparation policy/status, stale-plan checks and retained-resource tests; `model_variant` selects `auto`, `bf16`, `fp8_static`, `int8_dynamic` |
+ | Qwen-Drive / `VlaRuntime` | Planning-only `model/`, `model_runner/`, `weights/`; one BF16 Blocks file; direct planning prepares the whole model and replays a captured graph, while variable-length reasoning stays eager with local GDN graphs. See [benchmark and runtime notes](qwen-drive-benchmark.md). |
+ | Hy-VLA / `VlaRuntime` | `hyvla/model/`, `model_runner/`, `weights/`, `load.rs`; A800/SM80 BF16 K6/H40/10step whole-model graph; explicit preparation, Generated/Provided RNG and stale-plan checks. Public policy is an explicitly normalized research interface. See [Hy-VLA contract](hyvla.md). |
++| DM05 / `VlaRuntime` | Independent `dm05/{model,model_runner,weights,load}.rs`; experimental SM80 base BF16 fixed no-history profile; formal acceptance is pending, not inherited from other families. See [DM05](dm05.md). |
+ | WallOSS / `VlaRuntime` | Existing `bf16_runtime.rs`, `bf16_executor.rs`, `fp8.rs` and weight files; not migrated to PI0.5's runner/variant or explicit preparation contract |
+ | GR00T / `VlaRuntime` | Existing `vla_runtime.rs`, `executor.rs`, precision runtime/executor files and private `backbone/`; not migrated to PI0.5's explicit preparation contract |
+ | Llama, Qwen3-VL / `LlmTrait` | Existing `general.rs` and family-specific state/decode graph paths; shared autoregressive generation remains in `LlmTrait`, not the VLA runner |
+diff --git a/python/apxinf/apxinf/policies/__init__.py b/python/apxinf/apxinf/policies/__init__.py
+--- a/python/apxinf/apxinf/policies/__init__.py
++++ b/python/apxinf/apxinf/policies/__init__.py
+@@ -39,7 +39,7 @@
+ from .registry import available_policies, get_policy, register_policy
+ 
+ # Concrete model policies (importing registers them under their model_type).
+-from .impls import Pi05Policy, Pi0FastPolicy, Gr00tPolicy, QwenDrivePolicy, WallossPolicy, HyVlaPolicy
++from .impls import Pi05Policy, Pi0FastPolicy, Gr00tPolicy, QwenDrivePolicy, WallossPolicy, HyVlaPolicy, Dm05Policy
+ 
+ __all__ = [
+     "Policy",
+@@ -59,4 +59,5 @@
+     "QwenDrivePolicy",
+     "WallossPolicy",
+     "HyVlaPolicy",
++    "Dm05Policy",
+ ]
+diff --git a/python/apxinf/apxinf/policies/impls/__init__.py b/python/apxinf/apxinf/policies/impls/__init__.py
+--- a/python/apxinf/apxinf/policies/impls/__init__.py
++++ b/python/apxinf/apxinf/policies/impls/__init__.py
+@@ -25,5 +25,6 @@
+ from .qwen_drive import QwenDrivePolicy
+ from .walloss import WallossPolicy
+ from .hyvla import HyVlaPolicy
++from .dm05 import Dm05Policy
+ 
+-__all__ = ["Pi05Policy", "Pi0FastPolicy", "Gr00tPolicy", "QwenDrivePolicy", "WallossPolicy", "HyVlaPolicy"]
++__all__ = ["Pi05Policy", "Pi0FastPolicy", "Gr00tPolicy", "QwenDrivePolicy", "WallossPolicy", "HyVlaPolicy", "Dm05Policy"]
+diff --git a/python/apxinf/apxinf/policies/impls/dm05.py b/python/apxinf/apxinf/policies/impls/dm05.py
+new file mode 100644
+--- /dev/null
++++ b/python/apxinf/apxinf/policies/impls/dm05.py
+@@ -0,0 +1,86 @@
++"""DM05 base policy: author CPU transforms -> ApxInf-native Rust/CUDA model.
++
++The optional OpenDM dependency supplies only CPU public input/output transforms.
++No Torch model, Torch graph or external inference engine is constructed here.
++"""
++from __future__ import annotations
++
++import time
++from pathlib import Path
++import numpy as np
++from ..registry import register_policy
++
++
++@register_policy("dm05")
++class Dm05Policy:
++    @classmethod
++    def from_pretrained(cls, checkpoint_dir, *, model_runner=None,
++                        preprocessing=None, norm_stats_path=None,
++                        device="cuda:0", sampling_seed=0, model_variant="bf16"):
++        root = Path(checkpoint_dir)
++        if model_variant not in ("bf16", "auto"):
++            raise ValueError("DM05 base native supports BF16 only")
++        if preprocessing is None:
++            if norm_stats_path is None:
++                norm_stats_path = root / "norm_stats.json"
++            # The official preprocessing-only constructor does not load or move
++            # any model. It returns CPU tensors; all model execution is native.
++            from opendm.exp.dm05_exp import DM05InferenceConfig
++            preprocessing = DM05InferenceConfig()
++            preprocessing._initialize_preprocessing(
++                model_name_or_path=str(root), norm_stats_path=str(norm_stats_path),
++                n_bins=256, transform_max_length=1024, use_absolute_action=True,
++                add_state=True, is_history=False, device="cpu")
++        if model_runner is None:
++            from apxinf import ModelRunner
++            model_runner = ModelRunner.load("dm05", root, device=device,
++                precision="bf16", model_variant="bf16", sampling_seed=sampling_seed)
++        if model_runner.action_horizon != 50 or model_runner.action_dim != 32:
++            raise ValueError("DM05 native runner must produce50x32 normalized actions")
++        return cls(model_runner, preprocessing)
++
++    def __init__(self, model_runner, preprocessing):
++        self.model_runner, self.preprocessing = model_runner, preprocessing
++        self.action_horizon, self.action_dim = 50, 14
++        self.metadata = {"model_type": "dm05", "model_variant": "bf16",
++            "action_horizon": 50, "action_dim": 14, "state_dim": 14,
++            "history_length": 0, "execution": "ApxInf-native Rust CUDA",
++            "action_domain": "author absolute public14"}
++
++    def infer(self, observation, *, noise=None):
++        start = time.perf_counter()
++        p = self.preprocessing
++        data = p._prepare_model_input(text=observation["prompt"],
++            images=observation["images"], states=observation["state"],
++            robot_type=observation.get("robot_type", "DOS W1"))
++        state = np.array(data["state"], copy=True)
++        inputs = p.input_transform(data)
++        pixels = inputs["pixel_values"].detach().cpu().float().numpy()
++        if pixels.shape != (3, 3, 448, 448):
++            raise ValueError("DM05 native supports exactly three448x448 images and no history")
++        # CHW convolution K order; native runtime rounds public F32 patches BF16.
++        patches = np.ascontiguousarray(pixels.reshape(3,3,32,14,32,14)
++            .transpose(0,2,4,1,3,5).reshape(3072,588))
++        ids = np.ascontiguousarray(inputs["input_ids"].detach().cpu().numpy().reshape(-1), dtype=np.uint32)
++        visibility = np.ascontiguousarray(inputs["attention_mask"].detach().cpu().numpy().reshape(-1), dtype=np.uint8)
++        if not visibility.all() or np.any((ids == 0) | (ids == 7)):
++            raise ValueError("first native DM05 profile requires unpadded no-history requests")
++        types = inputs["token_type_ids"].detach().cpu().numpy().reshape(-1)
++        if not np.array_equal(types == 1, ids == 262144):
++            raise ValueError("unsupported Gemma3 image token type layout")
++        mask = np.zeros((50,32), dtype=np.float32); mask[:,:14] = 1
++        if noise is not None:
++            noise = np.ascontiguousarray(noise, dtype=np.float32).reshape(50,32)
++        model_start = time.perf_counter()
++        normalized = self.model_runner._infer_preprocessed(patches,
++            np.array([[1,32,32]]*3, dtype=np.uint32), ids, visibility,
++            np.zeros((1,32), dtype=np.float32), None, noise, action_mask=mask)
++        model_ms = (time.perf_counter()-model_start)*1000
++        normalized = np.asarray(normalized, dtype=np.float32).reshape(50,32)
++        if not np.isfinite(normalized).all():
++            raise RuntimeError("non-finite DM05 native output")
++        outputs = p.output_transform({"action": normalized[:,:14].copy(),
++            "state": state, "meta_data": data["meta_data"]})
++        actions = np.ascontiguousarray(outputs["action"], dtype=np.float32)
++        return {"actions": actions, "action_domain": "author absolute public14",
++            "timing": {"model_ms": model_ms, "total_ms": (time.perf_counter()-start)*1000}}
+diff --git a/python/apxinf/examples/dm05_experimental/README.md b/python/apxinf/examples/dm05_experimental/README.md
+new file mode 100644
+--- /dev/null
++++ b/python/apxinf/examples/dm05_experimental/README.md
+@@ -0,0 +1,89 @@
++# DM05 portable source adapters (PUBLIC, post-measurement, NOT RUN)
++
++These adapters were curated after job329543. They are not its private task
++scripts, have not been executed/rebuilt/imported during packaging, and must not
++be relabelled as measured script bytes. The Rust benchmark, runtime, binding and
++policy source hashes remain the measured ones. No environments, asset data,
++raw inputs/actions, binaries, archives or submission scripts are distributed.
++
++## External prerequisites
++
++The source delta requires the separately supplied archived private Hy foundation,
++including its uncommitted content. It is not a clean7f37642/self-contained build.
++Obtain the official source/checkpoint under their own terms; retain all licenses
++and notices. Callers supply compatible Rust/CUDA/Python/native build dependencies
++and the optional official OpenDM CPU transform dependencies. This helper set
++does not install dependencies, download assets, reserve devices or submit jobs.
++
++Use explicit caller-owned locations represented by these environment variables:
++
++```bash
++export APXINF_ROOT="${PATCHED_SOURCE_ROOT:?}"
++export CARGO_TARGET_DIR="${OWNED_BUILD_OUTPUT:?}"
++export CUDA_HOME="${CUDA_TOOLKIT_ROOT:?}"
++export PYO3_PYTHON="${COMPATIBLE_PYTHON_INTERPRETER:?}"
++export APXINF_CUDA_ARCH=sm_80
++export CHECKPOINT="${DM05_BASE_CHECKPOINT:?}"
++export REFERENCE="${COMPLETED_OFFICIAL_RESULT_DIRECTORY:?}"
++export INPUTS="${NEW_OWNED_FORMAL_INPUT_DIRECTORY:?}"
++export CORE_OUTPUT="${NEW_OWNED_CORE_OUTPUT_DIRECTORY:?}"
++export POLICY_OUTPUT="${NEW_OWNED_POLICY_OUTPUT_DIRECTORY:?}"
++export OPENDM_ROOT="${OFFICIAL_SOURCE_ROOT:?}"
++```
++
++The completed reference must provide the four named case directories, prepared
++CPU tensors, exact BF16 initial noise, complete public actions and root metadata.
++These artifacts are private external inputs, not included examples. Do not
++regenerate noise and call it the recorded reference. Inspect actual suffix graph
++status: the measured reference used hot BF16 graph arithmetic, not eager FP32.
++
++## CPU-only serialization and build-only commands
++
++The new input directory must not already contain case subdirectories.
++
++```bash
++HELPERS="$APXINF_ROOT/python/apxinf/examples/dm05_experimental"
++"$PYO3_PYTHON" "$HELPERS/prepare_inputs.py" --reference "$REFERENCE" --output "$INPUTS"
++bash "$HELPERS/build_native.sh"
++```
++
++The serializer performs CPU layout/dtype conversion of saved tensors only. The
++build helper compiles/links but does not import the extension, execute the
++benchmark, run tests or submit jobs. Configure an already available native
++module search directory explicitly after building; no environment is bundled.
++
++## Actual inference commands require separate authority and allocation
++
++**This source handoff authorizes no additional GPU work.** If independently
++authorized later, run model commands only within an allocated GPU step. The
++native driver and public benchmark enforce allocation environment markers.
++Use default warmed BF16 math; do not set `APXINF_DM05_EAGER_MATH` for reproducing
++the recorded branch.
++
++```bash
++export PYTHONPATH="${NATIVE_MODULE_DIRECTORY:?}:$APXINF_ROOT/python/apxinf:$OPENDM_ROOT${PYTHONPATH:+:$PYTHONPATH}"
++"$CARGO_TARGET_DIR/release/examples/dm05_benchmark" "$CHECKPOINT" "$INPUTS" "$CORE_OUTPUT"
++"$PYO3_PYTHON" "$HELPERS/decode_core.py" --reference "$REFERENCE" --native "$CORE_OUTPUT" --checkpoint "$CHECKPOINT"
++"$PYO3_PYTHON" "$HELPERS/benchmark_policy.py" --reference "$REFERENCE" --checkpoint "$CHECKPOINT" --source "$OPENDM_ROOT" --output "$POLICY_OUTPUT"
++```
++
++CPU decode uses official public normalization/action reconstruction, not model
++inference. It requires the official source/dependencies visible on the Python
++search path. Inputs are three images plus public state/prompt; the measured
++model has no history or padded-prefix support. Output is complete50x14 absolute
++CPU actions; internal model width is32. The native core boundary includes
++canonical CPU upload/download and must not be called pure graph latency.
++
++## Saved-output arithmetic only
++
++These commands construct no model and require no GPU allocation:
++
++```bash
++"$PYO3_PYTHON" "$HELPERS/compare_saved.py" --reference "$REFERENCE" --core "$CORE_OUTPUT" --public "$POLICY_OUTPUT" --output "${ARITHMETIC_REPORT:?}"
++"$PYO3_PYTHON" "$HELPERS/summarize_saved.py" --reference "$REFERENCE" --core "$CORE_OUTPUT" --public "$POLICY_OUTPUT" --output "${SUMMARY_REPORT:?}"
++```
++
++No commands above were run during packaging. The actual job329543 evidence is
++summarized separately in the public aggregate result and source manifest. Formal
++output budget is unchanged: relL2<=0.05 and cosine>=0.999. Public timing must
++disclose that native uses saved noise while author timing includes CUDA RNG.
+diff --git a/python/apxinf/examples/dm05_experimental/benchmark_policy.py b/python/apxinf/examples/dm05_experimental/benchmark_policy.py
+new file mode 100644
+--- /dev/null
++++ b/python/apxinf/examples/dm05_experimental/benchmark_policy.py
+@@ -0,0 +1,67 @@
++# PUBLIC post-measurement adapter. NOT RUN/imported during packaging.
++"""Requested formal full public policy timing; no tests or extra review runs."""
++import argparse
++import json
++import os
++from pathlib import Path
++import time
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--reference", type=Path, required=True)
++    parser.add_argument("--checkpoint", type=Path, required=True)
++    parser.add_argument("--source", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    if not os.environ.get("SLURM_JOB_ID") or not os.environ.get("SLURM_STEP_ID"):
++        raise RuntimeError("model computation requires allocated Slurm GPU step")
++    args.output.mkdir(parents=True, exist_ok=False)
++    import numpy as np
++    import torch
++    from PIL import Image
++    from apxinf.policies import Dm05Policy
++    torch.set_num_threads(2)
++    setup_start = time.perf_counter()
++    policy = Dm05Policy.from_pretrained(args.checkpoint)
++    setup_s = time.perf_counter()-setup_start
++    ref = json.loads((args.reference/"result.json").read_text())
++    images = [Image.open(args.source/"assets/demo/images/episode0"/cam/"0.jpg").convert("RGB")
++              for cam in ("cam_high","cam_left_wrist","cam_right_wrist")]
++    rows = []
++    for case in ref["cases"]:
++        observation = {"prompt":case["prompt"],"state":case["state"],
++                       "images":images,"robot_type":"DOS W1"}
++        noise = torch.load(args.reference/case["id"]/"initial_noise.pt",
++            map_location="cpu",weights_only=True).float().numpy().reshape(50,32)
++        cold = time.perf_counter()
++        for _ in range(5):
++            policy.infer(observation,noise=noise)
++        cold_s = time.perf_counter()-cold
++        samples,outputs = [],[]
++        for _ in range(10):
++            begin = time.perf_counter_ns()
++            output = policy.infer(observation,noise=noise)
++            samples.append((time.perf_counter_ns()-begin)/1e6)
++            outputs.append(np.array(output["actions"],copy=True))
++        a = np.stack(outputs); expected=np.load(args.reference/case["id"]/"actions.npy")
++        comparisons=[]
++        for i,v in enumerate(a):
++            x=v.astype(np.float64).ravel();y=expected[min(i,len(expected)-1)].astype(np.float64).ravel()
++            rel=float(np.linalg.norm(x-y)/max(np.linalg.norm(y),1e-30));cos=float(x@y/max(np.linalg.norm(x)*np.linalg.norm(y),1e-30))
++            comparisons.append({"relL2":rel,"cosine":cos,"max_abs":float(np.max(np.abs(x-y)))})
++        np.save(args.output/f"{case['id']}-actions.npy",a)
++        row={"case":case["id"],"samples_ms":samples,"median_ms":float(np.median(samples)),
++             "warmup_s":cold_s,"comparisons":comparisons,
++             "passed":all(c["relL2"]<=.05 and c["cosine"]>=.999 for c in comparisons) and bool(np.isfinite(a).all())}
++        rows.append(row);print(json.dumps(row),flush=True)
++    report={"execution":"ApxInf-native Rust CUDA whole-model graph; author CPU public transforms",
++            "boundary":"host PIL RGB+state+prompt+exact provided BF16 noise -> complete absolute public14 CPU actions",
++            "reference_boundary_difference":"native uses saved provided noise; author includes CUDA RNG generation",
++            "cases":rows,"setup_s":setup_s,"passed":all(r["passed"] for r in rows),
++            "job_id":os.environ["SLURM_JOB_ID"],"tests_run":False,"closed_loop_success":"NR"}
++    (args.output/"result.json").write_text(json.dumps(report,indent=2)+"\n")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/python/apxinf/examples/dm05_experimental/build_native.sh b/python/apxinf/examples/dm05_experimental/build_native.sh
+new file mode 100755
+--- /dev/null
++++ b/python/apxinf/examples/dm05_experimental/build_native.sh
+@@ -0,0 +1,17 @@
++#!/usr/bin/env bash
++# PUBLIC post-measurement adapter. NOT RUN or rebuilt during packaging.
++# Build/link only: no import, tests, inference, dependency install or GPU jobs.
++set -euo pipefail
++: "${APXINF_ROOT:?patched complete foundation source required}"
++: "${CARGO_TARGET_DIR:?explicit caller-owned build output required}"
++: "${CUDA_HOME:?explicit CUDA toolkit required}"
++: "${PYO3_PYTHON:?compatible Python interpreter required}"
++export APXINF_CUDA_ARCH="${APXINF_CUDA_ARCH:-sm_80}"
++export CUDA_PATH="$CUDA_HOME"
++export PATH="$CUDA_HOME/bin:$PATH"
++export LIBRARY_PATH="$CUDA_HOME/lib64/stubs${LIBRARY_PATH:+:$LIBRARY_PATH}"
++export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
++export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
++cd "$APXINF_ROOT"
++cargo build --release --offline --locked -p apxinf-model --features cuda --example dm05_benchmark
++cargo build --release --offline --locked -p apxinf-py --features cuda,extension-module
+diff --git a/python/apxinf/examples/dm05_experimental/compare_saved.py b/python/apxinf/examples/dm05_experimental/compare_saved.py
+new file mode 100644
+--- /dev/null
++++ b/python/apxinf/examples/dm05_experimental/compare_saved.py
+@@ -0,0 +1,59 @@
++# PUBLIC post-measurement adapter. NOT RUN/imported during packaging.
++"""Arithmetic and inventory on already-saved formal outputs; no model runs."""
++import argparse
++import json
++from pathlib import Path
++
++
++def main():
++    p=argparse.ArgumentParser()
++    p.add_argument("--reference",type=Path,required=True)
++    p.add_argument("--core",type=Path,required=True)
++    p.add_argument("--public",type=Path,required=True)
++    p.add_argument("--output",type=Path,required=True)
++    a=p.parse_args()
++    import numpy as np
++    rows=[]
++    arrays={}
++    normalized={}
++    for case in ("demo-seed0","demo-seed17","state-seed0","prompt-seed0"):
++        author=np.load(a.reference/case/"actions.npy")
++        actual=np.load(a.public/f"{case}-actions.npy")
++        core=np.load(a.core/f"{case}-public14.npy")
++        record=json.loads((a.core/f"{case}.json").read_text())
++        norm=np.asarray(record["normalized_actions"],dtype=np.float32).reshape(10,50,32)
++        arrays[case]=actual; normalized[case]=norm
++        comparisons=[]
++        for x,y in zip(actual,author,strict=True):
++            x=x.astype(np.float64).ravel(); y=y.astype(np.float64).ravel()
++            comparisons.append({"relL2":float(np.linalg.norm(x-y)/max(np.linalg.norm(y),1e-30)),
++                "cosine":float(x@y/max(np.linalg.norm(x)*np.linalg.norm(y),1e-30)),
++                "max_abs":float(np.max(np.abs(x-y)))})
++        row={"case":case,"shape":list(actual.shape),"dtype":str(actual.dtype),
++             "all_finite":bool(np.isfinite(actual).all() and np.isfinite(norm).all()),
++             "repeat_max_abs":float(np.max(np.abs(actual-actual[0:1]))),
++             "normalized_repeat_max_abs":float(np.max(np.abs(norm-norm[0:1]))),
++             "core_public_exact_equal":bool(np.array_equal(actual,core)),
++             "worst_relL2":max(x["relL2"] for x in comparisons),
++             "minimum_cosine":min(x["cosine"] for x in comparisons),
++             "max_abs_vs_author":max(x["max_abs"] for x in comparisons),
++             "arena_used_bytes":record["arena_used_bytes"]}
++        row["budget_met"]=row["all_finite"] and row["worst_relL2"]<=0.05 and row["minimum_cosine"]>=0.999
++        rows.append(row)
++    changes={}
++    for case in ("demo-seed17","state-seed0","prompt-seed0"):
++        delta=arrays[case][0].astype(np.float64)-arrays["demo-seed0"][0].astype(np.float64)
++        ndelta=normalized[case][0,:,:14].astype(np.float64)-normalized["demo-seed0"][0,:,:14].astype(np.float64)
++        changes[case]={"public14_max_abs_change":float(np.max(np.abs(delta))),
++                       "public14_L2_change":float(np.linalg.norm(delta)),
++                       "normalized_public14_max_abs_change":float(np.max(np.abs(ndelta)))}
++    result={"scope":"CPU arithmetic on saved formal inference outputs only",
++            "all_four_cases_budget_met":all(r["budget_met"] for r in rows),
++            "cases":rows,"changed_input_outputs":changes,"tests_run":False,
++            "additional_model_runs":0,"closed_loop_success":"NR"}
++    a.output.write_text(json.dumps(result,indent=2)+"\n")
++    print(json.dumps(result,indent=2))
++
++
++if __name__=="__main__":
++    main()
+diff --git a/python/apxinf/examples/dm05_experimental/decode_core.py b/python/apxinf/examples/dm05_experimental/decode_core.py
+new file mode 100644
+--- /dev/null
++++ b/python/apxinf/examples/dm05_experimental/decode_core.py
+@@ -0,0 +1,60 @@
++# PUBLIC post-measurement adapter. NOT RUN/imported during packaging.
++"""Arithmetic on saved formal outputs only. No model is constructed or run."""
++import argparse
++import json
++from pathlib import Path
++
++
++def main():
++    p = argparse.ArgumentParser()
++    p.add_argument("--reference", type=Path, required=True)
++    p.add_argument("--native", type=Path, required=True)
++    p.add_argument("--checkpoint", type=Path, required=True)
++    args = p.parse_args()
++    import numpy as np
++    from PIL import Image
++    from opendm.exp.dm05_exp import DM05InferenceConfig
++    reference = json.loads((args.reference/"result.json").read_text())
++    policy = DM05InferenceConfig()
++    policy._initialize_preprocessing(model_name_or_path=str(args.checkpoint),
++        norm_stats_path=str(args.checkpoint/"norm_stats.json"), n_bins=256,
++        transform_max_length=1024, use_absolute_action=True, add_state=True,
++        is_history=False, device="cpu")
++    # _prepare_model_input only needs image count and public state metadata for
++    # output reconstruction; no image tensor computation or inference follows.
++    images = [Image.new("RGB", (1,1)) for _ in range(3)]
++    rows = []
++    for case in reference["cases"]:
++        name = case["id"]
++        native = json.loads((args.native/f"{name}.json").read_text())
++        normalized = np.asarray(native["normalized_actions"], dtype=np.float32).reshape(-1,50,32)
++        data = policy._prepare_model_input(text=case["prompt"], images=images,
++            states=case["state"], robot_type="DOS W1")
++        actions = np.stack([policy.output_transform({"action":a[:,:14].copy(),
++            "state":np.array(data["state"],copy=True),"meta_data":data["meta_data"]})["action"]
++            for a in normalized])
++        expected = np.load(args.reference/name/"actions.npy")
++        comparisons = []
++        for i, action in enumerate(actions):
++            a = action.astype(np.float64).ravel()
++            b = expected[min(i,len(expected)-1)].astype(np.float64).ravel()
++            rel = float(np.linalg.norm(a-b)/max(np.linalg.norm(b),1e-30))
++            cosine = float(a@b/max(np.linalg.norm(a)*np.linalg.norm(b),1e-30))
++            comparisons.append({"sample":i,"relL2":rel,"cosine":cosine,
++                "max_abs":float(np.max(np.abs(a-b))),"finite":bool(np.isfinite(a).all())})
++        np.save(args.native/f"{name}-public14.npy", actions)
++        row = {"case":name,"comparisons":comparisons,
++            "passed":all(c["finite"] and c["relL2"]<=0.05 and c["cosine"]>=0.999 for c in comparisons),
++            "median_canonical_cpu_to_normalized_cpu_ms":float(np.median(native["samples_ms"]))}
++        rows.append(row)
++    report = {"native":str(args.native),"reference":str(args.reference),
++        "boundary":"saved complete public14 author absolute CPU actions",
++        "relL2_limit":0.05,"cosine_minimum":0.999,"cases":rows,
++        "passed":all(r["passed"] for r in rows),"tests_run":False,
++        "evidence":"arithmetic on formal model inference outputs, no tests or extra model runs"}
++    (args.native/"public14-comparison.json").write_text(json.dumps(report,indent=2)+"\n")
++    print(json.dumps(report,indent=2))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/python/apxinf/examples/dm05_experimental/prepare_inputs.py b/python/apxinf/examples/dm05_experimental/prepare_inputs.py
+new file mode 100644
+--- /dev/null
++++ b/python/apxinf/examples/dm05_experimental/prepare_inputs.py
+@@ -0,0 +1,59 @@
++# PUBLIC post-measurement adapter. NOT RUN/imported during packaging.
++"""Serialize caller-supplied saved formal inputs; never run a model or inference.
++
++Public CPU patchification/serialization only. The exact initial BF16 noise and
++all prepared IDs come from the completed official author run, not regenerated RNG.
++"""
++import argparse
++import hashlib
++import json
++from pathlib import Path
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("--reference", type=Path, required=True)
++    parser.add_argument("--output", type=Path, required=True)
++    args = parser.parse_args()
++    import torch
++    from safetensors.torch import save_file
++    report = json.loads((args.reference / "result.json").read_text())
++    records = []
++    for case in report["cases"]:
++        name = case["id"]
++        root = args.reference / name
++        prepared = torch.load(root / "prepared.pt", map_location="cpu", weights_only=True)
++        noise = torch.load(root / "initial_noise.pt", map_location="cpu", weights_only=True)
++        pixels = prepared["pixel_values"]
++        if list(pixels.shape) != [3, 3, 448, 448]:
++            raise ValueError(f"unsupported public pixel shape {pixels.shape}")
++        # The original convolution casts pixel values to BF16 before compute.
++        pixels = pixels.to(torch.bfloat16)
++        patches = pixels.reshape(3,3,32,14,32,14).permute(0,2,4,1,3,5).reshape(3072,588).contiguous()
++        # ApxInf's existing safetensors fixture reader admits F32/BF16, not I32.
++        # Token IDs (<262208) are exactly representable in F32; the benchmark
++        # decodes them to u32 before the model runtime uploads native I32 IDs.
++        ids = prepared["input_ids"].reshape(-1).to(torch.float32).contiguous()
++        types = prepared["token_type_ids"].reshape(-1)
++        if not torch.equal(types == 1, ids == 262144):
++            raise ValueError("first native profile requires image token types at image placeholders only")
++        mask = torch.zeros((50,32), dtype=torch.float32)
++        mask[:,:14] = 1
++        destination = args.output / name
++        destination.mkdir(parents=True, exist_ok=False)
++        save_file({"input_ids": ids, "patches": patches,
++                   "initial_noise": noise.reshape(50,32).contiguous(),
++                   "action_mask": mask}, str(destination / "inputs.safetensors"))
++        records.append({"case": name, "prefix_length": len(ids),
++                        "token_id_storage":"F32 exact integer encoding (<262208); native runtime uses I32",
++                        "prepared_sha256": hashlib.sha256((root/"prepared.pt").read_bytes()).hexdigest(),
++                        "noise_sha256": hashlib.sha256((root/"initial_noise.pt").read_bytes()).hexdigest()})
++    (args.output/"manifest.json").write_text(json.dumps({"reference":str(args.reference),
++        "source_revision":report["source_revision"], "checkpoint_revision":report["checkpoint_revision"],
++        "suffix_graph_profiles":report["suffix_graph_profiles"],
++        "suffix_graph_disabled_profiles":report["suffix_graph_disabled_profiles"],
++        "cases":records, "tests_run":False}, indent=2)+"\n")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/python/apxinf/examples/dm05_experimental/summarize_saved.py b/python/apxinf/examples/dm05_experimental/summarize_saved.py
+new file mode 100644
+--- /dev/null
++++ b/python/apxinf/examples/dm05_experimental/summarize_saved.py
+@@ -0,0 +1,51 @@
++# PUBLIC post-measurement adapter. NOT RUN/imported during packaging.
++"""Summarize saved formal inference outputs/timings. No model execution."""
++import argparse
++import json
++from pathlib import Path
++
++
++def main():
++    parser=argparse.ArgumentParser()
++    parser.add_argument("--reference",type=Path,required=True)
++    parser.add_argument("--core",type=Path,required=True)
++    parser.add_argument("--public",type=Path,required=True)
++    parser.add_argument("--output",type=Path,required=True)
++    args=parser.parse_args()
++    import numpy as np
++    reference=json.loads((args.reference/"result.json").read_text())
++    core=json.loads((args.core/"result.json").read_text())
++    core_quality=json.loads((args.core/"public14-comparison.json").read_text())
++    public=json.loads((args.public/"result.json").read_text())
++    def stats(values):
++        return {"n":len(values),"median_ms":float(np.median(values)),
++                "mean_ms":float(np.mean(values)),"p95_ms":float(np.percentile(values,95))}
++    def quality(cases):
++        comparisons=[v for case in cases for v in case["comparisons"]]
++        return {"passed":all(case["passed"] for case in cases),
++                "worst_relL2":max(v["relL2"] for v in comparisons),
++                "minimum_cosine":min(v["cosine"] for v in comparisons),
++                "max_abs":max(v["max_abs"] for v in comparisons)}
++    author_values=[float(v) for case in reference["cases"]
++                   for v in np.load(args.reference/case["id"]/"samples_ms.npy")]
++    public_stats=stats([v for case in public["cases"] for v in case["samples_ms"]])
++    author_stats=stats(author_values)
++    report={"reference":str(args.reference),"core":str(args.core),"public":str(args.public),
++        "source_revision":reference["source_revision"],
++        "checkpoint_revision":reference["checkpoint_revision"],
++        "job_id":public["job_id"],"native_execution":public["execution"],
++        "author_full_policy":author_stats,"native_full_policy":public_stats,
++        "native_canonical_cpu_to_normalized_cpu":stats([v for case in core["cases"] for v in case["samples_ms"]]),
++        "public_policy_quality":quality(public["cases"]),
++        "canonical_core_public14_quality":quality(core_quality["cases"]),
++        "nominal_full_policy_median_speedup":author_stats["median_ms"]/public_stats["median_ms"],
++        "boundary_difference":public["reference_boundary_difference"],
++        "thresholds":{"relL2_max":0.05,"cosine_min":0.999},
++        "tests_run":False,"extra_reviews":False,"closed_loop_success":"NR",
++        "acceptance_scope":"formal four-case complete-action output and latency only; not a full tested port acceptance"}
++    args.output.write_text(json.dumps(report,indent=2)+"\n")
++    print(json.dumps(report,indent=2))
++
++
++if __name__=="__main__":
++    main()

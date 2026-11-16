@@ -234,6 +234,11 @@ FP32 CPU动作，policy中位数277.6579 ms，内部模型267.1751 ms，加载�
 不称严格纯engine加速。ApxInf公共setup45.1512 s，比作者17.0973 s慢，不能只报稳态优势。
 这些结果没有新增测试、算子门槛或闭环评测，仅代表四组正式输入作用域。
 
+DM0.5外部ApxInf源码增量见
+[`examples/vla_autotune/apxinf/dm05-sm80/`](../../examples/vla_autotune/apxinf/dm05-sm80/README.md)。
+它的23份运行时代码保留实测身份；后补helper未执行，且仍依赖私有Hy foundation。
+这是外部引擎的研究源码，不代表正在补接入的本项目DM0.5／FlashRT基线已经完成。
+
 ## 8. 本文证据限制
 
 架构／工具能力核对基于拉取后的`e98653d4`代码；Fast延迟仍绑定`227993d5`的已保存

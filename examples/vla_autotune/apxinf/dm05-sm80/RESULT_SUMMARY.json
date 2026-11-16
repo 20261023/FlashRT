@@ -1,0 +1,191 @@
+{
+  "publication_status": "PUBLIC aggregate formal-result summary; raw inputs/actions excluded",
+  "native_job": {
+    "id": "329543",
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "elapsed": "00:02:25",
+    "time_limit": "00:30:00"
+  },
+  "reference_job_id": "329331",
+  "source_revision": "03f799120d425ead51d9482bb1da950b6dabade9",
+  "checkpoint_revision": "5cd18734814abb075a9ccfd9ad6d16777b5cf10e",
+  "hardware": {
+    "gpu": "NVIDIA A800-SXM4-80GB",
+    "compute_capability": "8.0",
+    "sm_count": 108,
+    "driver": {
+      "version": null,
+      "status": "NR_not_recorded_for_job329543",
+      "evidence": "Saved actual329543 log records GPU model/SM, but no driver version",
+      "not_inferred_from_other_allocations_or_old_builds": true
+    }
+  },
+  "profile": {
+    "dtype": "BF16",
+    "batch": 1,
+    "images": 3,
+    "image_size": [
+      448,
+      448
+    ],
+    "history": 0,
+    "prefix_lengths": [
+      882,
+      876
+    ],
+    "steps": 10,
+    "horizon": 50,
+    "internal_action_width": 32,
+    "public_action_width": 14
+  },
+  "execution": "ApxInf-native Rust CUDA whole-model graph; author CPU public transforms",
+  "author_full_policy": {
+    "n": 40,
+    "median_ms": 277.65794200000005,
+    "mean_ms": 277.5912135,
+    "p95_ms": 278.9247174
+  },
+  "native_full_policy": {
+    "n": 40,
+    "median_ms": 149.35215599999998,
+    "mean_ms": 149.3726382,
+    "p95_ms": 150.10012425
+  },
+  "native_canonical_cpu_to_normalized_cpu": {
+    "n": 40,
+    "median_ms": 139.0278145,
+    "mean_ms": 138.99902085,
+    "p95_ms": 139.13645045
+  },
+  "nominal_full_policy_median_speedup": 1.859082248534799,
+  "timing_boundary_caveat": "native uses saved provided noise; author includes CUDA RNG generation",
+  "pure_graph_latency_measured": false,
+  "public14_quality": {
+    "passed": true,
+    "worst_relL2": 0.009324395491569158,
+    "minimum_cosine": 0.9999608551974092,
+    "max_abs": 0.0156019926071167
+  },
+  "thresholds": {
+    "relL2_max": 0.05,
+    "cosine_min": 0.999
+  },
+  "cases": [
+    {
+      "case": "demo-seed0",
+      "shape": [
+        10,
+        50,
+        14
+      ],
+      "dtype": "float32",
+      "all_finite": true,
+      "repeat_max_abs": 0.0,
+      "normalized_repeat_max_abs": 0.0,
+      "core_public_exact_equal": true,
+      "worst_relL2": 0.00730661530807537,
+      "minimum_cosine": 0.9999798187977232,
+      "max_abs_vs_author": 0.012674868106842041,
+      "arena_used_bytes": 9393563008,
+      "budget_met": true
+    },
+    {
+      "case": "demo-seed17",
+      "shape": [
+        10,
+        50,
+        14
+      ],
+      "dtype": "float32",
+      "all_finite": true,
+      "repeat_max_abs": 0.0,
+      "normalized_repeat_max_abs": 0.0,
+      "core_public_exact_equal": true,
+      "worst_relL2": 0.0057337795291766604,
+      "minimum_cosine": 0.9999854064265626,
+      "max_abs_vs_author": 0.00906527042388916,
+      "arena_used_bytes": 9393563008,
+      "budget_met": true
+    },
+    {
+      "case": "state-seed0",
+      "shape": [
+        10,
+        50,
+        14
+      ],
+      "dtype": "float32",
+      "all_finite": true,
+      "repeat_max_abs": 0.0,
+      "normalized_repeat_max_abs": 0.0,
+      "core_public_exact_equal": true,
+      "worst_relL2": 0.007547306165928118,
+      "minimum_cosine": 0.9999717919439655,
+      "max_abs_vs_author": 0.0156019926071167,
+      "arena_used_bytes": 9393563008,
+      "budget_met": true
+    },
+    {
+      "case": "prompt-seed0",
+      "shape": [
+        10,
+        50,
+        14
+      ],
+      "dtype": "float32",
+      "all_finite": true,
+      "repeat_max_abs": 0.0,
+      "normalized_repeat_max_abs": 0.0,
+      "core_public_exact_equal": true,
+      "worst_relL2": 0.009324395491569158,
+      "minimum_cosine": 0.9999608551974092,
+      "max_abs_vs_author": 0.012682080268859863,
+      "arena_used_bytes": 9361718656,
+      "budget_met": true
+    }
+  ],
+  "changed_input_output_aggregates": {
+    "demo-seed17": {
+      "public14_max_abs_change": 0.5629072189331055,
+      "public14_L2_change": 5.249155795997475,
+      "normalized_public14_max_abs_change": 0.65380859375
+    },
+    "state-seed0": {
+      "public14_max_abs_change": 0.050648558884859085,
+      "public14_L2_change": 0.49595175800464386,
+      "normalized_public14_max_abs_change": 0.0546875
+    },
+    "prompt-seed0": {
+      "public14_max_abs_change": 0.7144178152084351,
+      "public14_L2_change": 7.487343969322567,
+      "normalized_public14_max_abs_change": 0.830078125
+    }
+  },
+  "saved_output_sha256": {
+    "demo-seed0": "7171beb13d2a4d60d5b1645a6da2283152f0daa3ed51f5013a4948e26ffbf603",
+    "demo-seed17": "7821665f7e5fb06e083a9c5d91e5613148209ec81a4b7763e776156ddc63b829",
+    "state-seed0": "901f54f261aeed32613ae0aaeb7073e793b07b2ab5ee8d58bb8b1ddbeccb7810",
+    "prompt-seed0": "8ea90651b95f6cf48fe60d43446a55ce587172ace26c864dbd69a7c2c4aee37c"
+  },
+  "setup": {
+    "native_core_model_load_s": 50.386436733,
+    "native_public_setup_s": 45.15121252089739,
+    "author_setup_s": 17.097278,
+    "cold_setup_faster": false
+  },
+  "arena": {
+    "maximum_used_bytes": 9393563008,
+    "capacity_bytes": 17179869184,
+    "not_peak_gpu_memory": true
+  },
+  "runtime_log_sha256": "88446bf5f7e5b6b3f0b89b84ba9d352ccee5d41f67cc6535fd6cdadf4cb05522",
+  "tests_run": false,
+  "smoke_or_kernel_gates_run": false,
+  "extra_reviews_run": false,
+  "closed_loop_success": "NR",
+  "general_release_acceptance": false,
+  "scope": "Requested four-case formal inference/output proxy only; experimental, not general deployment acceptance",
+  "packaging_new_model_runs": 0,
+  "packaging_gpu_submissions": 0
+}
