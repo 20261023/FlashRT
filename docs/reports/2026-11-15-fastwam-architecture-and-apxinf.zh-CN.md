@@ -2,8 +2,9 @@
 
 **范围：** 本文解释实际运行的 FastWAM LIBERO 配置，比较 π0／π0.5／Hy 的结构，
 区分已有计时与尚未测量的优化假设。新增实跑已取得**FastWAM原生ApxInf研究实现
-完整public policy约215.34 ms**和**DM0.5作者default约277.66 ms**；DM0.5 ApxInf
-正式执行仍在进行。研究实现不等于公开引擎已有支持或完成部署验收。
+完整public policy约215.34 ms**、**DM0.5作者default约277.66 ms**及**DM0.5 ApxInf
+完整public policy约149.35 ms**。2026-11-16已核对全部正式作业终态和保存输出；
+研究实现不等于公开引擎已有支持或完成部署验收。
 
 ## 1. 先纠正“FastWAM 适配后很慢”的范围
 
@@ -151,7 +152,7 @@ prefill与denoise，沿用作者已有的编译思路。Graph降低host重复提
 | Hy，job231955／233770 | raw-policy约268–271 ms；device core133.65 ms | 旧profile／环境；core不等于完整policy；不是本轮表内重新配对 |
 | π0独立matched | NR | 没有可核验独立记录 |
 | FastWAM新family，job329256 | **public policy 215.3437 ms** | 新增原生研究实现；不同allocation／NHWC接口，未完成部署验收，不算纯engine加速比 |
-| DM0.5新family | **NR，正式执行中** | 作者参考已取得，尚无可报告的新ApxInf完整结果 |
+| DM0.5新family，job329543 | **public policy 149.3522 ms** | 原生研究实现；四案例范围内，provided-noise／作者RNG及allocation不同，非纯engine比值 |
 
 旧Hy最终七组输出与官方一致，但旧FlashRT development对照仅1/7满足同一数值gate；
 不能据旧104.04 ms development点宣称公平纯engine比值。历史ApxInf约270.9 ms与
@@ -223,12 +224,20 @@ NCHW，且不是同allocation；不给纯engine比值。已有请求级文本KV�
 作者default／vision SDPA／无Liger参考已由329331取得：四case／40份完整`[50,14]`
 FP32 CPU动作，policy中位数277.6579 ms，内部模型267.1751 ms，加载准备17.0973 s；
 实际使用两个suffix graph profile、无禁用项。源码／权重身份核对后才运行，首轮
-329232的PyArrow／NumPy导入失败保留，不改写为模型或质量失败。DM0.5原生ApxInf
-沿实际热态BF16 suffix算术分支继续执行；未取得结果之前仍保持NR。
+329232的PyArrow／NumPy导入失败保留，不改写为模型或质量失败。
+
+原生ApxInf的329543现已完成完整vision／prefix／10步action和公共policy，沿作者实际
+热态BF16 suffix算术分支。40份完整public14输出相对作者参考的最坏relative L2为
+0.0093243955、最低cosine为0.9999608552；全体有限且同case重复一致。完整policy
+中位数149.3522 ms、P95 150.1001 ms。相对作者277.6579 ms的名义比值为1.8591×，
+但ApxInf使用预先保存的准确noise、作者在请求内生成CUDA noise，且为不同allocation，
+不称严格纯engine加速。ApxInf公共setup45.1512 s，比作者17.0973 s慢，不能只报稳态优势。
+这些结果没有新增测试、算子门槛或闭环评测，仅代表四组正式输入作用域。
 
 ## 8. 本文证据限制
 
 架构／工具能力核对基于拉取后的`e98653d4`代码；Fast延迟仍绑定`227993d5`的已保存
 正式样本。新增FastWAM原生ApxInf绑定独立源码快照／329256，DM0.5作者参考绑定
-03f7991／329331。按照用户要求，没有新增测试、smoke、profiling或额外评审；
-数值结论只来自已保存正式输出的算术。DM0.5 ApxInf仍在后续执行，不把准备状态写成成功。
+03f7991／329331；DM0.5原生ApxInf绑定另一独立源码快照／329543。按照用户要求，
+没有新增测试、smoke、profiling或额外评审；数值结论只来自已保存正式输出的算术。
+两条原生候选均完成了本轮完整模型实跑，仍不宣称通用shape／eager分支或部署验收通过。

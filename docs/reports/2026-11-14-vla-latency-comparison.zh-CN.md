@@ -1,6 +1,6 @@
 # 五模型延迟对比：本项目方法、官方 Native 与 ApxInf
 
-**状态：五个模型的作者A800参考已取得，FastWAM实验性原生ApxInf已实跑；DM0.5 ApxInf继续接入，2026-11-15。** 原四个本项目已选配置与四个作者原实现均取得
+**状态：五个模型的作者A800参考，以及FastWAM／DM0.5实验性原生ApxInf均已实跑，2026-11-16更新。** 原四个本项目已选配置与四个作者原实现均取得
 实际延迟。附加的π0.5 Native8步点因二次编译触及进程总预算而未完成，明确保留NR；
 不为此再排作业，也不把已有10步结果或失败记录改写掉。文献数字只作参考，不用于异卡比值。
 
@@ -9,6 +9,9 @@
 `329232`在模型加载前因依赖导入失败，无输出；新overlay固定兼容PyArrow后，
 `329331`以COMPLETED 0:0结束，取得40份完整输出。FastWAM原生ApxInf研究实现
 `329256`也以COMPLETED 0:0结束；这不是公开ApxInf原有family，不把Torch包装改名填数。
+DM0.5原生ApxInf第二次正式作业`329543`已以COMPLETED 0:0结束，完整policy中位数
+149.3522 ms；相对作者277.6579 ms为名义1.8591×，保留provided-noise／作者CUDA RNG
+及不同allocation的边界差异，不称纯kernel加速比。
 详见[架构与ApxInf接入说明](2026-11-15-fastwam-architecture-and-apxinf.zh-CN.md)。
 
 **新增请求已完成：** 作业`327380`以COMPLETED 0:0结束，四个FlashRT基线列已补齐。
@@ -17,10 +20,9 @@ FastWAM保持20步／BF16／shift5／H32／八案例，接入prefill＋denoise�
 142.44 ms。这一轮略低3.36%，不外推为跨硬件／任务的普遍优势。
 
 机器可读：[CSV](2026-11-14-vla-latency-comparison.csv)／[JSON](2026-11-14-vla-latency-comparison.json)。
-共21条点记录：20条完成计时、1条未完成，保留旧Fast路径和旧Native对照的历史行；
-新增两条分别为DM0.5作者完整policy和FastWAM ApxInf完整public policy。JSON另外保留
-内部模型／graph边界、作者文献参考与限制说明，不含私有输入／路径。未运行的DM0.5
-ApxInf仍只进入状态，不伪造测量行。
+共22条点记录：21条完成计时、1条未完成，保留旧Fast路径和旧Native对照的历史行；
+新增三条分别为DM0.5作者完整policy、FastWAM与DM0.5 ApxInf完整public policy。
+JSON另外保留内部模型／graph边界、作者文献参考与限制说明，不含私有输入／路径。
 
 ## A800实测大表
 
@@ -29,7 +31,7 @@ allocation内完成：π0为`326708`，π0.5为`326869`，Hy为`326641`，Fast�
 新增FlashRT列四行都来自`327380`；π0／π0.5／Hy这一列与各自旧主配对不是同allocation，
 只同为A800型号，不据此新增跨作业加速比。Fast三条当前路径在同一张卡同一作业内配对。
 原四模型及新增FastWAM ApxInf各八次warmup；DM0.5为每case五次，见下节。新增ApxInf
-`329256`、DM0.5作者`329331`是另外两个allocation，不冒称同卡配对。表内均为毫秒；
+`329256`、DM0.5作者`329331`及ApxInf`329543`是另外三个allocation，不冒称同卡配对。表内均为毫秒；
 Native“10步”仅指采样步数，其他输入几何按本轮固定。
 
 | 模型 | 本项目当前已选方法 | 本项目Median / Mean / P95 | FlashRT固定步数基线Median / Mean / P95 | 作者Native，10步Median / Mean / P95 | 作者Native，相同步数Median / Mean / P95 | ApxInf完整路径，边界见注 | 样本数（项目／FlashRT／Native） | 官方文献参考，非同卡基线 |
@@ -38,7 +40,7 @@ Native“10步”仅指采样步数，其他输入几何按本轮固定。
 | π0.5 | FlashRT BF16 Euler8，H50、3view | **39.2392 / 39.3056 / 39.5815** | BF16 Euler10：**41.9108 / 41.9764 / 42.3033** | 作者PyTorch compiled：**59.4795 / 59.5625 / 59.8169** | Euler8：**NR，二次编译触及预算** | NR；历史prepared边界39.16 ms另列 | 40／40／40 | 76 ms，RTX4090、BF16、5步、GPU-only mean |
 | FastWAM | 本项目Torch compiled **prefill＋denoise**，BF16 Euler20、H32、shift5、cached-T5 | **137.6503 / 137.7422 / 138.1893** | partial FlashRT Linear cached＋graph Euler20：**263.3574 / 263.4317 / 263.9883** | 作者compiled：**85.7984 / 85.9070 / 86.5387** | Euler20 compiled：**142.4363 / 142.5240 / 143.0105** | 原生研究实现BF16/E20：**215.3437 / 215.5861 / 216.6183**，非性能胜点 | 80／80／80；Apx80 | 官方compiled 110 ms／4090；论文190 ms／5090D V2 |
 | Hy | FlashRT semantic-BF16 Euler10 graph **基线** | **123.9355 / 123.7039 / 129.6583** | 相同E10配置重新计时：**121.2805 / 122.1176 / 128.2098** | **804.2853 / 802.2074 / 810.7750** | 同左，双方Euler10 | NR；历史raw-policy约270.9 ms另列 | 140／70／140 | 作者未报告完整推理延迟 |
-| **DM0.5 base** | NR，未接入FlashRT | **NR** | **NR** | 作者default／vision SDPA／无Liger：**277.6579 / 277.5912 / 278.9247** | 同左，10步 | **NR，原生接入中** | 0／0／40 | 不将其他GPU或LIBERO变体数字填为本例结果 |
+| **DM0.5 base** | NR，未接入FlashRT | **NR** | **NR** | 作者default／vision SDPA／无Liger：**277.6579 / 277.5912 / 278.9247** | 同左，10步 | 原生研究实现BF16/E10：**149.3522 / 149.3726 / 150.1001** | 0／0／40；Apx40 | 不将其他GPU或LIBERO变体数字填为本例结果 |
 
 **ApxInf历史记录不回填本轮同口径列。** 已向旧会话询问并读取其原始报告：π0.5
 job229581的39.16 ms排除了tokenization／state normalization／公共decoding；Hy旧
@@ -68,6 +70,28 @@ python examples/vla_autotune/official_dm05_latency.py \
 ```
 
 输出目录必须不存在；其中的prepared tensor、noise和逐次动作是私有复现产物，不应发布。
+
+**DM0.5 ApxInf，329543：** 独立Rust/CUDA SigLIP27＋Gemma3 prefix34＋动作expert34
+及完整10步flow，通过whole-model graph和现有公共ModelRunner／DM05 policy执行。
+Python仅复用作者CPU预处理及公共14维绝对动作还原，不运行Torch模型。首轮329441在
+正式forward之前因fixture reader不支持I32 token IDs失败；修复仅改变输入文件序列化，
+模型源码、二进制和算术未变，失败保留而不算质量不通过。
+
+完整public policy四case各十次正式输出，中位数149.3522 ms、P95 150.1001 ms；
+canonical CPU输入→normalized `[50,32]` CPU输出中位数139.0278 ms是另一边界，
+**不是纯graph replay时间**，不与作者267.1751 ms内部GPU边界直接相除。
+
+主会话重新读取40份完整`[50,14]`输出及作者对应输出核算：全部有限、同case十次重复
+逐元素一致；最坏relative L2 **0.0093243955**、最低cosine **0.9999608552**、最大
+绝对差0.0156019926。四案例均满足原0.05／0.999代理范围，不代表闭环或通用形状验收。
+
+名义完整policy延迟比为**1.8591×**，下降**46.2100%**；ApxInf接受已保存的准确noise
+并包含上传，作者在请求内执行CUDA RNG／seed设置，且二者不在同allocation。这个比值
+描述两条实际接口的观测结果，不是严格随机输入开销一致的纯engine收益。
+冷启动更慢：ApxInf公共policy setup45.1512 s，作者17.0973 s，均在稳态计时之外。
+arena使用9,393,563,008／9,361,718,656字节，保留16 GiB容量，不冒充总显存或活跃峰值。
+本轮仅覆盖三图、无历史、882／876 token、热态BF16 suffix及provided-noise；未运行
+padding／history／通用shape、eager FP32分支或generated-noise路径的额外测试和评审。
 
 **FastWAM ApxInf，329256：** 独立Rust/CUDA family完成WanVAE38、VideoDiT30、
 ActionDiT30×Euler20，包含请求级文本cross-KV缓存，实际捕获whole-model graph。

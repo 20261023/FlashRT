@@ -3,6 +3,10 @@
 这里保存本轮实际执行过的外部 ApxInf 模型候选的**源码增量与身份说明**，不向
 FlashRT registry 增加后端，也不宣称公开 ApxInf 上游已经内置这些模型。
 
+2026-11-16更新：DM0.5独立原生候选也已完成正式执行，job329543完整public policy
+中位数149.3522 ms、40份输出在原四案例代理范围内。其源码增量仍单独整理，不与
+FastWAM快照混合；结果、provided-noise／作者RNG差异及较慢冷启动见下方大表。
+
 ## FastWAM SM80，实验性
 
 源码包：[fastwam-sm80/](fastwam-sm80/README.md)；实际结果见
