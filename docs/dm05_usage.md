@@ -9,6 +9,49 @@ mixed Torch coverage**, not a fully native model: patch convolution, norms,
 RoPE, masked prefix SDPA, pooling, gates, Euler and host transforms remain Torch.
 There is no quantization or reduced-step path in this integration.
 
+## Opt-in project compiler method
+
+`backend="torch"` also admits `options={..., "project_optimization": "compiled"}`.
+The default is `"none"`; `backend="flashrt"` rejects `"compiled"`, so selecting
+this method never silently changes the original mixed/native comparator.
+
+The compiler method is implemented in this project's existing SM80 model entry:
+packed QKV and MLP gate/up projections, direct tensor SDPA (native GQA at the
+unmasked action site), and three reusable Inductor layer functions for vision,
+prefix and action. Arbitrary image/text prefix masks remain supported by the
+masked SDPA site. There is no call to ApxInf or the author's complete GPU model.
+BF16, Euler10, image geometry, current-state preprocessing and the public CPU
+action boundary are unchanged.
+
+Each unit uses `fullgraph=True`, `dynamic=False` and default Inductor GEMM
+selection, with compiler-owned CUDA graphs explicitly disabled. Weights and
+time modulation tensors are arguments; layer/step indices are not compile
+arguments. The frontend prewarms all regions/strides for each exact-prefix
+profile **before** its existing whole-policy CUDA graph capture. Compiler errors
+raise; there is no suppressed-error or eager-on-compiler-failure path. Small
+uncompiled tensor glue is still inside that same whole-model CUDA graph.
+
+Execution metadata reports `project_optimization`, the compile configuration,
+and per-profile compile-plus-first-forward setup seconds. A new prefix length
+pays compilation/capture costs, and packed weights and graph pools require
+additional memory. This is an opt-in candidate, not a supported superiority or
+release-quality claim without paired full-policy timing and output evidence.
+
+Select the candidate through the VLA options API (the top-level `load_model`
+signature is not extended by this option):
+
+```python
+from flash_rt.vla import BackendConfig
+
+config = BackendConfig(
+    model="dm05", checkpoint="/local/DM05-base", backend="torch",
+    hardware="cuda_sm80", precision="bf16", num_steps=10,
+    options={"source_dir": "/local/pinned-opendm", "num_views": 3,
+             "use_cuda_graph": True, "max_graph_profiles": 2,
+             "project_optimization": "compiled"},
+)
+```
+
 ## Fixed first profile
 
 - NVIDIA compute capability8.0 (`cuda_sm80`), Torch only.

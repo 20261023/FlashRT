@@ -59,9 +59,13 @@ class Dm05TorchFrontendCudaSm80:
 
     def __init__(self, checkpoint, *, source_dir, backend='flashrt', num_steps=10,
                  sampler='euler', probeflow_config=None, use_cuda_graph=True,
-                 max_graph_profiles=2, num_views=3):
+                 max_graph_profiles=2, num_views=3, project_optimization='none'):
         if backend not in ('torch', 'flashrt'):
             raise ValueError('DM05 backend must be torch or flashrt')
+        if project_optimization not in ('none', 'compiled'):
+            raise ValueError('DM05 project_optimization must be none or compiled')
+        if project_optimization != 'none' and backend != 'torch':
+            raise ValueError('DM05 project_optimization requires backend="torch"')
         if sampler != 'euler' or probeflow_config is not None or num_steps != 10:
             raise ValueError('DM05 first profile requires fixed Euler10, without ProbeFlow')
         if num_views != 3:
@@ -73,6 +77,7 @@ class Dm05TorchFrontendCudaSm80:
         self._lock = RLock()
         self._checkpoint_path = str(checkpoint)
         self.backend = backend
+        self.project_optimization = project_optimization
         self._num_steps = 10
         self.use_cuda_graph = use_cuda_graph
         self.max_graph_profiles = max_graph_profiles
@@ -83,7 +88,11 @@ class Dm05TorchFrontendCudaSm80:
         self.capture_s = 0.0
         with torch.inference_mode():
             self.policy, self.source_identity = _cpu_policy(checkpoint, source_dir)
-            self.pipeline = Dm05PipelineSm80(checkpoint, native=backend == 'flashrt')
+            if project_optimization == 'compiled':
+                from flash_rt.models.dm05.compiled_cuda_sm80 import Dm05CompiledPipelineSm80
+                self.pipeline = Dm05CompiledPipelineSm80(checkpoint)
+            else:
+                self.pipeline = Dm05PipelineSm80(checkpoint, native=backend == 'flashrt')
 
     def set_prompt(self, prompt, state=None):
         # State is intentionally NOT tokenized/cached here. infer() always runs
@@ -190,6 +199,9 @@ class Dm05TorchFrontendCudaSm80:
             'reference_math': 'author-hot-suffix-BF16-not-first-eager-FP32',
             'noise_contract': 'provided-noise-or-fresh-CUDA-BF16; no reseeding in frontend',
             'release_acceptance': 'not-run-user-waived-tests-and-extra-reviews',
+            'project_optimization': self.project_optimization,
+            'compilation': (self.pipeline.compilation_metadata()
+                            if self.project_optimization == 'compiled' else None),
         }
 
     @torch.inference_mode()
@@ -202,6 +214,8 @@ class Dm05TorchFrontendCudaSm80:
             # request afterwards; this does not execute a second preparation.
             self.last_prepared = prepared
             profile = self._update_profile(prepared, noise)
+            if self.project_optimization == 'compiled':
+                self.pipeline.prepare(profile)
             if self.use_cuda_graph and profile.graph is None:
                 start = time.perf_counter()
                 profile.capture(self.pipeline)

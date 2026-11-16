@@ -16,7 +16,8 @@ _CAPABILITIES = {
         'name': 'Dexmal DM0.5 fixed base', 'precision': 'bf16',
         'frameworks': ('torch',), 'hardware': ('cuda_sm80',),
         'action_domain': 'denormalized-absolute-dos-w1-14d',
-        'options': ('source_dir', 'use_cuda_graph', 'max_graph_profiles', 'num_views'),
+        'options': ('source_dir', 'use_cuda_graph', 'max_graph_profiles', 'num_views',
+                    'project_optimization'),
         'execution_coverage': 'partial-native-gemm-fa2-gelu-torch-norm-rope-prefix-attention',
     },
     'pi0': {
@@ -138,6 +139,11 @@ def validate_config(config: BackendConfig) -> dict:
             'semantic_bf16', 'official_local_fp32'):
         raise ValueError('Unknown HyVLA numerical_profile')
     if config.model == 'dm05':
+        optimization = config.options.get('project_optimization', 'none')
+        if optimization not in ('none', 'compiled'):
+            raise ValueError('DM05 project_optimization must be none or compiled')
+        if optimization != 'none' and config.backend != 'torch':
+            raise ValueError('DM05 project_optimization requires backend="torch"')
         if config.sampler != 'euler' or config.num_steps not in (None, 10):
             raise ValueError('DM05 first profile requires fixed Euler10')
         source = config.options.get('source_dir')
