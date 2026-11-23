@@ -989,6 +989,7 @@ class Pi05TorchFrontendRtx:
                 "use_fp8_decoder": False,
                 "use_int8_decoder": self._force_int8_decoder,
                 "use_int8_encoder": self._use_int8_encoder,
+                "int8_bf16_norm": getattr(self, "_int8_mode", None) in ("encoder", "encoder_decoder"),
                 "use_int8_vision": self._use_int8_vision,
                 "use_int8_vision_static": self._use_int8_vision_static,
             }

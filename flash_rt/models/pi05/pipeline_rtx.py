@@ -181,6 +181,7 @@ class Pi05Pipeline:
                  use_fp8: bool = True, use_fp8_decoder: bool = True,
                  use_int8_decoder: bool = False,
                  use_int8_encoder: bool = False,
+                 int8_bf16_norm: bool = False,
                  use_int8_vision: bool = False,
                  use_int8_vision_static: bool = False,
                  vision_pool_factor: int = 1,
@@ -235,6 +236,10 @@ class Pi05Pipeline:
         self.use_fp8_decoder = bool(use_fp8_decoder)
         self.use_int8_decoder = bool(use_int8_decoder)
         self.use_int8_encoder = bool(use_int8_encoder)
+        # Explicit W8A8 modes materialize the same residual/norm values that
+        # feed the BF16 GEMMs. Earlier environment-selected profiles use the
+        # original fused norm kernels.
+        self.int8_bf16_norm = int8_bf16_norm
         self.use_int8_vision = bool(use_int8_vision)
         if self.use_fp8 and (self.use_int8_encoder or self.use_int8_vision):
             raise ValueError("Pi0.5 prefix FP8 and INT8 paths are mutually exclusive")
@@ -1960,7 +1965,14 @@ class Pi05Pipeline:
         use_int8_enc = self.use_int8_encoder
 
         # B1: RMSNorm → QKV GEMM
-        if use_int8_enc:
+        if use_int8_enc and self.int8_bf16_norm:
+            fvk.rms_norm(
+                B["encoder_x"].ptr.value, self._rms_ones_enc.ptr.value,
+                B["encoder_x_norm"].ptr.value, seq, ENC_D, 1e-6, stream=stream)
+            self._enc_int8_gemm(
+                B["encoder_x_norm"].ptr.value, seq * ENC_D, f"encoder_attn_qkv_w_{i}",
+                B["encoder_QKV"].ptr.value, seq, (ENC_NH + 2 * ENC_NKV) * ENC_HD, ENC_D, stream)
+        elif use_int8_enc:
             # Fused RMSNorm → INT8 (one global-memory pass, no intermediate BF16)
             qkv_name = f"encoder_attn_qkv_w_{i}"
             layer_scale_qkv = self._int8_scale_buf(qkv_name, seq)
@@ -2082,11 +2094,19 @@ class Pi05Pipeline:
             up_name   = f"encoder_ffn_up_w_{i}"
             act_scale = self._int8_scale_buf(gate_name, seq)
             act_i8_ptr = self._pick_enc_int8_scratch(seq * ENC_D)
-            fvk.residual_add_rms_norm_int8_rowwise(
-                B["encoder_x"].ptr.value, B["encoder_x_norm"].ptr.value,
-                self._rms_ones_enc.ptr.value,
-                act_i8_ptr, act_scale.ptr.value,
-                seq, ENC_D, 1e-6, stream=stream)
+            if self.int8_bf16_norm:
+                fvk.residual_add(
+                    B["encoder_x"].ptr.value, B["encoder_x_norm"].ptr.value, seq * ENC_D, stream=stream)
+                fvk.rms_norm(
+                    B["encoder_x"].ptr.value, self._rms_ones_enc.ptr.value,
+                    B["encoder_x_norm"].ptr.value, seq, ENC_D, 1e-6, stream=stream)
+                fvk.quantize_int8_rowwise(
+                    B["encoder_x_norm"].ptr.value, act_i8_ptr, act_scale.ptr.value, seq, ENC_D, stream=stream)
+            else:
+                fvk.residual_add_rms_norm_int8_rowwise(
+                    B["encoder_x"].ptr.value, B["encoder_x_norm"].ptr.value,
+                    self._rms_ones_enc.ptr.value, act_i8_ptr, act_scale.ptr.value,
+                    seq, ENC_D, 1e-6, stream=stream)
             # Gate GEMM → gate_buf (seq, ENC_H)
             self._int8_gemm_fused(
                 act_i8_ptr, gate_name,
@@ -2280,7 +2300,8 @@ class Pi05Pipeline:
 
                 # 18 decoder layers
                 for i in range(DEC_L):
-                    skip_c1 = ((fused or self.use_int8_decoder) and i > 0) or skinny_step
+                    skip_c1 = ((fused or (self.use_int8_decoder and not self.int8_bf16_norm))
+                               and i > 0) or skinny_step
                     self._decoder_layer(i, step, enc_seq, ds, skip_c1, stream)
 
                 if skinny_step:
@@ -2375,7 +2396,7 @@ class Pi05Pipeline:
                 ds, (DEC_NH + 2 * DEC_NKV) * DEC_HD, DEC_D,
                 act_scale_qkv, stream)
         else:
-            if self.use_int8_decoder:
+            if self.use_int8_decoder and not self.int8_bf16_norm:
                 act_i8_ptr = B["dec_act_int8"].ptr.value
                 act_scale_qkv = self._int8_scale_buf(qkv_name, ds).ptr.value
                 if not skip_c1:
@@ -2395,6 +2416,10 @@ class Pi05Pipeline:
                     B["x_normed_buf"].ptr.value, ds * DEC_D,
                     qkv_name,
                     B["decoder_QKV"].ptr.value,
+                    ds, (DEC_NH + 2 * DEC_NKV) * DEC_HD, DEC_D, stream)
+            elif self.use_int8_decoder and self.int8_bf16_norm:
+                self._int8_gemm(
+                    B["x_normed_buf"].ptr.value, ds * DEC_D, qkv_name, B["decoder_QKV"].ptr.value,
                     ds, (DEC_NH + 2 * DEC_NKV) * DEC_HD, DEC_D, stream)
             elif self.use_int8_decoder:
                 self._int8_gemm_fused(
@@ -2476,7 +2501,7 @@ class Pi05Pipeline:
                 B["decoder_gate_merged"].ptr.value,
                 ds, 2 * DEC_H, DEC_D, act_scale_gu, stream)
         else:
-            if self.use_int8_decoder:
+            if self.use_int8_decoder and not self.int8_bf16_norm:
                 act_i8_ptr = B["dec_act_int8"].ptr.value
                 act_scale_gate = self._int8_scale_buf(gate_name, ds).ptr.value
                 fvk.gate_residual_ada_norm_int8(
@@ -2506,6 +2531,9 @@ class Pi05Pipeline:
                 # boundary before Pi0.5's GELU gating.
                 act_scale_gu_ptr = self._int8_scale_buf(gate_name, ds).ptr.value
                 act_i8 = B["dec_act_int8"].ptr.value
+                if self.int8_bf16_norm:
+                    fvk.quantize_int8_rowwise(
+                        B["x_normed_buf"].ptr.value, act_i8, act_scale_gu_ptr, ds, DEC_D, stream=stream)
                 self._int8_gemm_fused(
                     act_i8, gate_name,
                     B["decoder_gate_buf"].ptr.value,
@@ -2578,7 +2606,7 @@ class Pi05Pipeline:
                 self._style_slice_ptr("decoder_style_attn", step, i + 1),
                 B["dec_act_fp8"].ptr.value, B["gate_buf"].ptr.value,
                 ds, DEC_D, 1e-6, act_scale_next, stream=stream)
-        elif self.use_int8_decoder and i < DEC_L - 1:
+        elif self.use_int8_decoder and not self.int8_bf16_norm and i < DEC_L - 1:
             next_qkv = f"decoder_attn_qkv_w_{i + 1}"
             act_scale_next = self._int8_scale_buf(next_qkv, ds).ptr.value
             fvk.gate_residual_ada_norm_int8(
