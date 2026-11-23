@@ -29,6 +29,10 @@ class FastWAMCondition:
     video_cache_k: list[torch.Tensor]
     video_cache_v: list[torch.Tensor]
     action_attention_mask: torch.Tensor
+    text_cache_k: list[torch.Tensor] | None = None
+    text_cache_v: list[torch.Tensor] | None = None
+    text_cache_owner: object | None = None
+    text_cache_preparation: dict | None = None
 
 
 class FastWAMActionPipeline:
@@ -42,12 +46,14 @@ class FastWAMActionPipeline:
 
     def __init__(self, model, *, action_horizon, sigma_shift, sampler,
                  num_inference_steps, probeflow_config, native_linear, device, dtype,
-                   native_linear_backend="legacy", use_cuda_graph=False,
-                   compile_action_infer=False):
+                 native_linear_backend="legacy", use_cuda_graph=False,
+                 compile_action_infer=False, cache_text_crossattn_kv=False):
         if not isinstance(use_cuda_graph, bool):
             raise TypeError("use_cuda_graph must be bool")
         if not isinstance(compile_action_infer, bool):
             raise TypeError("compile_action_infer must be bool")
+        if not isinstance(cache_text_crossattn_kv, bool):
+            raise TypeError("cache_text_crossattn_kv must be bool")
         if compile_action_infer and (device.type != "cuda" or native_linear or use_cuda_graph):
             raise ValueError("Compiled FastWAM requires CUDA Torch operators without the manual raw-body graph")
         if use_cuda_graph and (device.type != "cuda" or (native_linear and native_linear_backend != "cached")):
@@ -58,6 +64,8 @@ class FastWAMActionPipeline:
             raise ValueError("native_linear_backend='cached' requires native_linear=True")
         self.model = model
         self.compile_action_infer = compile_action_infer
+        self.cache_text_crossattn_kv = cache_text_crossattn_kv
+        self._text_kv_cache = None
         self._compiled_prefill = self._compiled_denoise = None
         self.native_linear_backend = native_linear_backend
         self.device, self.dtype = device, dtype
@@ -74,11 +82,15 @@ class FastWAMActionPipeline:
         self._validate_model()
         self._build_time_bank()
         model.eval()
+        if cache_text_crossattn_kv:
+            from flash_rt.models.fastwam.text_kv_cache import FastWAMTextKVCache
+            self._text_kv_cache = FastWAMTextKVCache(model, device=device)
         if compile_action_infer:
             self._compiled_prefill = torch.compile(
                 model.mot.prefill_video_cache_tensor, mode="reduce-overhead", fullgraph=True)
             self._compiled_denoise = torch.compile(
-                model._denoise_action_with_video_cache, mode="reduce-overhead", fullgraph=True)
+                self._text_kv_cache.denoise if cache_text_crossattn_kv else model._denoise_action_with_video_cache,
+                mode="reduce-overhead", fullgraph=True)
         if native_linear:
             from flash_rt.models.fastwam.native_linear import install_native_linears
             self._native_modules, self._native_skipped = install_native_linears(
@@ -92,7 +104,10 @@ class FastWAMActionPipeline:
             with torch.cuda.device(self.device):
                 self._execution_stream = torch.cuda.Stream(device=self.device)
                 self._execution_stream.wait_stream(torch.cuda.current_stream(self.device))
-            self._velocity_graph = FastWAMVelocityGraph(model._denoise_action_with_video_cache)
+            self._velocity_graph = FastWAMVelocityGraph(
+                self._text_kv_cache.denoise if cache_text_crossattn_kv else model._denoise_action_with_video_cache,
+                cache_text_crossattn_kv=cache_text_crossattn_kv,
+            )
         elif self.device.type == 'cuda':
             with torch.cuda.device(self.device):
                 self._last_eager_stream = torch.cuda.current_stream(self.device)
@@ -243,11 +258,14 @@ class FastWAMActionPipeline:
             self._delta_rows = tuple(self._delta_bank.unbind(0))
 
     def execution_metadata(self):
+        backend = "flashrt_bf16_linear_partial" if self._native_modules else "upstream_torch_reference"
+        if self.cache_text_crossattn_kv and not self._native_modules:
+            backend = "flashrt_torch_text_crossattn_kv"
         return {
             "model": "fastwam", "upstream_url": UPSTREAM_URL,
             "source_contract_commit": UPSTREAM_COMMIT,
             "action_infer_mode": "first_frame",
-            "backend": "flashrt_bf16_linear_partial" if self._native_modules else "upstream_torch_reference",
+            "backend": backend,
             "fully_native": False,
             "native_linear_modules": tuple(self._native_modules),
             "native_linear_skipped": self._native_skipped,
@@ -256,6 +274,10 @@ class FastWAMActionPipeline:
             "cuda_graph": self._velocity_graph is not None,
             "compiled_action_infer": self.compile_action_infer,
             "compiled_regions": ["video_prefill", "raw_denoise"] if self.compile_action_infer else [],
+            "cache_text_crossattn_kv": self.cache_text_crossattn_kv,
+            "text_crossattn_kv_cache_scope": "request" if self.cache_text_crossattn_kv else None,
+            "text_crossattn_kv_cache_layers": self._text_kv_cache.num_layers if self._text_kv_cache is not None else 0,
+            "text_crossattn_kv_precompute": "eager" if self.cache_text_crossattn_kv else None,
             "native_counter_semantics": "Python Linear forwards / successful CPU GEMM enqueues, not graph GPU work",
             "device": str(self.device),
             "image_spatial_multiple": self.image_multiple,
@@ -365,9 +387,15 @@ class FastWAMActionPipeline:
         return result
 
     def _prepare_condition(self, obs):
+        if self._text_kv_cache is not None:
+            self._text_kv_cache.check_runtime()
         image, context, mask, proprio = self._observation_tensors(obs)
         if proprio is not None:
             context, mask = self.model._append_proprio_to_context(context, mask, proprio)
+        if self._text_kv_cache is not None:
+            # A condition is a request snapshot. Do not retain aliases to caller
+            # tensors whose later mutation would disagree with projected K/V.
+            context, mask = context.clone(), mask.clone()
         latents = self.model._encode_input_image_latents_tensor(input_image=image, tiled=False)
         if latents.ndim != 5 or tuple(latents.shape[:1]) != (1,) or latents.shape[2] != 1:
             raise ValueError("First-frame VAE latents must be [1,C,1,H,W]")
@@ -401,21 +429,44 @@ class FastWAMActionPipeline:
             # subsequent graph steps may overwrite Inductor-owned KV outputs.
             cache_k = [value.clone() for value in cache_k]
             cache_v = [value.clone() for value in cache_v]
-        return FastWAMCondition(context, mask, cache_k, cache_v, attention_mask[seq_len:, :])
+        text_k = text_v = owner = text_preparation = None
+        if self._text_kv_cache is not None:
+            # Run after the compiled prefill's output-ownership boundary. These
+            # eager outputs survive later cudagraph_mark_step_begin() calls.
+            text_k, text_v, text_preparation = self._text_kv_cache.prepare(context)
+            owner = self._text_kv_cache.owner
+        return FastWAMCondition(context, mask, cache_k, cache_v, attention_mask[seq_len:, :],
+                                text_k, text_v, owner, text_preparation)
 
     def _evaluate_at_timestep(self, state, timestep, condition, *, graph=False):
         if timestep.shape != (1,) or timestep.device != state.device or timestep.dtype != state.dtype:
             raise ValueError("FastWAM banked timestep must match state device/dtype and have shape [1]")
+        extra = {}
+        if self._text_kv_cache is not None:
+            self._text_kv_cache.check_runtime()
+            if (condition.text_cache_owner is not self._text_kv_cache.owner
+                    or condition.text_cache_k is None or condition.text_cache_v is None
+                    or condition.text_cache_preparation is None):
+                raise ValueError("FastWAM text K/V condition must be prepared by this pipeline")
+            extra = dict(text_cache_k=condition.text_cache_k, text_cache_v=condition.text_cache_v)
+        elif any(value is not None for value in (
+            condition.text_cache_k, condition.text_cache_v, condition.text_cache_owner,
+            condition.text_cache_preparation,
+        )):
+            raise ValueError("FastWAM text K/V condition requires cache_text_crossattn_kv=True")
         if graph and self._compiled_denoise is not None:
             torch.compiler.cudagraph_mark_step_begin()
             evaluator = self._compiled_denoise
         else:
-            evaluator = self._velocity_graph if graph and self._velocity_graph is not None else self.model._denoise_action_with_video_cache
+            evaluator = (self._velocity_graph if graph and self._velocity_graph is not None
+                         else self._text_kv_cache.denoise if self._text_kv_cache is not None
+                         else self.model._denoise_action_with_video_cache)
         raw = evaluator(
             latents_action=state, timestep_action=timestep,
             context=condition.context, context_mask=condition.context_mask,
             video_cache_k=condition.video_cache_k, video_cache_v=condition.video_cache_v,
             action_attention_mask=condition.action_attention_mask,
+            **extra,
         )
         if raw.shape != state.shape or raw.device != state.device or raw.dtype != state.dtype:
             raise ValueError("FastWAM raw velocity must match action state shape/device/dtype")
@@ -493,6 +544,16 @@ class FastWAMActionPipeline:
             if self.sampler == "probeflow" and self.sigma_shift != 1.0:
                 metadata["adaptation"] = "shifted_sigma_grid_not_original_paper_validation"
             coverage = self.execution_metadata()
+            if self._text_kv_cache is not None:
+                # Request counters stay out of execution_metadata()'s immutable
+                # backend identity and outside every compiled/captured body.
+                coverage["text_crossattn_kv_cache_request"] = {
+                    **condition.text_cache_preparation,
+                    "context_tokens": int(condition.context.shape[1]),
+                    "logical_denoise_evaluations": metadata["nfe"],
+                    "mode": ("compiled" if self.compile_action_infer
+                             else "cuda_graph" if graph is not None else "eager"),
+                }
             if graph is not None:
                 coverage['velocity_graph'] = graph.snapshot()
             coverage["native_linear_calls"] = {
@@ -523,6 +584,7 @@ class FastWAMActionPipeline:
             self._last_eager_stream = None
             self._native_modules.clear()
             self._compiled_prefill = self._compiled_denoise = None
+            self._text_kv_cache = None
             self._native_runner = self.model = None
             self._time_rows.clear()
             self._sigma_rows.clear()

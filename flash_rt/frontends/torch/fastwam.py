@@ -44,6 +44,12 @@ class FastWAMTorchFrontend:
     Torch-only opt-in is mutually exclusive with manual graphs/native Linear;
     it keeps the explicit fixed-noise interface and unchanged sampler schedule.
 
+    ``cache_text_crossattn_kv=True`` precomputes ActionDiT text embedding and normalized
+    cross-attention K/V once after each request's proprio append. Cached tensors
+    are explicit raw-body inputs in eager, manual graph and compiled execution.
+    It requires the pinned unmodified action tensor seams and fixed model dtype
+    without autocast; unsupported source variants/hooks raise before execution.
+
     Alternatively pass ``model=`` with an already initialized upstream model;
     its weights/device/dtype are not silently changed. Source/checkpoint loading
     options are mutually exclusive with that injection boundary.
@@ -68,6 +74,7 @@ class FastWAMTorchFrontend:
         native_linear_backend: str = "legacy",
         use_cuda_graph: bool = False,
         compile_action_infer: bool = False,
+        cache_text_crossattn_kv: bool = False,
     ):
         steps, probe = validate_sampler(sampler, sigma_shift, num_inference_steps, probeflow_config)
         horizon = positive_integer(action_horizon, "action_horizon")
@@ -77,6 +84,8 @@ class FastWAMTorchFrontend:
             raise TypeError("use_cuda_graph must be bool")
         if not isinstance(compile_action_infer, bool):
             raise TypeError("compile_action_infer must be bool")
+        if not isinstance(cache_text_crossattn_kv, bool):
+            raise TypeError("cache_text_crossattn_kv must be bool")
         if compile_action_infer and (native_linear or use_cuda_graph):
             raise ValueError("compile_action_infer requires Torch operators without a manual raw-body graph")
         if use_cuda_graph and native_linear and native_linear_backend != "cached":
@@ -133,6 +142,7 @@ class FastWAMTorchFrontend:
             native_linear_backend=native_linear_backend,
             use_cuda_graph=use_cuda_graph,
             compile_action_infer=compile_action_infer,
+            cache_text_crossattn_kv=cache_text_crossattn_kv,
         )
         self.sampler = sampler
         self.device, self.dtype = device, dtype
@@ -142,6 +152,7 @@ class FastWAMTorchFrontend:
         self.native_linear_backend = native_linear_backend
         self.use_cuda_graph = use_cuda_graph
         self.compile_action_infer = compile_action_infer
+        self.cache_text_crossattn_kv = cache_text_crossattn_kv
 
     @property
     def execution_metadata(self):

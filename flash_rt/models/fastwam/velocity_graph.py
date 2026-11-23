@@ -10,6 +10,7 @@ from __future__ import annotations
 
 _FIELDS = frozenset(('latents_action', 'timestep_action', 'context', 'context_mask',
                      'video_cache_k', 'video_cache_v', 'action_attention_mask'))
+_TEXT_KV_FIELDS = frozenset(('text_cache_k', 'text_cache_v'))
 
 
 class VelocityGeometryMismatch(ValueError):
@@ -69,6 +70,10 @@ def _copy_tree(target, source):
 def _native_calls(fn):
     model = getattr(fn, '__self__', None)
     if not callable(getattr(model, 'named_modules', None)):
+        # The text-K/V tensor core wraps the model without registering or
+        # patching its modules. Count native calls on that real model too.
+        model = getattr(model, 'model', model)
+    if not callable(getattr(model, 'named_modules', None)):
         return {}
     return {name: module.calls for name, module in model.named_modules()
             if hasattr(module, '_runner') and hasattr(module, 'calls')}
@@ -110,8 +115,11 @@ def _capture_cuda(fn, static):
 
 class FastWAMVelocityGraph:
     """Serialized private driver; ``capture`` injects the CUDA boundary in tests."""
-    def __init__(self, fn, *, capture=None):
+    def __init__(self, fn, *, capture=None, cache_text_crossattn_kv=False):
+        if not isinstance(cache_text_crossattn_kv, bool):
+            raise TypeError('cache_text_crossattn_kv must be bool')
         self._fn = fn
+        self._fields = _FIELDS | _TEXT_KV_FIELDS if cache_text_crossattn_kv else _FIELDS
         self._capture = capture or _capture_cuda
         self._injected_capture = capture is not None
         self._static = self._output = self._replay = self._release = self._geometry = None
@@ -142,8 +150,9 @@ class FastWAMVelocityGraph:
         self._check_live()
         if not self._active:
             raise RuntimeError('Raw velocity evaluation requires an active request')
-        if set(kwargs) != _FIELDS:
-            raise ValueError('Raw velocity graph requires exactly seven named Tensor arguments')
+        if set(kwargs) != self._fields:
+            count = 'seven' if self._fields == _FIELDS else 'nine'
+            raise ValueError(f'Raw velocity graph requires exactly {count} named Tensor arguments')
         import torch
         state = kwargs['latents_action']
         if not isinstance(state, torch.Tensor):
