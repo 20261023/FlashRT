@@ -195,13 +195,15 @@ def submit_campaign(root, script, client):
     return job_id
 
 
-def wait_campaign(root, client, *, interval=15, timeout=3600, sleep=None, clock=None):
+def wait_campaign(root, client, *, interval=15, timeout=None, sleep=None, clock=None):
     """Monitor confirmed jobs only; scheduler completion never validates results.
 
     An interrupted/expired wait can be resumed safely. No submission, ingestion,
     rejection or winner selection happens here, even for terminal failed jobs.
     """
     for name, value in (('interval', interval), ('timeout', timeout)):
+        if name == 'timeout' and value is None:
+            continue
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f'{name} must be a positive finite number of seconds')
     root = Path(root)
@@ -211,7 +213,7 @@ def wait_campaign(root, client, *, interval=15, timeout=3600, sleep=None, clock=
     if not attempts or any(item['job_id'] is None for item in attempts):
         raise ValueError('wait requires a confirmed job ID for every attempt; reconcile unknown submissions first')
     jobs = sorted({item['job_id'] for item in attempts})
-    deadline = clock() + timeout
+    deadline = math.inf if timeout is None else clock() + timeout
     while True:
         statuses = [client.status(job_id) for job_id in jobs]
         if any(item.get('job_id') != job_id for job_id, item in zip(jobs, statuses)):
@@ -336,7 +338,7 @@ def main(argv=None):
     wait.add_argument('--root', required=True)
     wait.add_argument('--ssh-host')
     wait.add_argument('--interval', type=float, default=15)
-    wait.add_argument('--timeout', type=float, default=3600)
+    wait.add_argument('--timeout', type=float, help='Optional monitoring deadline in seconds (default: wait for terminal state)')
     ingest = commands.add_parser('ingest')
     ingest.add_argument('--root', required=True)
     ingest.add_argument('--results', required=True)

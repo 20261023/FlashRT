@@ -27,7 +27,7 @@ class SlurmResources:
     partition: str = 'gpu_a800'
     gpus: int = 1
     cpus: int = 8
-    time_limit: str = '00:20:00'
+    time_limit: str | None = None
 
     def __post_init__(self):
         _directive(self.partition, 'partition')
@@ -35,7 +35,7 @@ class SlurmResources:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
                 raise ValueError(f'{name} must be a positive integer')
-        if (not isinstance(self.time_limit, str)
+        if self.time_limit is not None and (not isinstance(self.time_limit, str)
                 or re.fullmatch(r'[0-9]{2}:[0-5][0-9]:[0-5][0-9]', self.time_limit) is None
                 or self.time_limit == '00:00:00'):
             raise ValueError('time_limit must be bounded HH:MM:SS between 00:00:01 and 99:59:59')
@@ -71,8 +71,10 @@ def render_sbatch(*, job_name, workdir, output, argv,
     directives = [
         ('job-name', job_name), ('partition', resources.partition),
         ('gres', f'gpu:{resources.gpus}'), ('nodes', '1'), ('ntasks', '1'),
-        ('time', resources.time_limit), ('chdir', workdir), ('output', output),
+        ('chdir', workdir), ('output', output),
     ]
+    if resources.time_limit is not None:
+        directives.append(('time', resources.time_limit))
     lines = ['#!/bin/bash']
     # Slurm's get_argument, unlike a shell, consumes backslash escapes even
     # inside single quotes. Escape those first; argv/exports use normal quote().

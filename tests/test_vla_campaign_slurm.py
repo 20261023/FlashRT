@@ -16,7 +16,7 @@ def test_default_resources_and_site_policy_are_rendered_without_cpu_header():
     slurm = _slurm()
     resources = slurm.SlurmResources()
     assert (resources.partition, resources.gpus, resources.cpus, resources.time_limit) == (
-        'gpu_a800', 1, 8, '00:20:00')
+        'gpu_a800', 1, 8, None)
     with pytest.raises(FrozenInstanceError):
         resources.cpus = 16
     script = slurm.render_sbatch(
@@ -26,7 +26,7 @@ def test_default_resources_and_site_policy_are_rendered_without_cpu_header():
     assert directives == [
         '#SBATCH --job-name=campaign', '#SBATCH --partition=gpu_a800',
         '#SBATCH --gres=gpu:1', '#SBATCH --nodes=1', '#SBATCH --ntasks=1',
-        '#SBATCH --time=00:20:00', '#SBATCH --chdir=/repo',
+        '#SBATCH --chdir=/repo',
         '#SBATCH --output=/results/%j.log',
     ]
     assert 'set -euo pipefail' in script
