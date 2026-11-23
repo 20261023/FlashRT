@@ -116,13 +116,22 @@ class Dm05TorchFrontendCudaSm80:
             images = [observation.get(name) for name in ('image', 'wrist_image', 'wrist_image_right')]
         if not isinstance(images, (list, tuple)) or len(images) != 3 or any(i is None for i in images):
             raise ValueError('DM05 requires exactly three current images')
+        # NPZWorkload supplies RGB arrays. OpenDM's CPU entry accepts PIL.
+        from PIL import Image
+        rgb = []
+        for image in images:
+            if isinstance(image, np.ndarray):
+                if image.dtype != np.uint8 or image.ndim != 3 or image.shape[-1] != 3:
+                    raise ValueError('DM05 array images must be HWC uint8 RGB')
+                image = Image.fromarray(image)
+            rgb.append(image)
         state = np.asarray(observation.get('state'), dtype=np.float32)
         if state.shape != (14,) or not np.isfinite(state).all():
             raise ValueError('DM05 requires finite state[14]')
         if observation.get('robot_type', 'DOS W1') != 'DOS W1':
             raise ValueError('DM05 first profile supports robot_type="DOS W1" only')
         data = self.policy._prepare_model_input(
-            text=prompt, images=list(images), states=state.tolist(), robot_type='DOS W1')
+            text=prompt, images=rgb, states=state.tolist(), robot_type='DOS W1')
         original_state = np.array(data['state'], copy=True)
         prepared = self.policy.input_transform(data)
         return data, original_state, prepared

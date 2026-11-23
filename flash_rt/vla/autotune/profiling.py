@@ -39,6 +39,67 @@ def _replace_item(stack, mapping, key, value):
     stack.callback(mapping.__setitem__, key, original)
 
 
+def _dm05_intervals(stack, frontend, intervals, event_factory):
+    """Time the warmed fixed-E10 program, including its compiled-layer variant."""
+    pipe = frontend.pipeline
+    # prepare() just ran this observation. A previous request can have a
+    # different prefix length and therefore a different graph and KV buffers.
+    profile = frontend.profiles[frontend.last_prepared['input_ids'].shape[1]]
+    captured = profile.graph is not None
+    factory = event_factory
+    if captured:
+        import torch
+        def factory():
+            return torch.cuda.Event(enable_timing=True, external=True)
+
+    pairs = {stage: [(factory(), factory()) for _ in range(count)]
+             for stage, count in (('vision', 1), ('prefix', 1), ('velocity', 10))}
+    if captured:
+        for events in pairs.values():
+            for start, end in events:
+                start.record()
+                end.record()
+        torch.cuda.synchronize()
+    vision, prefill, velocity = pipe.vision, pipe.prefill, pipe.velocity
+
+    def timed_vision(*args):
+        start, end = pairs['vision'][0]
+        start.record()
+        value = vision(*args)
+        end.record()
+        # vision (including pooling/projection) is the first call inside
+        # prefill. Start the prefix-only interval here to avoid double counting.
+        pairs['prefix'][0][0].record()
+        return value
+
+    def timed_prefill(*args):
+        value = prefill(*args)
+        pairs['prefix'][0][1].record()
+        return value
+
+    def timed_velocity(state, active_profile, step):
+        start, end = pairs['velocity'][step]
+        start.record()
+        value = velocity(state, active_profile, step)
+        end.record()
+        return value
+
+    for name, fn in (('vision', timed_vision), ('prefill', timed_prefill), ('velocity', timed_velocity)):
+        _replace_attribute(stack, pipe, name, fn)
+    if captured:
+        # Python method wrappers cannot observe nodes inside the production
+        # graph. Capture a diagnostic copy after compilation and warmup, and
+        # replay that copy through the ordinary public request/host IO path.
+        graph = torch.cuda.CUDAGraph()
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        stack.callback(graph.reset)
+        with torch.inference_mode(), torch.cuda.graph(graph, stream=stream):
+            pipe.forward(profile)
+        _replace_attribute(stack, profile, 'graph', graph)
+    intervals.update(pairs)
+
+
 def profile_request(backend, request, *, event_factory=None, synchronize=None):
     """Replay one warmed request with event instrumentation, then restore it.
 
@@ -55,7 +116,9 @@ def profile_request(backend, request, *, event_factory=None, synchronize=None):
     frontend = backend.frontend
     intervals = {}
     with ExitStack() as stack:
-        if backend.config.model in ('pi0', 'pi05'):
+        if backend.config.model == 'dm05':
+            _dm05_intervals(stack, frontend, intervals, event_factory)
+        elif backend.config.model in ('pi0', 'pi05'):
             pipe = frontend.pipeline
             graph = getattr(pipe, '_graph', None)
             if graph is not None:
