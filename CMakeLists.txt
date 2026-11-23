@@ -2166,6 +2166,30 @@ target_include_directories(flash_rt_kernels PRIVATE
 # matching architecture gate. HyVLA OFF leaves the default SM87/SM110 build
 # and symbol surface unchanged.
 option(FLASHRT_ENABLE_HYVLA "Build HyVLA model kernels" OFF)
+# The active flow frontend on A800 SM80 has different cast boundaries from
+# the legacy Thor fusion, including an FP32 local profile. Keep its additive
+# kernels/bindings in a dedicated module with exactly the same build gate.
+if(FLASHRT_ENABLE_HYVLA AND GPU_ARCH STREQUAL "80")
+  pybind11_add_module(flash_rt_hyvla_sm80
+    csrc/hyvla_sm80_bindings.cpp
+    csrc/kernels/hyvla_rope_qknorm_kvwrite_sm80.cu)
+  set_target_properties(flash_rt_hyvla_sm80 PROPERTIES
+    CUDA_STANDARD 17
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/flash_rt
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/flash_rt)
+  target_include_directories(flash_rt_hyvla_sm80 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/kernels)
+  target_compile_options(flash_rt_hyvla_sm80 PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:
+      --expt-relaxed-constexpr -O3
+      --fmad=false --ftz=false --prec-div=true --prec-sqrt=true
+      ${GPU_GENCODE}
+    >)
+  target_link_libraries(flash_rt_hyvla_sm80 PRIVATE CUDA::cudart)
+  install(TARGETS flash_rt_hyvla_sm80 DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/flash_rt)
+  message(STATUS "Hy-VLA SM80 flow RoPE/QK-norm/KV-write kernels: ENABLED")
+endif()
 if(FLASHRT_ENABLE_HYVLA AND GPU_ARCH STREQUAL "110")
   target_sources(flash_rt_kernels PRIVATE
     csrc/kernels/hyvla_fused_thor.cu

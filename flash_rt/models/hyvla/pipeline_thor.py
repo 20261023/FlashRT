@@ -391,42 +391,19 @@ class HyVLAThorBF16Pipeline:
             return F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
 
     # ------------------------------------------------------------------
-    def _block(self, hs, n_vis, w_text, w_vis, qk_w, mask, cos, sin,
-               kbuf, vbuf, off, fp8w=None, fp8v=None, fp8t=None,
-               fp4v=None, fp4t=None, ffn_mk=None):
-        """One MoT transformer block over sorted ``[vision|text]`` tokens.
+    def _prepare_qkv(self, qkv, cos, sin, qk_w, kbuf, vbuf, off):
+        """Apply RoPE then QK-norm, write the KV window, and return query heads.
 
-        ``w_text``/``w_vis`` are per-branch weight tuples
-        ``(qkv, o, gu, d, ln_in, ln_post)``. When ``w_text is None`` every
-        token uses ``w_vis`` (the all-vision expert suffix). ``fp8w`` (expert)
-        or ``fp8v``/``fp8t`` (prefill vision/text branches) =
-        ``(qkv8,qkv_ws,o8,o_ws,gu8,gu_ws,d8,d_ws)`` enable graph-safe dynamic
-        FP8 for the GEMMs. Writes rope+norm'd K/V into ``kbuf``/``vbuf`` at row
-        ``off`` and attends over ``[:off+S]``.
+        Hardware-specific pipelines may replace this seam without duplicating
+        the MoT projections, attention, residuals or FFN.
         """
-        B, S, D = hs.shape
+        S = qkv.shape[0]
         hd, nh, nkv = self.head_dim, self.n_heads, self.n_kv
-        _fp8 = self._fp8 and fp8w is not None and w_text is None
-        _fp8p = self._fp8 and fp8v is not None and w_text is not None
-        _fp4p = self._fp4 and fp4v is not None and w_text is not None
-
-        if w_text is None:
-            hs_n = self._rms_norm(hs, w_vis[4])
-            qkv = self._fp8_gemm(hs_n[0], fp8w[0], fp8w[1]) if _fp8 else hs_n[0] @ w_vis[0].t()
-        else:
-            hs_v = self._rms_norm(hs[0, :n_vis], w_vis[4])
-            hs_t = self._rms_norm(hs[0, n_vis:], w_text[4])
-            if _fp8p:
-                qkv = torch.cat([self._fp8_gemm(hs_v, fp8v[0], fp8v[1]),
-                                 self._fp8_gemm(hs_t, fp8t[0], fp8t[1])], 0)
-            else:
-                qkv = torch.cat([hs_v @ w_vis[0].t(), hs_t @ w_text[0].t()], 0)
-
         if getattr(self, "_fused_attn", False):
             st = torch.cuda.current_stream().cuda_stream
             S_tot = kbuf.shape[2]
             kv_rep = kbuf.shape[1] // nkv       # 4 when the cache is pre-expanded
-            q = torch.empty(1, nh, S, hd, dtype=torch.bfloat16, device=hs.device)
+            q = torch.empty(1, nh, S, hd, dtype=torch.bfloat16, device=qkv.device)
             fvk.hyvla_rope_qknorm_kvwrite_bf16(
                 qkv.contiguous().data_ptr(),
                 cos.reshape(S, hd).contiguous().data_ptr(),
@@ -452,6 +429,39 @@ class HyVLAThorBF16Pipeline:
                 v = v.repeat_interleave(r, dim=1)
             kbuf[:, :, off:off + S].copy_(k)
             vbuf[:, :, off:off + S].copy_(v)
+        return q
+
+    def _block(self, hs, n_vis, w_text, w_vis, qk_w, mask, cos, sin,
+               kbuf, vbuf, off, fp8w=None, fp8v=None, fp8t=None,
+               fp4v=None, fp4t=None, ffn_mk=None):
+        """One MoT transformer block over sorted ``[vision|text]`` tokens.
+
+        ``w_text``/``w_vis`` are per-branch weight tuples
+        ``(qkv, o, gu, d, ln_in, ln_post)``. When ``w_text is None`` every
+        token uses ``w_vis`` (the all-vision expert suffix). ``fp8w`` (expert)
+        or ``fp8v``/``fp8t`` (prefill vision/text branches) =
+        ``(qkv8,qkv_ws,o8,o_ws,gu8,gu_ws,d8,d_ws)`` enable graph-safe dynamic
+        FP8 for the GEMMs. Writes rope+norm'd K/V into ``kbuf``/``vbuf`` at row
+        ``off`` and attends over ``[:off+S]``.
+        """
+        B, S, D = hs.shape
+        _fp8 = self._fp8 and fp8w is not None and w_text is None
+        _fp8p = self._fp8 and fp8v is not None and w_text is not None
+        _fp4p = self._fp4 and fp4v is not None and w_text is not None
+
+        if w_text is None:
+            hs_n = self._rms_norm(hs, w_vis[4])
+            qkv = self._fp8_gemm(hs_n[0], fp8w[0], fp8w[1]) if _fp8 else hs_n[0] @ w_vis[0].t()
+        else:
+            hs_v = self._rms_norm(hs[0, :n_vis], w_vis[4])
+            hs_t = self._rms_norm(hs[0, n_vis:], w_text[4])
+            if _fp8p:
+                qkv = torch.cat([self._fp8_gemm(hs_v, fp8v[0], fp8v[1]),
+                                 self._fp8_gemm(hs_t, fp8t[0], fp8t[1])], 0)
+            else:
+                qkv = torch.cat([hs_v @ w_vis[0].t(), hs_t @ w_text[0].t()], 0)
+
+        q = self._prepare_qkv(qkv, cos, sin, qk_w, kbuf, vbuf, off)
         k_use = kbuf[:, :, : off + S]
         v_use = vbuf[:, :, : off + S]
 

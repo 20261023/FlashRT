@@ -37,8 +37,11 @@ class HyVLAFlowFrontend(HyVLATorchFrontendThor):
 
     A frontend instance owns mutable graph buffers and is not reentrant.
     ``num_steps`` selects an Euler budget only. For ProbeFlow use
-    ``probeflow_config.max_steps`` instead. Quantized/fused flags are accepted
-    only as explicit ``False``; unknown options raise instead of being ignored.
+    ``probeflow_config.max_steps`` instead.
+    ``fused_rope_qknorm_kvwrite=True`` opts into the SM80 attention-preparation
+    kernel for both numerical profiles; it preserves the active cast boundaries
+    and leaves attention and GEMMs unchanged. The broader quantized/fused flags
+    accept only explicit ``False``; unknown options raise.
     ``numerical_profile`` defaults to the unchanged semantic BF16 path; the
     official-local option matches verified local cast boundaries, not a full
     official model or a claim of passing its recorded action oracle.
@@ -51,6 +54,7 @@ class HyVLAFlowFrontend(HyVLATorchFrontendThor):
                  probeflow_config: ProbeFlowConfig | None = None,
                  num_steps: int | None = None, use_cuda_graph: bool = True,
                  numerical_profile: str = "semantic_bf16",
+                 fused_rope_qknorm_kvwrite: bool = False,
                  use_fp8: bool = False, use_fp8_vit: bool = False,
                  use_fused: bool = False, use_fp4: bool = False,
                  use_fused_quant: bool = False, use_autotune: bool = False,
@@ -72,6 +76,8 @@ class HyVLAFlowFrontend(HyVLATorchFrontendThor):
             raise ValueError("Use probeflow_config.max_steps, not num_steps, for ProbeFlow")
         if not isinstance(use_cuda_graph, bool):
             raise TypeError("use_cuda_graph must be a bool")
+        if not isinstance(fused_rope_qknorm_kvwrite, bool):
+            raise TypeError("fused_rope_qknorm_kvwrite must be a bool")
         flags = {
             "use_fp8": use_fp8, "use_fp8_vit": use_fp8_vit,
             "use_fused": use_fused, "use_fp4": use_fp4,
@@ -86,22 +92,36 @@ class HyVLAFlowFrontend(HyVLATorchFrontendThor):
         if not isinstance(hardware, str) or (
                 hardware != "auto" and hardware not in _HARDWARE_CAPABILITIES):
             raise ValueError(f"Unknown HyVLA BF16 hardware {hardware!r}")
+        if (fused_rope_qknorm_kvwrite and hardware != "auto"
+                and _HARDWARE_CAPABILITIES[hardware] != (8, 0)):
+            raise ValueError("HyVLA fused_rope_qknorm_kvwrite=True requires SM80 hardware")
         self.hardware = hardware
         self._numerical_profile = numerical_profile
+        self._fused_rope_qknorm_kvwrite = fused_rope_qknorm_kvwrite
         self.sampler = sampler
         self.probeflow_config = (
             (probeflow_config or ProbeFlowConfig()) if sampler == "probeflow" else None)
         self._requested_num_steps = num_steps
         self.use_cuda_graph = use_cuda_graph
         self._last_sampler_metadata = None
-        # The base constructor binds HyVLAThorBF16Pipeline. All its optional
-        # SM110-specific kernels remain disabled by these explicit flags.
+        # Disable the legacy Thor fusion: it has different RoPE rounding and
+        # BF16-only Q/K. The SM80 pipeline replaces only attention preparation.
         super().__init__(checkpoint_dir, hardware=hardware, **flags)
+        if fused_rope_qknorm_kvwrite:
+            from flash_rt.models.hyvla.pipeline_sm80 import HyVLASM80BF16Pipeline
+
+            self.pipe = HyVLASM80BF16Pipeline(
+                self, attention_prep=self._sm80_attention_prep)
 
     @property
     def numerical_profile(self):
         """Fixed for this graph-owning instance; not a runtime precision toggle."""
         return self._numerical_profile
+
+    @property
+    def fused_rope_qknorm_kvwrite(self):
+        """Fixed for this instance's prefix and per-time velocity graphs."""
+        return self._fused_rope_qknorm_kvwrite
 
     def _load_weights(self):
         if self.numerical_profile == "official_local_fp32":
@@ -156,6 +176,14 @@ class HyVLAFlowFrontend(HyVLATorchFrontendThor):
                 f"Requested hardware={self.hardware!r} requires capability "
                 f"{expected}, found actual capability {capability}")
         self.capability = capability
+        if getattr(self, "_fused_rope_qknorm_kvwrite", False):
+            if capability != (8, 0):
+                raise RuntimeError(
+                    "HyVLA fused_rope_qknorm_kvwrite=True requires actual SM80 capability (8, 0)")
+            from flash_rt.models.hyvla.pipeline_sm80 import load_attention_prep
+
+            # Check the requested build before checkpoint IO or graph capture.
+            self._sm80_attention_prep = load_attention_prep(self.numerical_profile)
 
     def _precompute_time_embs(self):
         """Keep exact callback float keys and never treat a union as a budget."""
@@ -298,6 +326,11 @@ class HyVLAFlowFrontend(HyVLATorchFrontendThor):
         metadata["embedding_timesteps"] = [
             self._embedding_times[self._time_index[time]] for time in metadata["timesteps"]]
         metadata["profile_scope"] = "local_math_hooks_not_official_exact"
+        metadata["attention_preparation"] = (
+            "hyvla_sm80_fused_rope_qknorm_kvwrite"
+            if getattr(self, "_fused_rope_qknorm_kvwrite", False)
+            else "torch"
+        )
         self._last_sampler_metadata = metadata
         return b["x"].clone()
 
