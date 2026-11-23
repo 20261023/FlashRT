@@ -22,6 +22,8 @@ def enumerate_candidates(baseline: Candidate, *, euler_steps=(2, 5, 10),
     """
     if not isinstance(baseline, Candidate):
         raise TypeError('baseline must be a Candidate')
+    if baseline.backend.model == 'dm05':
+        raise ValueError('DM05 uses fixed Euler10. Generate proposals with compile.dm05_inductor or launch.cuda_graph.')
     steps = []
     for value in euler_steps:
         if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:

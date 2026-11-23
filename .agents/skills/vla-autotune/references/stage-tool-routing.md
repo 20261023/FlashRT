@@ -38,8 +38,9 @@ python -m flash_rt.vla.autotune.stages show $S       # playbook 症状行和默�
 这些是从代码里读到的事实，不是 winner；数字见 `docs/vla_autotune_experiments.md`。
 
 - **π0 / π0.5**：Euler + CUDA Graph 时，profile 只有一个 `full` 区间，没法拆。要拆分时，做一次 ProbeFlow 或 eager 诊断请求。π0.5 的 prefix 是大头，先看 prefix 再考虑减步数。
-- **Hy**：现在有 `vision`（ViT + merger 的 graph）、`prefix`、`velocity` 三个区间。旧结果没有 `vision`，会报 `partial`。当前接口固定走纯 BF16，FP8/FP4/fused 开关都被禁用。fused RoPE/QK-norm/KV-write 在 SM80 上没有编译，属于 port 或 patch 工作。
-- **FastWAM**：`condition_vae_video_prefill`（VAE + video prefill，每次请求一次）加 `velocity`。文本 context 和 proprio 通过 cross-attention 进入模型，每一步每一层都重新投影；KV cache 里只有首帧视频。所以 `cache.fastwam_text_crossattn_kv` 是 exact 的 patch 机会，尚未实现、尚未测量。
+- **Hy** 有 `vision`（ViT 与 merger）、`prefix`、`velocity` 三个区间。SM80 的 `fusion.hy_rope_qknorm_kvwrite` 需要构建 `flash_rt_hyvla_sm80`。查看 `tools list --all` 获取构建条件。
+- **FastWAM** 有 `condition_vae_video_prefill` 和 `velocity`。`cache.fastwam_text_crossattn_kv` 可把文本投影移到每次请求的准备阶段，比较时要同时计入准备开销和所有去噪步。
+- **DM0.5** 有包含池化与投影的 `vision`、独立的 `prefix` 和十次 `velocity`。用 `compile.dm05_inductor` 对照相同输入和 Euler10 预算。公开动作是 DOS W1 绝对坐标的 `[50,14]`。
 - **步数类结论**：用少量输入选出的步数，可能在更多输入上失败。接受前一定要扩大输入集。
 - **ProbeFlow**：默认 ε 可能把所有输入都判成“直线”，只走 2 步，误差很大。用之前先看 cosine 的分布。
 

@@ -62,6 +62,36 @@ for source identities, compiler cold cost, memory limits and failure history.
 
 ## Fixed first profile
 
+The campaign worker accepts the same three RGB views as NPZ arrays and compares
+absolute FP32 CPU `[50,14]` actions. To reproduce the four OpenDM requests,
+export the images, states, prompts and the author's exact saved BF16 noise on
+CPU. Use a new private directory for the workload.
+
+```bash
+python examples/vla_autotune/prepare_dm05_workload.py \
+  --source "$OPENDM" --checkpoint "$CHECKPOINT" --reference "$AUTHOR_RESULT" \
+  --output "$RUN/inputs"
+python -m flash_rt.vla.autotune.tools propose --tool compile.dm05_inductor \
+  --baseline "$RUN/inputs/baseline.json" --out "$RUN/compiled.json"
+python -m flash_rt.vla.autotune.controller init --root "$RUN/campaign" \
+  --comparison-id dm05-e10 --baseline "$RUN/inputs/baseline.json" \
+  --workload "$RUN/inputs/workload.json" --output-root "$RUN/results" \
+  --proposals "$RUN/compiled.json" --quality-gate "$(cat "$RUN/inputs/quality.json")" \
+  --warmup 4 --repeats 40
+```
+
+Use absolute shared paths when running the campaign on Slurm. The diagnostic
+request reports one vision interval including pooling/projection, one prefix
+interval after vision and ten velocity intervals. With graph replay enabled,
+the profiler instruments a separate graph of the same warmed exact-length
+program. Formal samples use the production graph. `stages attribute` reports
+remaining host IO, Euler updates and unassigned time in the residual.
+
+Pass `--author-baseline "$RUN/author.json"` to the same `controller init`
+command to require the author quality gate as well. The
+[author configuration](../examples/vla_autotune/author_baseline.md) accepts
+the original four-case DM result with `mode="saved"` and the case seed map.
+
 - NVIDIA compute capability8.0 (`cuda_sm80`), Torch only.
 - Dexmal/DM05 base revision `5cd18734814abb075a9ccfd9ad6d16777b5cf10e`;
   `model.safetensors` SHA256

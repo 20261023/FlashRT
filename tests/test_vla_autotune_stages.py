@@ -74,7 +74,7 @@ def test_dataflow_seams_are_mapped(required):
 
 
 def test_stage_tables_are_consistent():
-    assert set(MODEL_STAGES) == set(PROFILE_KEYS) == {'pi0', 'pi05', 'hyvla', 'fastwam'}
+    assert set(MODEL_STAGES) == set(PROFILE_KEYS) == {'pi0', 'pi05', 'hyvla', 'fastwam', 'dm05'}
     for model, items in MODEL_STAGES.items():
         assert items[0].stage_id == 'host.input'
         for item in items:

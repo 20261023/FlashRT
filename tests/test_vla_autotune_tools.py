@@ -53,6 +53,8 @@ def candidate(candidate_id, model, **fields):
 def baselines():
     """Realistic baselines per model, including non-default samplers/backends."""
     return {
+        'dm05': [candidate('dm-base', 'dm05', hardware='cuda_sm80', num_steps=10,
+                           options={'source_dir': '/w/opendm'})],
         'pi0': [candidate('pi0-base', 'pi0', num_steps=10, options={'num_views': 2, 'chunk_size': 50}),
                 candidate('pi0-eager', 'pi0', options={'use_cuda_graph': False})],
         'pi05': [candidate('pi05-base', 'pi05', num_steps=10,
@@ -303,7 +305,11 @@ def test_every_ready_config_tool_produces_registry_valid_candidates_for_every_mo
 
 
 def test_sampler_tools_match_search_enumerate_candidates():
-    for points in baselines().values():
+    for model, points in baselines().items():
+        if model == 'dm05':
+            with pytest.raises(ValueError, match='fixed Euler10'):
+                enumerate_candidates(points[0])
+            continue
         for baseline in points:
             steps = (2, 3, 7)
             ours = tools.propose('sampler.euler_steps', baseline, steps=list(steps))

@@ -69,6 +69,7 @@
 - π0 / π0.5：Euler + CUDA Graph 只有一个不可拆的 `full` 区间，要拆就另做诊断请求。
 - Hy：有 `vision`、`prefix`、`velocity` 三个区间。
 - FastWAM：有 `condition_vae_video_prefill` 和 `velocity` 两个区间。
+- DM0.5：`vision` 包含视觉编码、池化和投影，`prefix` 从视觉输出开始，`velocity` 记录十次动作专家调用。整图模式用独立诊断图插入计时事件。每个请求返回绝对 FP32 CPU `[50,14]` 动作。
 
 ```bash
 python -m flash_rt.vla.autotune.stages list --model hyvla
@@ -85,9 +86,11 @@ python -m flash_rt.vla.autotune.tools list --all --markdown
 |---|---|---|
 | 配置（现成） | `sampler.euler_steps`、`sampler.probeflow`、`launch.cuda_graph`、`gemm.fastwam_linear_backend`、`compile.fastwam_inductor`（FastWAM 的 torch.compile）、`prefix.vision_pool`、`prefix.state_prompt_mode`、`precision.hy_numerical_profile` | ready |
 | 分析 | `profile.stage_intervals`、`profile.pi05_dataflow`、`analysis.lever_pricing` 为 ready；`profile.ncu_kernel` 需要 ncu 权限 | — |
-| 官方基线 | `baseline.official_impl`：π0 / π0.5 / FastWAM 用 `official_native_latency.py`，Hy 用 `official_hyvla_latency.py` | ready |
+| 官方基线 | `baseline.official_impl`：π0 / π0.5 / FastWAM 用 `official_native_latency.py`，Hy 用 `official_hyvla_latency.py`，DM0.5 用 `official_dm05_latency.py` | ready |
+| DM0.5 配置 | `compile.dm05_inductor` 生成 Torch 编译候选，`launch.cuda_graph` 可从 eager 基线生成开图候选。固定 BF16、三视角、Euler10 | ready |
 | 现成的外部项目 | `kernel.forgekernel`（OpenBMB/ForgeKernel）、`kernel.kernelagent`（meta-pytorch/KernelAgent）、`engine.apxinf`（infinigence/ApxInf，只支持 π0.5）、`compile.aitune`（NVIDIA AITune） | needs_setup |
-| 待实现（这一游没有现成方法） | `cache.fastwam_text_crossattn_kv`、`fusion.hy_rope_qknorm_kvwrite`、`quant.int8_pi05` | needs_implementation |
+| 需要原生扩展的 SM80 配置 | `fusion.hy_rope_qknorm_kvwrite`、`quant.int8_pi05` | needs_setup，`tools list --all` 可见，`tools propose` 可先生成候选 |
+| FastWAM 请求内缓存 | `cache.fastwam_text_crossattn_kv` 在附加当前 proprio 后计算各层文本 K/V，供同一请求内所有去噪步使用 | ready |
 | 在 A800 上做不了 | `quant.fp8`、`quant.nvfp4`；以及语义会变的 `cache.pi05_cross_frame_kv` 和面向吞吐的 `throughput.pi05_batch` | blocked |
 
 外部项目在 A800 上要先做的准备：
@@ -141,9 +144,21 @@ python -m flash_rt.vla.autotune.decisions summary --log $AT/decisions.jsonl --ma
 
 导出的步骤表带 actor 列，可以直接贴进报告，回答“哪些步骤是人引导的、哪些是 agent 自己做的”。
 
-## 八、还没做的
+## 八、实验范围与环境
 
-- 所有新代码只在 CPU 上测过，还没在 A800 上端到端跑过快照 campaign 和外部工具。
-- 官方实现基线脚本输出的是独立 JSON，还没接进 controller 的 campaign（没有 stage profile 和复测）。
-- ForgeKernel 的 sm80 补丁、KernelAgent 的环境、ApxInf 和 AITune 的构建都还没装。
-- `cache.fastwam_text_crossattn_kv`、`fusion.hy_rope_qknorm_kvwrite`、`quant.int8_pi05` 还要写实现。
+- Hy 配置实验已在 A800 作业 `356212` 中跑完整轮，使用 7 个输入、每配置 35 次正式计时和首尾两次基线。项目需要分别记录带源码快照的实验和各外部工具的实测情况。
+- `controller init --author-baseline /absolute/author.json` 将作者实现纳入同一轮实验，支持现场运行和绑定已有正式输出。所有候选及首尾基线同时检查项目误差 `quality` 和作者误差 `author_quality`。具体参数见[作者基线流程](../examples/vla_autotune/author_baseline.md)。
+- ForgeKernel、KernelAgent 和 AITune 的外部环境按各自 adapter 的 `setup` 字段部署。FastWAM、DM0.5 的 ApxInf 历史运行边界见[五模型延迟表](reports/2026-11-14-vla-latency-comparison.zh-CN.md)。
+
+### 从已测配置生成候选
+
+```bash
+python -m flash_rt.vla.autotune.tools propose --tool cache.fastwam_text_crossattn_kv \
+  --baseline fastwam.json --out fastwam-text-kv.json
+python -m flash_rt.vla.autotune.tools propose --tool fusion.hy_rope_qknorm_kvwrite \
+  --baseline hy.json --out hy-fused.json
+python -m flash_rt.vla.autotune.tools propose --tool quant.int8_pi05 \
+  --baseline pi05-euler.json --param 'modes=["encoder","encoder_decoder"]' --out pi05-w8a8.json
+```
+
+Hy 在 `-DGPU_ARCH=80 -DFLASHRT_ENABLE_HYVLA=ON` 构建中使用独立目标 `flash_rt_hyvla_sm80`。π0.5 在 `-DGPU_ARCH=80 -DENABLE_SM80_INT8_CUTLASS=ON` 构建中使用 `flash_rt_kernels` 的 W8A8 路径。运行 π0.5 候选时需要移除部署脚本导出的 `FVK_PI05_RTX_FORCE_BF16`。`encoder` 量化前缀投影，`encoder_decoder` 还量化动作专家投影，两种配置均使用动态逐行激活尺度。

@@ -33,14 +33,14 @@ _CAPABILITIES = {
         'hardware': ('cuda_sm80', 'rtx_sm87', 'rtx_sm89', 'rtx_sm120'),
         'action_domain': 'frontend-decoded-libero-7d',
         'options': ('num_views', 'chunk_size', 'max_prompt_len', 'use_cuda_graph',
-                    'state_prompt_mode', 'vision_pool_factor'),
+                                    'state_prompt_mode', 'vision_pool_factor', 'int8_mode'),
     },
     'hyvla': {
         'name': 'Hy-Embodied-0.5-VLA', 'precision': 'bf16',
         'frameworks': ('torch',),
         'hardware': ('cuda_sm80', 'rtx_sm87', 'rtx_sm89', 'thor', 'rtx_sm120'),
         'action_domain': 'normalized-padded-model-actions',
-        'options': ('use_cuda_graph', 'numerical_profile'),
+        'options': ('use_cuda_graph', 'numerical_profile', 'fused_rope_qknorm_kvwrite'),
     },
     'fastwam': {
         'name': 'FastWAM', 'precision': 'bf16',
@@ -49,10 +49,16 @@ _CAPABILITIES = {
         'action_domain': 'normalized-model-actions-batched',
         'options': ('source_dir', 'model_config', 'backbone_dir',
                     'sigma_shift', 'action_horizon', 'native_linear_backend', 'use_cuda_graph',
-                    'compile_action_infer'),
+                     'compile_action_infer', 'cache_text_crossattn_kv'),
         'execution_coverage': 'partial-native-linear-upstream-other-operators',
     },
 }
+
+
+def _execution_precision(config, spec):
+    if config.model == 'pi05' and config.options.get('int8_mode', 'none') in ('encoder', 'encoder_decoder'):
+        return 'mixed_int8_bf16'
+    return spec['precision']
 
 
 def describe_backend(config: BackendConfig) -> dict:
@@ -62,7 +68,7 @@ def describe_backend(config: BackendConfig) -> dict:
         'model': config.model, 'name': spec['name'], 'backend': config.backend,
         'sampler': config.sampler, 'framework': config.framework,
         'hardware': config.hardware,
-        'precision': spec['precision'] if config.precision == 'auto' else config.precision,
+        'precision': _execution_precision(config, spec) if config.precision == 'auto' else config.precision,
         'num_steps': config.num_steps,
         'probeflow': None if config.probeflow is None else asdict(config.probeflow),
         'frameworks': list(spec['frameworks']),
@@ -116,7 +122,7 @@ def validate_config(config: BackendConfig) -> dict:
         raise NotImplementedError(spec['blocker'])
     if config.framework not in spec['frameworks']:
         raise ValueError(f'{config.model} has no {config.framework} frontend in this backend')
-    precision = spec['precision']
+    precision = _execution_precision(config, spec)
     if config.precision not in ('auto', precision):
         raise ValueError(f'{config.model} backend uses {precision}, not {config.precision}')
     unknown = set(config.options) - set(spec['options'])
@@ -138,6 +144,12 @@ def validate_config(config: BackendConfig) -> dict:
     if config.model == 'hyvla' and config.options.get('numerical_profile', 'semantic_bf16') not in (
             'semantic_bf16', 'official_local_fp32'):
         raise ValueError('Unknown HyVLA numerical_profile')
+    if config.model == 'hyvla' and 'fused_rope_qknorm_kvwrite' in config.options:
+        fusion = config.options['fused_rope_qknorm_kvwrite']
+        if not isinstance(fusion, bool):
+            raise ValueError('fused_rope_qknorm_kvwrite must be a bool')
+        if fusion and config.hardware not in ('auto', 'cuda_sm80'):
+            raise ValueError('Hy fused_rope_qknorm_kvwrite requires SM80')
     if config.model == 'dm05':
         optimization = config.options.get('project_optimization', 'none')
         if optimization not in ('none', 'compiled'):
@@ -155,6 +167,8 @@ def validate_config(config: BackendConfig) -> dict:
         if type(capacity) is not int or capacity < 1:
             raise ValueError('max_graph_profiles must be a positive integer')
     if config.model == 'fastwam':
+        if not isinstance(config.options.get('cache_text_crossattn_kv', False), bool):
+            raise TypeError('cache_text_crossattn_kv must be bool')
         compiled = config.options.get('compile_action_infer', False)
         if not isinstance(compiled, bool):
             raise TypeError('compile_action_infer must be bool')
@@ -175,10 +189,13 @@ def validate_config(config: BackendConfig) -> dict:
         validate_sampler(config.sampler, config.options['sigma_shift'],
                          config.num_steps, config.probeflow)
     if config.model == 'pi05':
-        for name in ('FVK_PI05_RTX_FORCE_INT8', 'FVK_PI05_RTX_INT8_ENCODER_ONLY',
-                     'FVK_PI05_RTX_INT8_VISION'):
-            if os.environ.get(name, '0') == '1':
-                raise ValueError(f'The BF16 VLA backend conflicts with {name}=1')
+        from flash_rt.models.pi05.int8 import validate_int8_mode
+        mode = config.options.get('int8_mode', 'none')
+        if mode is None:
+            raise ValueError('int8_mode must explicitly name none, encoder, or encoder_decoder')
+        validate_int8_mode(mode, sampler=config.sampler)
+        if mode != 'none' and (config.framework != 'torch' or config.hardware not in ('auto', 'cuda_sm80')):
+            raise ValueError('Pi0.5 W8A8 requires the Torch SM80 frontend')
         for name, allowed in (
                 ('FLASHRT_PI05_PREFIX_PRECISION', ('fp8',)),
                 ('FLASHRT_PI05_DECODER_PRECISION', ('fp8',)),
@@ -197,7 +214,7 @@ def validate_config(config: BackendConfig) -> dict:
 def load_backend(config: BackendConfig) -> VLABackend:
     """Construct the requested backend; never substitute another model/method."""
     spec = validate_config(config)
-    precision = spec['precision']
+    precision = _execution_precision(config, spec)
     decoder = None
     if config.model in ('pi0', 'pi05'):
         from .processing import load_action_decoder
@@ -233,6 +250,10 @@ def load_backend(config: BackendConfig) -> VLABackend:
             kwargs['use_fp8_decoder'] = False
         else:
             kwargs['hardware'] = hardware
+            if config.framework == 'torch':
+                kwargs.setdefault('int8_mode', 'none')
+            else:
+                kwargs.pop('int8_mode', None)
             # These internal selector labels only affect quantized branches;
             # use_fp8=False keeps actual execution BF16. Pin them so no ambient
             # NVFP4/skinny selection silently changes the requested path.

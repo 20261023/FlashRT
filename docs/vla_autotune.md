@@ -94,7 +94,18 @@ list. No universal robot preprocessing is guessed. File IO and request host
 copies are outside timing; frontend processing/transfers/model/routing/completed
 CPU output remain inside. This is not HTTP or robot-control latency.
 
+For DM0.5, `examples/vla_autotune/prepare_dm05_workload.py` exports four author
+requests including their saved initial noise. The [DM0.5 campaign
+example](dm05_usage.md#fixed-first-profile) generates a fixed-Euler10
+reference, compiled candidate and bookend.
+
 ## Use
+
+The controller accepts `--author-baseline /absolute/author.json` to include
+an original-author producer or a bound saved reference in the same campaign.
+Internal reference drift, numerical quality against the author and timing
+comparability have distinct fields in `summary.json`. See the
+[author configuration and producer protocols](../examples/vla_autotune/author_baseline.md).
 
 ```bash
 python -m flash_rt.vla.autotune.controller init \

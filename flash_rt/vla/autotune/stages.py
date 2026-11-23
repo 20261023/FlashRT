@@ -131,11 +131,11 @@ REFERENCED_TOOL_IDS = frozenset({
     'kernel.forgekernel', 'kernel.kernelagent', 'engine.apxinf',
     'profile.stage_intervals', 'profile.pi05_dataflow', 'profile.ncu_kernel',
     'analysis.lever_pricing', 'baseline.official_impl', 'compile.aitune',
-    'compile.fastwam_inductor',
+    'compile.fastwam_inductor', 'compile.dm05_inductor',
 })
 
 STAGE_KINDS = ('compute', 'host', 'count', 'kernel', 'precision')
-MODELS = ('pi0', 'pi05', 'hyvla', 'fastwam')
+MODELS = ('pi0', 'pi05', 'hyvla', 'fastwam', 'dm05')
 UNATTRIBUTED = 'unattributed'
 
 
@@ -206,13 +206,13 @@ _STAGE_LIST = (
               ('TTFT 很高、生成后较快', '图片/帧数增加导致很慢', 'step 少了但端到端几乎没变'),
               ('prefix.vision_pool', 'prefix.state_prompt_mode', 'fusion.hy_rope_qknorm_kvwrite',
                'profile.pi05_dataflow', 'engine.apxinf', 'kernel.forgekernel', 'compile.aitune',
-               'compile.fastwam_inductor')),
+                'compile.fastwam_inductor', 'compile.dm05_inductor')),
     StageInfo('denoise.velocity', 'Action-expert evaluation', 'compute',
               'ONE action-expert (velocity field) evaluation; total cost is per-call time x NFE.',
               ('VLA expert 很小却不快', 'denoising 总耗时高'),
               ('launch.cuda_graph', 'gemm.fastwam_linear_backend', 'cache.fastwam_text_crossattn_kv',
                'fusion.hy_rope_qknorm_kvwrite', 'profile.pi05_dataflow', 'kernel.forgekernel',
-               'kernel.kernelagent', 'compile.aitune', 'compile.fastwam_inductor')),
+                'kernel.kernelagent', 'compile.aitune', 'compile.fastwam_inductor', 'compile.dm05_inductor')),
     StageInfo('denoise.schedule', 'Denoising schedule (NFE)', 'count',
               'Number of action-expert calls chosen by the sampler (Euler N steps or ProbeFlow '
               'probe + adaptive schedule). A count, not a time interval.',
@@ -268,6 +268,8 @@ STAGE_IDS = tuple(STAGES)
 # Interval key -> stages covered, per model (keys from profiling.profile_request).
 
 PROFILE_KEYS = {
+    'dm05': {'vision': ('vision.encode', 'vision.project'),
+             'prefix': ('prefix.prefill',), 'velocity': ('denoise.velocity',)},
     'pi0': {'full': ('vision.encode', 'vision.project', 'prefix.prefill', 'denoise.velocity'),
             'prefix': ('vision.encode', 'vision.project', 'prefix.prefill'),
             'velocity': ('denoise.velocity',)},
@@ -286,6 +288,7 @@ PROFILE_KEYS = {
 
 # Keys a CUDA-graph (or FastWAM) profiling pass is expected to produce.
 _EXPECTED_KEYS = {
+    ('dm05', 'euler'): ('vision', 'prefix', 'velocity'),
     ('pi0', 'euler'): ('full',), ('pi0', 'probeflow'): ('prefix', 'velocity'),
     ('pi05', 'euler'): ('full',), ('pi05', 'probeflow'): ('prefix', 'velocity'),
     # Records written before the ViT+merger graph was timed lack 'vision'; they
@@ -312,6 +315,10 @@ _HY_PIPE = 'flash_rt/models/hyvla/pipeline_thor.py'
 _FW_PIPE = 'flash_rt/models/fastwam/pipeline.py'
 _FW_GRAPH = 'flash_rt/models/fastwam/velocity_graph.py'
 _FW_LINEAR = 'flash_rt/models/fastwam/native_linear.py'
+_DM_PIPE = 'flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80'
+_DM_COMP = 'flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80'
+_DM_FE = 'flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80'
+_DM_GRAPH = 'flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05ProfileSm80'
 _SAMPLER = 'flash_rt/sampling/torch_probeflow.py'
 _BACKEND = 'flash_rt/vla/backend.py'
 _REGISTRY = 'flash_rt/vla/registry.py'
@@ -374,14 +381,35 @@ def _pi_family(model, rtx, probeflow, frontend, frontend_cls, pipe_cls, pf_cls):
                                         f'{pipeline}._decoder_layer'), (), ()),
         ModelStage('precision.weights', (f'{frontend}:{frontend_cls}._quantize_all_fp8',
                                          f'{_REGISTRY}:load_backend'), (),
-                   ('The unified backend forces BF16 execution (use_fp8=False); FP8 needs SM>=89, '
-                    'NVFP4 needs SM120.',)
-                   + (('INT8 paths need -DENABLE_SM80_INT8_CUTLASS=ON and a registry unblock.',)
+                    ('The unified backend disables FP8. Query the active frontend precision in '
+                     'backend_metadata; quantization tools describe their hardware requirements.',)
+                    + (('SM80 Torch Euler can opt into mixed W8A8 projections via int8_mode '
+                        'with -DENABLE_SM80_INT8_CUTLASS=ON.',)
                       if model == 'pi05' else ())),
     )
 
 
 MODEL_STAGES = {
+    'dm05': (
+        ModelStage('host.input', (f'{_DM_FE}._host_input', f'{_DM_FE}._update_profile'), (), (_HOST_RESIDUAL,)),
+        ModelStage('vision.encode', (f'{_DM_PIPE}.vision', f'{_DM_COMP}.vision'), ('vision',),
+                   ('Three current RGB views, 27 SigLIP layers.',)),
+        ModelStage('vision.project', (f'{_DM_PIPE}.vision', f'{_DM_COMP}.vision'), ('vision',),
+                   ('Pooling and projection to 768 tokens share the vision interval.',)),
+        ModelStage('prefix.prefill', (f'{_DM_PIPE}.prefill', f'{_DM_COMP}.prefill'), ('prefix',),
+                   ('34 layers write prefix KV. Timing starts after vision returns.',)),
+        ModelStage('denoise.velocity', (f'{_DM_PIPE}.velocity', f'{_DM_COMP}.velocity'), ('velocity',),
+                   ('One event pair per action expert call for the fixed 50-position chunk.',)),
+        ModelStage('denoise.schedule', (f'{_DM_PIPE}.forward',), (), ('Fixed Euler10.',)),
+        ModelStage('denoise.routing', (f'{_DM_PIPE}.forward',), (), (_HOST_RESIDUAL,)),
+        ModelStage('host.launch', (f'{_DM_GRAPH}.capture', f'{_DM_GRAPH}.run'), (),
+                   ('Whole-model graphs are keyed by exact prefix length.',)),
+        ModelStage('host.output', (f'{_DM_FE}.infer',), (),
+                   ('D2H and DOS W1 absolute FP32 action reconstruction.', _HOST_RESIDUAL)),
+        ModelStage('kernel.gemm', (f'{_DM_PIPE}.linear', f'{_DM_COMP}.velocity')),
+        ModelStage('kernel.attention', ('flash_rt/models/dm05/attention_cuda_sm80.py:Dm05AttentionSm80.attend',)),
+        ModelStage('kernel.norm_elementwise', ('flash_rt/models/dm05/pipeline_cuda_sm80.py:adaptive_rms',)),
+    ),
     'pi0': _pi_family('pi0', _PI0_RTX, _PI0_PF, _PI0_FE, 'Pi0TorchFrontendRtx',
                       'Pi0Pipeline', 'Pi0ProbeFlowPipeline'),
     'pi05': _pi_family('pi05', _PI05_RTX, _PI05_PF, _PI05_FE, 'Pi05TorchFrontendRtx',
@@ -426,9 +454,10 @@ MODEL_STAGES = {
                    ('x_t.float().cpu().numpy() then denormalization/pose handling.', _HOST_RESIDUAL)),
         ModelStage('kernel.attention', (f'{_HY_PIPE}:HyVLAThorBF16Pipeline._attn',), (), ()),
         ModelStage('kernel.norm_elementwise', (f'{_HY_PIPE}:HyVLAThorBF16Pipeline._block',
-                                               f'{_HY_PIPE}:HyVLAThorBF16Pipeline._rms_norm'), (),
-                   ('RoPE + QK-norm + KV-write run unfused on SM80: the fused BF16 kernel is built '
-                    'only for 110 or 87/120/121 with FLASHRT_ENABLE_HYVLA=ON.',)),
+                                               f'{_HY_PIPE}:HyVLAThorBF16Pipeline._rms_norm',
+                                               'flash_rt/models/hyvla/pipeline_sm80.py:HyVLASM80BF16Pipeline._prepare_qkv'), (),
+                   ('SM80 fused_rope_qknorm_kvwrite selects flash_rt_hyvla_sm80 in both '
+                    'prefix and velocity, with the numerical_profile fixed at construction.',)),
         ModelStage('precision.weights', (f'{_HY_PF}:HyVLAFlowFrontend._operation_dtypes',
                                          f'{_HY_PF}:HyVLAFlowFrontend.__init__'), (),
                    ('numerical_profile semantic_bf16 vs official_local_fp32 is an alignment choice, '
@@ -459,7 +488,7 @@ MODEL_STAGES = {
                     'denoising step (ActionDiT text_embedding(context) + per-layer cross-attention K/V '
                     'in model._denoise_action_with_video_cache); only the first-frame video KV is '
                     'cached once. Known opportunity: cache.fastwam_text_crossattn_kv '
-                    '(hoist/pre-project per request).',
+                     'pre-projects them once per request when enabled.',
                     'Works with and without the velocity CUDA graph.')),
         ModelStage('denoise.schedule', (f'{_FW_PIPE}:FastWAMActionPipeline._euler',
                                         f'{_FW_PIPE}:FastWAMActionPipeline._build_time_bank'), (),

@@ -4,7 +4,8 @@
 adapter, built from that adapter's own ``SPEC`` (``external.external_specs``).
 ``list_tools`` filters by model, hardware capability, stage and lane, hiding
 tools that are not ready unless ``include_unavailable``. ``propose`` runs a
-ready config/analysis tool's deterministic generator and returns Candidates;
+config/analysis generator and returns Candidates. Native build prerequisites
+are checked on the target, so ``needs_setup`` config tools can also be planned;
 patch, port, baseline and external tools never generate candidates here: their
 adapters prepare jobs and ``patches.candidate_from_proposal`` turns their
 stored source change into a Candidate. Importing this package loads no model,
@@ -60,6 +61,10 @@ def list_tools(model=None, hardware=None, stage=None, lane=None, include_unavail
         raise ValueError(f'Unknown model {model!r}; use one of {list(MODELS)}')
     if hardware is not None:
         hardware_capability(hardware)
+        if model is not None and hardware != 'auto':
+            from flash_rt.vla.registry import _CAPABILITIES
+            if hardware not in _CAPABILITIES[model]['hardware']:
+                return []
     if stage is not None and stage not in STAGE_IDS:
         raise ValueError(f'Unknown stage {stage!r}')
     if lane is not None and lane not in LANES:
@@ -94,7 +99,12 @@ def propose(tool_id, baseline, **params) -> list:
                          f'{tool.reason_for(model) or "no deterministic generator"}{pointer}')
     if not tool.applies_to(model):
         raise ValueError(f'{tool_id} does not apply to model {model!r} (models: {list(tool.models)})')
-    if status != 'ready':
+    if (tool.hardware_only and baseline.backend.hardware != 'auto'
+            and not tool.available_on(baseline.backend.hardware)):
+        raise ValueError(f'{tool_id} requires hardware in {list(tool.hardware_only)}')
+    # Native options can be planned on a CPU host before the target extension
+    # is built. The explicit device path checks the build at load time.
+    if status != 'ready' and not (status == 'needs_setup' and tool.lane == 'config'):
         raise ValueError(f'{tool_id} is {status} for {model}: {tool.reason_for(model)}{pointer}')
     unknown = set(params) - set(tool.parameters)
     if unknown:

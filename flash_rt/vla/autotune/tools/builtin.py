@@ -29,10 +29,11 @@ BUILTIN = 'flash_rt.vla.autotune.tools.builtin'
 # (pi0/pipeline_rtx.py:61, pi05/pipeline_rtx.py:100); FastWAM validate_sampler
 # defaults to 20 (models/fastwam/config.py); Hy reads num_steps from the
 # checkpoint config (hyvla_thor.py:125), so its default is unknown here.
-GRAPH_DEFAULT = {'pi0': True, 'pi05': True, 'hyvla': True, 'fastwam': False}
-EULER_DEFAULT_STEPS = {'pi0': 10, 'pi05': 10, 'hyvla': None, 'fastwam': 20}
+GRAPH_DEFAULT = {'pi0': True, 'pi05': True, 'hyvla': True, 'fastwam': False, 'dm05': True}
+EULER_DEFAULT_STEPS = {'pi0': 10, 'pi05': 10, 'hyvla': None, 'fastwam': 20, 'dm05': 10}
 PROBEFLOW_DEFAULT_MAX = {'pi0': 10, 'pi05': 10, 'hyvla': 10, 'fastwam': 20}
 OPTION_DEFAULTS = {
+    'dm05': {'project_optimization': 'none'},
     'pi05': {'state_prompt_mode': 'exact', 'vision_pool_factor': 1},
     'hyvla': {'numerical_profile': 'semantic_bf16'},
     'fastwam': {'compile_action_infer': False},
@@ -261,6 +262,43 @@ def _propose_fastwam_compile(tool, baseline):
                                               _with(baseline, backend='torch', options=options), change)])
 
 
+def _propose_dm05_compile(tool, baseline):
+    check_baseline(tool, baseline)
+    options = {**baseline.backend.options, 'project_optimization': 'compiled'}
+    return finalize(baseline, [make_candidate(
+        baseline, tool, 'compile', 'on', _with(baseline, backend='torch', options=options),
+        'DM0.5 packed projections and compiled vision/prefix/action layers at fixed BF16 Euler10')])
+
+
+def _enabled_option(tool, baseline, option, *, sm80=False):
+    changes = {'options': {**baseline.backend.options, option: True}}
+    if sm80:
+        changes['hardware'] = 'cuda_sm80'
+    return finalize(baseline, [make_candidate(
+        baseline, tool, option, 'on', _with(baseline, **changes), f'enable {option}')])
+
+
+def _propose_hy_kv(tool, baseline):
+    return _enabled_option(tool, baseline, 'fused_rope_qknorm_kvwrite', sm80=True)
+
+
+def _propose_fastwam_text_kv(tool, baseline):
+    return _enabled_option(tool, baseline, 'cache_text_crossattn_kv')
+
+
+def _propose_pi05_int8(tool, baseline, *, modes=('encoder', 'encoder_decoder')):
+    if baseline.backend.framework != 'torch' or baseline.backend.sampler != 'euler':
+        raise ValueError('quant.int8_pi05 requires a Torch Euler baseline on SM80')
+    modes = _choices(modes, ('encoder', 'encoder_decoder'), 'modes')
+    candidates = []
+    for mode in modes:
+        record = _with(baseline, hardware='cuda_sm80', precision='auto',
+                       options={**baseline.backend.options, 'int8_mode': mode})
+        candidates.append(make_candidate(baseline, tool, 'int8', mode, record,
+                                         f'dynamic W8A8 {mode} projections with BF16 output'))
+    return finalize(baseline, candidates)
+
+
 def _propose_vision_pool(tool, baseline, *, factors=(2, 4)):
     check_baseline(tool, baseline)
     factors = _choices(factors, (1, 2, 4), 'factors')
@@ -322,9 +360,8 @@ def _tool(function=None, **fields):
 
 # --------------------------------------------------------------------------- registry
 
-_NO_QUANT = ('config.py:56-57 rejects quantized precision ("quantized tuning is not implemented"); '
-             'registry.load_backend forces use_fp8=False for pi0/pi05 and HyVLAFlowFrontend '
-             'requires every FP8/FP4 flag False (hyvla_probeflow.py:75-83)')
+_NO_QUANT = ('registry.load_backend fixes use_fp8=False for pi0/pi05; '
+             'HyVLAFlowFrontend requires its FP8/FP4 flags to be false')
 
 
 def builtin_tools() -> tuple:
@@ -332,18 +369,24 @@ def builtin_tools() -> tuple:
     config_skills = (SKILLS['config'],)
     return (
         _tool(_propose_euler_steps, tool_id='sampler.euler_steps', title='Fixed Euler step count',
-              lane='config', stages=('denoise.schedule',), models=('*',), exactness='approximate',
+              lane='config', stages=('denoise.schedule',), models=tuple(EULER_STEPS), exactness='approximate',
               status='ready', skills=config_skills,
               parameters={'steps': {model: list(values) for model, values in EULER_STEPS.items()}}),
         _tool(_propose_probeflow, tool_id='sampler.probeflow', title='ProbeFlow adaptive schedule',
-              lane='config', stages=('denoise.schedule', 'denoise.routing'), models=('*',),
+              lane='config', stages=('denoise.schedule', 'denoise.routing'), models=tuple(EULER_STEPS),
               exactness='approximate', status='ready', skills=config_skills,
               parameters={'epsilons': list(PROBEFLOW_EPSILONS), 'max_steps': None}),
         _tool(_propose_cuda_graph, tool_id='launch.cuda_graph', title='CUDA graph capture',
               lane='config', stages=('host.launch', 'denoise.velocity'), models=('*',), exactness='exact',
               status='ready', skills=config_skills, parameters={},
               reason='No candidate when the effective baseline already captures graphs '
-                     '(default True for pi0/pi05/hyvla, False for FastWAM).'),
+                     '(default True for pi0/pi05/hyvla/dm05, False for FastWAM).'),
+        _tool(_propose_dm05_compile, tool_id='compile.dm05_inductor',
+              title='DM0.5 packed projections and compiled layers', lane='config',
+              stages=('vision.encode', 'prefix.prefill', 'denoise.velocity', 'kernel.gemm'),
+              models=('dm05',), hardware_only=('cuda_sm80',),
+              exactness='approximate', status='ready', skills=config_skills,
+              reason='Project Torch backend, BF16 Euler10 on SM80. Preserves the graph setting.'),
         _tool(_propose_fastwam_linear, tool_id='gemm.fastwam_linear_backend',
               title='FastWAM linear backend (torch / native cached / native legacy)',
               lane='config', stages=('kernel.gemm', 'host.launch', 'denoise.velocity'), models=('fastwam',),
@@ -386,32 +429,24 @@ def builtin_tools() -> tuple:
                      'nvfp4 prefix/decoder selectors (pi05_rtx.py:694-717) are pinned to fp8 labels '
                      'by registry.load_backend and FLASHRT_PI05_*_PRECISION env values are rejected '
                      'by registry.validate_config; Hy use_fp4 must be False (hyvla_probeflow.py:75-83).'),
-        _tool(tool_id='quant.int8_pi05', title='pi0.5 INT8 CUTLASS GEMMs', lane='port',
+        _tool(_propose_pi05_int8, tool_id='quant.int8_pi05', title='pi0.5 INT8 CUTLASS GEMMs', lane='config',
               stages=('precision.weights', 'kernel.gemm'), models=('pi05',), exactness='approximate',
-              status='needs_implementation', min_capability=(8, 0),
-              skills=(SKILLS['port'], SKILLS['patch'], SKILLS['gate']),
-              reason='INT8 paths exist (pi05_rtx.py:795-819, FVK_PI05_RTX_FORCE_INT8/_INT8_ENCODER_ONLY/'
-                     '_INT8_VISION) but need a -DENABLE_SM80_INT8_CUTLASS=ON build (default ON only for '
-                     'GPU_ARCH 87: CMakeLists.txt:121-127) and a registry unblock: '
-                     'registry.validate_config rejects those env vars for the BF16 backend.'),
-        _tool(tool_id='fusion.hy_rope_qknorm_kvwrite', title='Hy fused RoPE + QK-norm + KV-write',
-              lane='patch', stages=('kernel.norm_elementwise', 'prefix.prefill', 'denoise.velocity'),
-              models=('hyvla',), exactness='approximate', status='needs_implementation',
-              skills=(SKILLS['port'], SKILLS['patch'], SKILLS['kernel'], SKILLS['gate']),
-              reason='fvk.hyvla_rope_qknorm_kvwrite_bf16 (used at pipeline_thor.py:425-432 when '
-                     '_fused_attn) is plain CUDA but CMakeLists.txt:2168-2190 builds it only for GPU_ARCH '
-                     '110, or 87/120/121 with FLASHRT_ENABLE_HYVLA=ON: add 80 to the arch list, build '
-                     'with -DFLASHRT_ENABLE_HYVLA=ON and allow use_fused in HyVLAFlowFrontend '
-                     '(rejected at hyvla_probeflow.py:75-83). Numerics differ from the unfused path.'),
-        _tool(tool_id='cache.fastwam_text_crossattn_kv', title='FastWAM per-request text cross-attention K/V',
-              lane='patch', stages=('denoise.velocity',), models=('fastwam',), exactness='exact',
-              status='needs_implementation',
-              skills=(SKILLS['port'], SKILLS['patch'], SKILLS['map'], SKILLS['gate']),
-              reason='Every denoising step passes the same context to model._denoise_action_with_video_cache '
-                     '(flash_rt/models/fastwam/pipeline.py _evaluate_at_timestep), which recomputes '
-                     'ActionDiT text_embedding(context) and every layer\'s cross-attention K/V although '
-                     'they are constant per request; only the first-frame video KV is cached. Needs a '
-                     'patch that pre-projects them once per request.'),
+              status='needs_setup', hardware_only=('cuda_sm80',), skills=config_skills,
+              parameters={'modes': ['encoder', 'encoder_decoder']},
+              reason='Build flash_rt_kernels with -DGPU_ARCH=80 -DENABLE_SM80_INT8_CUTLASS=ON. '
+                     'Torch Euler, dynamic per-row activation scales. Unset ambient precision overrides.'),
+        _tool(_propose_hy_kv, tool_id='fusion.hy_rope_qknorm_kvwrite', title='Hy fused RoPE + QK-norm + KV-write',
+              lane='config', stages=('kernel.norm_elementwise', 'prefix.prefill', 'denoise.velocity'),
+              models=('hyvla',), exactness='approximate', status='needs_setup',
+              hardware_only=('cuda_sm80',), skills=config_skills,
+              reason='Build flash_rt_hyvla_sm80 with -DGPU_ARCH=80 -DFLASHRT_ENABLE_HYVLA=ON. '
+                     'One launch computes RoPE, QK norm and the layer KV window per prefix/expert call.'),
+        _tool(_propose_fastwam_text_kv, tool_id='cache.fastwam_text_crossattn_kv',
+              title='FastWAM per-request text cross-attention K/V', lane='config',
+              stages=('denoise.velocity',), models=('fastwam',), exactness='exact', status='ready',
+              skills=config_skills,
+              reason='Prepare text embedding and action cross-attention K/V once after appending the '
+                     'current proprio. Each request refreshes the cache, including captured graph inputs.'),
         _tool(tool_id='cache.pi05_cross_frame_kv', title='pi0.5 cross-frame prefix KV reuse',
               lane='port', stages=('prefix.prefill', 'vision.encode'), models=('pi05',),
               exactness='approximate', status='blocked', skills=(SKILLS['map'], SKILLS['port']),
@@ -454,11 +489,9 @@ def builtin_tools() -> tuple:
               lane='baseline', stages=('host.input', 'vision.encode', 'prefix.prefill', 'denoise.velocity',
                                        'host.output'),
               models=('*',), exactness='n/a', status='ready', skills=(SKILLS['map'],),
-              adapter='examples/vla_autotune/official_native_latency.py',
-              reason='Author implementations timed on the same GPU; each writes its own JSON result '
-                     '(origin "author"), not a controller worker bundle, so it carries no stage profile '
-                     'or bookend. Compare only within the same input, sampling and timing protocol '
-                     '(examples/vla_autotune/latency_comparison.py validates the rows).',
+              adapter='flash_rt.vla.autotune.author',
+              reason='controller init --author-baseline author.json: run the author on the same GPU or '
+                     'bind saved author outputs. Every candidate has separate internal and author quality records.',
               model_status={
                   'pi0': ('ready', 'examples/vla_autotune/official_native_latency.py --model pi0: author OpenPI '
                                    'JAX (module_jit) on the GPU, with --source/--source-revision/--checkpoint/'
@@ -471,8 +504,10 @@ def builtin_tools() -> tuple:
                                        'T5 inputs (cold compile reported separately). Also '
                                        'examples/vla_autotune/validate_fastwam.py --reference (direct pinned '
                                        'upstream infer_action, Euler only).'),
-                  'hyvla': ('ready', 'examples/vla_autotune/official_hyvla_latency.py: unmodified author HyVLA '
-                                     'prepare_images/state/language + policy.model.sample_actions with fixed noise '
-                                     '(--official-source/--checkpoint/--fixtures/--source-revision/--output).'),
+                   'hyvla': ('ready', 'examples/vla_autotune/official_hyvla_latency.py: unmodified author HyVLA '
+                                      'prepare_images/state/language + policy.model.sample_actions with fixed noise '
+                                      '(--official-source/--checkpoint/--fixtures/--source-revision/--output).'),
+                   'dm05': ('ready', 'examples/vla_autotune/official_dm05_latency.py: OpenDM base, '
+                                     'three current RGB views, fixed Euler10, absolute public14 actions.'),
               }),
     )

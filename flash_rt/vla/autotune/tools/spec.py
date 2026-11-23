@@ -129,6 +129,7 @@ class ToolSpec:
     propose: Callable | None = None
     adapter: str | None = None
     model_status: Mapping[str, tuple] = field(default_factory=dict)
+    hardware_only: tuple = ()
 
     def __post_init__(self):
         if not isinstance(self.tool_id, str) or not _ID.fullmatch(self.tool_id):
@@ -153,6 +154,10 @@ class ToolSpec:
             if len(capability) != 2 or not all(type(part) is int and part >= 0 for part in capability):
                 raise ValueError(f'{self.tool_id}: min_capability must be (major, minor) integers')
             object.__setattr__(self, 'min_capability', capability)
+        labels = tuple(self.hardware_only)
+        if len(set(labels)) != len(labels) or any(label not in HARDWARE_CAPABILITY for label in labels):
+            raise ValueError(f'{self.tool_id}: hardware_only must name concrete CUDA targets')
+        object.__setattr__(self, 'hardware_only', labels)
         if self.upstream is not None and not isinstance(self.upstream, Upstream):
             raise TypeError(f'{self.tool_id}: upstream must be an Upstream')
         skills = tuple(self.skills)
@@ -203,7 +208,9 @@ class ToolSpec:
         return self.model_status.get(model, (self.status, self.reason))[1]
 
     def available_on(self, hardware) -> bool:
-        """False when the tool needs a capability the hardware lacks or cannot be proven ('auto')."""
+        """Match the compiled targets and minimum device capability."""
+        if self.hardware_only and hardware not in self.hardware_only:
+            return False
         if self.min_capability is None:
             return True
         capability = hardware_capability(hardware)
@@ -220,6 +227,7 @@ class ToolSpec:
             'upstream': None if self.upstream is None else self.upstream.to_dict(),
             'skills': list(self.skills), 'parameters': _json_data(dict(self.parameters), 'parameters'),
             'proposes_candidates': self.propose is not None, 'adapter': self.adapter,
+            **({'hardware_only': list(self.hardware_only)} if self.hardware_only else {}),
         }
 
     def to_json(self) -> str:
