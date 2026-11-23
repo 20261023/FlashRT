@@ -79,11 +79,14 @@ execution and rejects ambient autocast so a prepared condition cannot silently
 cross precision regimes. Model structure, weights and hooks must remain fixed
 for a prepared condition and for the lifetime of captured/compiled execution.
 
-## Validation hand-off
+## Measured scope
 
-This implementation was prepared with CPU static verification only. No model
-execution, tests, compilation of a model, GPU jobs or latency measurements
-were run. Functional acceptance and optimization status are pending.
+A800 job `357482` exercised the ordinary public backend on eight fixed BF16
+Euler20 inputs in eager and compiled modes. Against the faster uncached
+bookend, the cache reduced median latency by 10.28% in eager mode and 6.97%
+in compiled mode. Eager actions matched elementwise. Compiled actions had
+worst relative L2 0.003945 and minimum cosine 0.999992.
+See the [campaign report](reports/2026-11-23-fastwam-text-kv-campaign.zh-CN.md).
 
 The model-level gate must cover fixed-noise cached/uncached output comparisons,
 per-layer text K/V against uncached upstream projections, Euler and both
@@ -91,4 +94,4 @@ ProbeFlow branches, manual capture/repeated replay, same-shape changed
 context/mask/proprio/image/noise propagation, fixed static addresses, geometry
 rejection, native cached Linear if used, and compiled execution if used.
 Retain a prepared condition while preparing another to check ownership too.
-Run through the registry/public backend after admitting `cache_text_crossattn_kv`.
+Use the registry option `cache_text_crossattn_kv` for public backend measurements.
