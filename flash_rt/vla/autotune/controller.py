@@ -59,8 +59,9 @@ def _load_snapshots(store, points):
 
 
 def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_path,
-                        output_root, warmup=3, repeats=10, quality_gate=None,
-                        snapshot_store=None, python=None, extra_pythonpath=None):
+                         output_root, warmup=3, repeats=10, quality_gate=None,
+                         snapshot_store=None, python=None, extra_pythonpath=None,
+                         author_baseline=None):
     """Write the ledger attempt group, then plan.json.
 
     Without ``snapshot_store`` the plan is schema 2 and every attempt runs the
@@ -88,6 +89,9 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
                 raise ValueError(f'{key} must be a finite numeric quality budget')
             if (key == 'min_cosine' and not -1 <= value <= 1) or (key != 'min_cosine' and value < 0):
                 raise ValueError(f'{key} is outside its quality metric range')
+    if author_baseline is not None and not any(
+            key in (quality_gate or {}) for key in ('max_relative_l2', 'max_abs', 'min_cosine')):
+        raise ValueError('An opt-in author baseline requires an explicit numerical quality budget')
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     _identifier(comparison_id)
@@ -131,6 +135,13 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
         else:
             entries.append({'role': role, 'attempt_id': attempt_id, 'candidate': candidate_record})
     with CampaignLedger(root / 'ledger.sqlite') as ledger:
+        author_plan = None
+        if author_baseline is not None:
+            from .author import prepare_plan
+            author_plan = prepare_plan(
+                author_baseline, baseline=baseline, workload_path=workload_path,
+                output_root=output_root, warmup=warmup, repeats=repeats,
+                comparison_id=comparison_id, campaign_instance_id=ledger.instance_id)
         ledger.initialize_attempts(initialization, **(
             {'snapshots': list(manifests.values())} if snapshot_mode else {}))
         instance_id = ledger.instance_id
@@ -138,7 +149,9 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
             'campaign_instance_id': instance_id,
             'workload_path': str(workload_path), 'output_root': str(output_root),
             'warmup': warmup, 'repeats': repeats, 'quality_gate': quality_gate,
-            'entries': entries}
+             'entries': entries}
+    if author_plan is not None:
+        plan['author_baseline'] = author_plan
     if snapshot_mode:
         plan['harness'] = {'autotune_tree': harness_tree}
         plan['runtime'] = {'python': python, 'extra_pythonpath': extra_pythonpath}
@@ -246,6 +259,15 @@ def ingest_campaign(root, results_dir, *, job_finished=False):
     if plan.get('schema_version') not in (2, 3):
         raise ValueError('Legacy campaign/results lack bound execution identity; retain historical evidence, use new attempts to qualify')
     scope = (plan.get('quality_gate') or {}).get('scope', 'numerical_replay')
+    author_reference, author_failure = None, None
+    if plan.get('author_baseline') is not None:
+        from .author import AuthorReferenceError, load_portable_reference, validate_portable_attempt
+        descriptor_path = results_dir / 'control' / 'author_portable.json'
+        try:
+            author_reference = load_portable_reference(plan, results_dir)
+        except (OSError, ValueError, KeyError) as error:
+            author_failure = {'kind': 'author_reference', 'message': str(error),
+                              'descriptor_path': str(descriptor_path)}
     with CampaignLedger(root / 'ledger.sqlite') as ledger:
         if plan['campaign_instance_id'] != ledger.instance_id:
             raise ValueError('Plan campaign instance does not match ledger')
@@ -262,6 +284,11 @@ def ingest_campaign(root, results_dir, *, job_finished=False):
             if path.is_file():
                 record = json.loads(path.read_text())
                 ledger.validate_execution_identity(record)
+                if plan.get('author_baseline') is not None:
+                    if author_reference is None:
+                        raise AuthorReferenceError(
+                            f'Cannot ingest without verified portable author evidence: {author_failure["message"]}')
+                    validate_portable_attempt(plan, entry, record, path, author_reference)
                 if record['state'] == 'measured':
                     validate_quality_contract(record['quality'], plan.get('quality_gate'))
                 records_by_attempt[entry['attempt_id']] = record
@@ -273,15 +300,26 @@ def ingest_campaign(root, results_dir, *, job_finished=False):
                 attempt = ledger.get_attempt(entry['attempt_id'])
                 if attempt['state'] == 'measured':
                     passed = record['quality']['status'] == 'passed' and record['quality']['scope'] == scope
+                    if plan.get('author_baseline') is not None:
+                        passed &= record['author_quality']['status'] == 'passed'
                     ledger.transition(entry['attempt_id'], 'measured', 'validated' if passed else 'rejected',
-                                      message=f'Quality scope: {record["quality"]["scope"]}; not task-success validation')
+                                      message=f'Quality scope: {record["quality"]["scope"]}; '
+                                      + ('internal and author gates; ' if plan.get('author_baseline') is not None else '')
+                                      + 'not task-success validation')
             elif job_finished and attempt['state'] in ('queued', 'running'):
                 ledger.transition(entry['attempt_id'], attempt['state'], 'failed',
                                   failure_kind='missing_result', message='Job finished without a complete worker bundle')
         attempts = ledger.attempts()
     complete = all(attempt['state'] in ('validated', 'rejected', 'failed') for attempt in attempts)
     records = [attempt['result'] for attempt in attempts if attempt['result'] is not None]
-    winner = select_winner(records, quality_scope=scope) if complete and records else None
+    # Preserve select_winner's group checks for every measured result. Only the
+    # ranking view changes eligibility; the durable internal quality is intact.
+    ranking_records = [
+        {**record, 'quality': {**record['quality'], 'status': 'failed'}}
+        if (plan.get('author_baseline') is not None and record['state'] == 'measured'
+            and record.get('author_quality', {}).get('status') != 'passed')
+        else record for record in records]
+    winner = select_winner(ranking_records, quality_scope=scope) if complete and ranking_records else None
     by_attempt = {record['attempt_id']: record for record in records}
     first, last = plan['entries'][0], plan['entries'][-1]
     reference, bookend = by_attempt.get(first['attempt_id']), by_attempt.get(last['attempt_id'])
@@ -291,6 +329,8 @@ def ingest_campaign(root, results_dir, *, job_finished=False):
         drift = median(bookend['measurement']['latency_ms']) / max(base_ms, 1e-12) - 1.0
         if (abs(drift) > 0.10 or any(
                 item['quality']['status'] != 'passed' or item['quality']['scope'] != scope
+                or (plan.get('author_baseline') is not None
+                    and item.get('author_quality', {}).get('status') != 'passed')
                 for item in (reference, bookend))):
             winner = None
     elif complete:
@@ -299,6 +339,31 @@ def ingest_campaign(root, results_dir, *, job_finished=False):
                'quality_scope': scope, 'winner': winner,
                'winner_interpretation': 'Only within the recorded quality/proxy scope, never an inferred task-success winner',
                'baseline_drift_ratio': drift, 'attempts': attempts}
+    if plan.get('author_baseline') is not None:
+        from .author import latency_comparison, reference_evidence
+        if author_reference is None:
+            winner = summary['winner'] = None
+        summary['author_baseline'] = {
+            'status': 'verified' if author_reference is not None else 'unavailable',
+            'failure': author_failure,
+            'reference': reference_evidence(author_reference) if author_reference is not None else None,
+            'producer_command': plan['author_baseline']['producer_command'],
+            'latency_comparisons': [
+                {'attempt_id': record['attempt_id'], 'candidate_id': record['candidate_id'],
+                 **latency_comparison(record, author_reference)}
+                for record in records if record['state'] == 'measured'
+            ] if author_reference is not None else [],
+            'interpretation': 'Internal reference/bookend replay and author quality are separate gates; '
+                              'only candidates passing both qualify. Saved author outputs retain their original identity.',
+        }
+        baseline = Candidate.from_dict(first['candidate'])
+        summary['internal_baseline'] = {
+            'origin': 'project', 'role': 'reference/bookend', 'candidate_id': baseline.candidate_id,
+            'sampler': baseline.backend.sampler, 'num_steps': baseline.backend.num_steps,
+            'label': ('internal Euler10' if baseline.backend.sampler == 'euler'
+                      and baseline.backend.num_steps == 10 else 'internal configured baseline'),
+            'quality_field': 'quality', 'author_quality_field': 'author_quality',
+        }
     (root / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     return summary
 
@@ -315,6 +380,8 @@ def main(argv=None):
     create.add_argument('--warmup', type=int, default=3)
     create.add_argument('--repeats', type=int, default=10)
     create.add_argument('--quality-gate')
+    create.add_argument('--author-baseline', help='Opt-in author baseline JSON (produce or saved); '
+                        'runs before internal reference/candidates and adds an independent author quality gate')
     create.add_argument('--proposals', help='Optional JSON list of human/agent Candidate records')
     create.add_argument('--enumerate', action='store_true')
     create.add_argument('--snapshot-store', help='Snapshot mode (plan schema 3): run each point from its '
@@ -357,7 +424,9 @@ def main(argv=None):
                                          output_root=args.output_root, warmup=args.warmup, repeats=args.repeats,
                                          quality_gate=json.loads(args.quality_gate) if args.quality_gate else None,
                                          snapshot_store=args.snapshot_store, python=args.python,
-                                         extra_pythonpath=args.extra_pythonpath)
+                                         extra_pythonpath=args.extra_pythonpath,
+                                         author_baseline=(json.loads(Path(args.author_baseline).read_text())
+                                                          if args.author_baseline else None))
         except ValueError as error:  # Includes SnapshotError (e.g. a snapshot that is not materialized).
             print(json.dumps({'error': type(error).__name__, 'message': str(error)}), file=sys.stderr)
             return 2

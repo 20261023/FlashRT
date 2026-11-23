@@ -266,4 +266,24 @@ def validate_result(record: dict) -> None:
             raise ValueError('quality.status must be unknown, passed or failed')
         _text(quality.get('scope'), 'quality.scope')
         _object(quality.get('metrics'), 'quality.metrics')
+        if 'output_domain' in record:
+            _text(record['output_domain'], 'output_domain', nonempty=True)
+        if 'author_quality' in record:
+            author = _object(record['author_quality'], 'author_quality')
+            if author.get('status') not in ('unknown', 'passed', 'failed') or author.get('reference_origin') != 'author':
+                raise ValueError('author_quality requires an explicit author origin and quality status')
+            _text(author.get('scope'), 'author_quality.scope', nonempty=True)
+            _object(author.get('metrics'), 'author_quality.metrics')
+            evidence = _object(author.get('reference'), 'author_quality.reference')
+            if evidence.get('origin') != 'author' or evidence.get('provenance') not in (
+                    'same_campaign', 'saved_author_outputs'):
+                raise ValueError('author_quality reference must identify produced or saved author outputs')
+            if author.get('output_domain') != record.get('output_domain') or evidence.get('output_domain') != record.get('output_domain'):
+                raise ValueError('Author quality and worker output domains differ')
+            for name in ('result_sha256', 'outputs_sha256', 'workload_digest', 'checkpoint_digest'):
+                value = evidence.get(name)
+                if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value):
+                    raise ValueError(f'author_quality.reference.{name} must be a sha256')
+            for name in ('result_path', 'author_source_revision', 'model'):
+                _text(evidence.get(name), f'author_quality.reference.{name}', nonempty=True)
     _json_value(record)

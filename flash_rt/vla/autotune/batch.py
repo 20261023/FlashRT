@@ -122,7 +122,27 @@ def run_batch(plan, *, execute=None, python=None):
         sources = output / 'control'
         sources.mkdir(exist_ok=True)
     reference = None
+    author_reference = None
+    author_status = None
     entries = []
+    if plan.get('author_baseline') is not None:
+        from .author import (AuthorReferenceError, export_portable_reference,
+                             prepare_reference, record_portable_attempt)
+        try:
+            author_reference = prepare_reference(plan, execute=execute)
+            export_portable_reference(plan, author_reference)
+            author_status = {'status': 'verified', 'descriptor_path': author_reference,
+                             'mode': plan['author_baseline']['mode'],
+                             'portable_manifest': 'control/author_portable.json'}
+        except AuthorReferenceError as error:
+            result = {'comparison_id': plan['comparison_id'],
+                      'campaign_instance_id': plan['campaign_instance_id'],
+                      'job_id': os.environ.get('SLURM_JOB_ID'), 'entries': [], 'complete': False,
+                      'author_baseline': {'status': 'failed', 'kind': 'author_reference',
+                                          'message': str(error),
+                                          'producer_command': plan['author_baseline']['producer_command']}}
+            (output / 'batch_result.json').write_text(json.dumps(result, indent=2) + '\n')
+            return result
     for entry in plan['entries']:
         candidate = Candidate.from_dict(entry['candidate'])
         attempt_id = entry['attempt_id']
@@ -139,6 +159,8 @@ def run_batch(plan, *, execute=None, python=None):
                 '--repeats', str(plan['repeats'])]
         if plan.get('quality_gate'):
             argv.extend(['--quality-gate', json.dumps(plan['quality_gate'])])
+        if author_reference is not None:
+            argv.extend(['--author-reference', author_reference])
         if entry['role'] == 'reference':
             argv.append('--baseline-reference')
         elif reference is not None:
@@ -155,6 +177,8 @@ def run_batch(plan, *, execute=None, python=None):
         record = json.loads(result_path.read_text()) if result_path.is_file() else None
         if record is not None:
             validate_result(record)
+            if author_reference is not None:
+                record_portable_attempt(plan, entry, record, result_path)
         entries.append({'attempt_id': attempt_id, 'candidate_id': candidate.candidate_id,
                         'returncode': completed.returncode, 'result_path': str(result_path),
                         'state': None if record is None else record['state']})
@@ -165,6 +189,8 @@ def run_batch(plan, *, execute=None, python=None):
     result = {'comparison_id': plan['comparison_id'], 'campaign_instance_id': plan['campaign_instance_id'],
               'job_id': os.environ.get('SLURM_JOB_ID'),
               'entries': entries, 'complete': len(entries) == len(plan['entries'])}
+    if author_status is not None:
+        result['author_baseline'] = author_status
     (output / 'batch_result.json').write_text(json.dumps(result, indent=2) + '\n')
     return result
 
