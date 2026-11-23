@@ -10,8 +10,11 @@ def describe_dataflow(backend):
     prefix = int(pipe.encoder_seq_len)
     actions = int(pipe.chunk_size)
     layers = 18 if getattr(pipe, 'prefix_export', False) else 17
+    decoder_int8 = getattr(pipe, 'use_int8_decoder', False)
+    mixed_int8 = decoder_int8 or getattr(pipe, 'use_int8_encoder', False)
     return {
-        'basis': 'actual_runtime_rows_and_source_verified_pi05_bf16_geometry',
+        'basis': ('actual_runtime_rows_and_source_verified_pi05_w8a8_bf16_geometry'
+                  if mixed_int8 else 'actual_runtime_rows_and_source_verified_pi05_bf16_geometry'),
         'prefix_rows': prefix, 'action_rows': actions,
         'vision_tokens_before_pool': int(pipe.vision_seq),
         'vision_tokens_after_pool': int(pipe.vision_seq_enc),
@@ -24,10 +27,10 @@ def describe_dataflow(backend):
                 2 * actions * 1024 * 2560 + 2 * actions * 2048 * 1024
                 + 6 * actions * 1024 * 4096),
             'attention_product_flops': 18 * 4 * actions * (prefix + actions) * 2048,
-            'logical_linear_weight_bytes': 18 * 2 * (
+            'logical_linear_weight_bytes': 18 * (1 if decoder_int8 else 2) * (
                 1024 * 2560 + 2048 * 1024 + 3 * 1024 * 4096)},
         'notes': ['FMA=2 FLOPs; norm/activation/softmax omitted',
-                  'Logical weights are not measured HBM traffic',
+                  'Logical expert matrix bytes exclude quantization scales, retained copies and HBM traffic',
                   'Prefix KV reused across evaluations, not across observations',
                   'Post-ViT pooling reduces prefix rows, not the completed ViT work'],
     }

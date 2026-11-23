@@ -55,7 +55,7 @@ class BackendConfig:
         if self.framework not in ('torch', 'jax'):
             raise ValueError('framework must be torch or jax')
         if self.precision not in ('auto', 'fp16', 'bf16'):
-            raise ValueError('This backend supports auto/fp16/bf16; quantized tuning is not implemented')
+            raise ValueError('precision must be auto/fp16/bf16. Pi0.5 mixed W8A8 uses auto with int8_mode.')
         if self.num_steps is not None and (
                 isinstance(self.num_steps, bool) or not isinstance(self.num_steps, Integral)
                 or self.num_steps < 1):

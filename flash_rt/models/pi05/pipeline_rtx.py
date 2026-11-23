@@ -136,7 +136,7 @@ class Pi05Pipeline:
         chunk_size:   Diffusion action chunk length (default 10).
         use_fp8:      Enable FP8 E4M3 quantization for large GEMMs.
         use_fp8_decoder: Enable FP8 on decoder branch (else BF16).
-        use_int8_decoder: Enable experimental decoder-only INT8 GEMMs.
+        use_int8_decoder: Enable dynamic-rowwise W8A8 decoder GEMMs.
         num_steps:    Diffusion denoise steps (default 10).
 
     Expected weights dict keys:
@@ -236,6 +236,10 @@ class Pi05Pipeline:
         self.use_int8_decoder = bool(use_int8_decoder)
         self.use_int8_encoder = bool(use_int8_encoder)
         self.use_int8_vision = bool(use_int8_vision)
+        if self.use_fp8 and (self.use_int8_encoder or self.use_int8_vision):
+            raise ValueError("Pi0.5 prefix FP8 and INT8 paths are mutually exclusive")
+        if self.use_fp8_decoder and self.use_int8_decoder:
+            raise ValueError("Pi0.5 decoder FP8 and INT8 paths are mutually exclusive")
         # Static INT8 vision: uses pre-calibrated per-layer per-tensor scales.
         # Eliminates the per-row amax reduction → 1 quantize kernel vs 3.
         # Scales are collected once during calibrate_int8_vision_static().
@@ -332,6 +336,10 @@ class Pi05Pipeline:
         self._allocate_int8_scratch()
         self._allocate_encoder_int8_scratch()
         self._allocate_vision_int8_static_scratch()
+        self._allocate_int8_scales()
+        # Successful host enqueues, including the warmups and captured body.
+        # Graph replay launches the same sites without re-entering Python.
+        self.int8_executed_sites: set[str] = set()
 
         # Pre-computed decoder style params — frontend pre-computes these in
         # its native framework and passes raw bf16 bytes; see frontend's
@@ -391,9 +399,9 @@ class Pi05Pipeline:
         B["encoder_x_norm"] = CudaBuffer.device_empty(es * ENC_D, BF16)
         B["encoder_QKV"] = CudaBuffer.device_empty(es * (ENC_NH + 2 * ENC_NKV) * ENC_HD, BF16)
         B["encoder_hidden"] = CudaBuffer.device_empty(es * ENC_H, BF16)
-        # Merged gate+up output (legacy BF16 path) or gate-only buffer for SiLU-gated.
+        # Merged gate+up output (FP8 path) or separate BF16 gate output.
         B["encoder_gate_merged"] = CudaBuffer.device_empty(es * 2 * ENC_H, BF16)
-        # Gate buffer for SiLU-gated EVT fusion (encoder): (es, ENC_H) BF16
+        # Separate INT8 gate GEMM output for GELU gating: (es, ENC_H) BF16.
         B["encoder_gate_buf"] = CudaBuffer.device_empty(es * ENC_H, BF16)
 
         # ── Decoder (Gemma-300M) ──
@@ -413,7 +421,7 @@ class Pi05Pipeline:
             ds * (DEC_NH + 2 * DEC_NKV) * DEC_HD, BF16)
         B["decoder_hidden"] = CudaBuffer.device_empty(ds * DEC_H, BF16)
         B["decoder_gate_merged"] = CudaBuffer.device_empty(ds * 2 * DEC_H, BF16)
-        # Gate buffer for SiLU-gated EVT fusion (decoder): (ds, DEC_H) BF16
+        # Separate INT8 gate GEMM output for GELU gating: (ds, DEC_H) BF16.
         B["decoder_gate_buf"] = CudaBuffer.device_empty(ds * DEC_H, BF16)
         B["diffusion_noise"] = CudaBuffer.device_empty(ds * ACTION_DIM, BF16)
         # Optional RTC-prefix conditioning slot. It is only read by the
@@ -493,8 +501,8 @@ class Pi05Pipeline:
         """Allocate reusable INT8 activation scratch for encoder + vision paths.
 
         Vision runs before encoder and reuses these same buffers (sequential,
-        never concurrent). Vision shapes always fit within the encoder-sized
-        scratch (VIS_D=1152 < ENC_D=2048, VIS_H=4304 < ENC_H=16384).
+        never concurrent). Account for the full vision sequence even when
+        post-vision pooling reduces the encoder's row count.
 
         Two sizes:
           enc_act_int8       — (es * ENC_D) INT8: covers encoder QKV/O/gate_up
@@ -506,8 +514,36 @@ class Pi05Pipeline:
             return
         B = self.bufs
         es = self.encoder_seq_len
-        B["enc_act_int8"] = CudaBuffer.device_zeros(es * ENC_D, INT8)
-        B["enc_act_int8_large"] = CudaBuffer.device_zeros(es * ENC_H, INT8)
+        small = es * ENC_D
+        large = es * ENC_H
+        if self.use_int8_vision:
+            small = max(small, self.vision_seq * VIS_D)
+            large = max(large, self.vision_seq * VIS_H)
+        B["enc_act_int8"] = CudaBuffer.device_zeros(small, INT8)
+        B["enc_act_int8_large"] = CudaBuffer.device_zeros(large, INT8)
+
+    def _allocate_int8_scales(self) -> None:
+        """Allocate fixed per-site scale buffers before any model forward."""
+        for domain, enabled, layers, rows in (
+            ("encoder", self.use_int8_encoder, ENC_L, self.encoder_seq_len),
+            ("decoder", self.use_int8_decoder, DEC_L, self.chunk_size),
+        ):
+            if not enabled:
+                continue
+            for i in range(layers):
+                self._int8_scale_buf(f"{domain}_attn_qkv_w_{i}", rows)
+                # The prefix consumes only K/V from its final layer.
+                if domain == "encoder" and i == layers - 1 and not self.prefix_export:
+                    continue
+                self._int8_scale_buf(f"{domain}_attn_o_w_{i}", rows)
+                gate = self._int8_scale_buf(f"{domain}_ffn_gate_w_{i}", rows)
+                # Gate and up share the same normalized, quantized activation.
+                self.int8_act_scales[f"{domain}_ffn_up_w_{i}"] = gate
+                self._int8_scale_buf(f"{domain}_ffn_down_w_{i}", rows)
+        if self.use_int8_vision:
+            for i in range(self.vision_num_layers):
+                for name in ("attn_qkv", "attn_o", "ffn_up", "ffn_down"):
+                    self._int8_scale_buf(f"vision_{name}_w_{i}", self.vision_seq)
 
     # ══════════════════════════════════════════════════════════════════
     #   RoPE table
@@ -743,6 +779,8 @@ class Pi05Pipeline:
         small = B["dec_act_int8"]
         large = B["dec_act_int8_large"]
         buf = small if act_n <= (small.nbytes // np.dtype(INT8).itemsize) else large
+        if act_n > buf.nbytes:
+            raise ValueError(f"decoder INT8 scratch is too small: {act_n} > {buf.nbytes}")
         return buf.ptr.value
 
     def _pick_enc_int8_scratch(self, act_n: int) -> int:
@@ -751,6 +789,8 @@ class Pi05Pipeline:
         small = B["enc_act_int8"]
         large = B["enc_act_int8_large"]
         buf = small if act_n <= (small.nbytes // np.dtype(INT8).itemsize) else large
+        if act_n > buf.nbytes:
+            raise ValueError(f"encoder INT8 scratch is too small: {act_n} > {buf.nbytes}")
         return buf.ptr.value
 
     def _vis_static_scale(self, name: str) -> CudaBuffer:
@@ -1510,6 +1550,7 @@ class Pi05Pipeline:
             raise RuntimeError(
                 f"CUTLASS INT8 fused GEMM failed for {weight_name}: "
                 f"status={status} shape=({M},{N},{K})")
+        self.int8_executed_sites.add(weight_name)
 
     def _int8_gemm(self, act_bf16_ptr: int, act_n: int, weight_name: str,
                    out_bf16_ptr: int, M: int, N: int, K: int, stream: int) -> None:
@@ -1523,19 +1564,21 @@ class Pi05Pipeline:
             act_i8_ptr, weight_name, out_bf16_ptr, M, N, K,
             layer_scale.ptr.value, stream)
 
-    def _int8_silu_gated_gemm_fused(self, act_i8_ptr: int, up_name: str,
-                                    gate_bf16_ptr: int, out_bf16_ptr: int,
-                                    M: int, N: int, K: int,
-                                    act_scale_ptr: int, stream: int) -> None:
-        """INT8 up GEMM fused with SiLU(gate) epilogue."""
-        w_i8_ptr, w_scale_ptr = self._weight_int8(up_name)
-        status = self.fvk.cutlass_int8_silu_gated_bf16out(
-            act_i8_ptr, w_i8_ptr, act_scale_ptr, w_scale_ptr,
-            gate_bf16_ptr, out_bf16_ptr, M, N, K, stream=stream)
-        if status != 0:
-            raise RuntimeError(
-                f"CUTLASS INT8 SiLU-gated GEMM failed for {up_name}: "
-                f"status={status} shape=({M},{N},{K})")
+    def _int8_geglu_gemm(self, act_i8_ptr: int, up_name: str,
+                         gate_bf16_ptr: int, out_bf16_ptr: int,
+                         M: int, N: int, K: int,
+                         act_scale_ptr: int, stream: int) -> None:
+        """INT8 up GEMM, BF16 rounding, then Pi0.5's GELU(gate) * up.
+
+        The existing CUTLASS SiLU-gated epilogue implements a different
+        activation. Reuse the model's GEGLU operation after the W8A8 GEMM
+        so quantization preserves its FFN semantics and BF16 boundary.
+        """
+        self._int8_gemm_fused(
+            act_i8_ptr, up_name, out_bf16_ptr, M, N, K,
+            act_scale_ptr, stream)
+        self.fvk.gate_geglu(
+            gate_bf16_ptr, out_bf16_ptr, out_bf16_ptr, M * N, stream=stream)
 
     def _bias_add_bf16(self, x_ptr: int, bias_ptr: int,
                        seq: int, dim: int, stream: int) -> None:
@@ -2030,12 +2073,11 @@ class Pi05Pipeline:
             self._encoder_ffn_nvfp4(i, seq, B["encoder_x"].ptr.value, B["encoder_x_norm"].ptr.value, stream)
             return
 
-        # B4: (residual_add + RMSNorm) fused → INT8 gate GEMM + SiLU-gated up GEMM
+        # B4: (residual_add + RMSNorm) fused → INT8 gate/up GEMMs + GEGLU
         if use_int8_enc:
             # Fused: x += x_norm (attn_o); RMSNorm(x) → INT8.
             # Gate and up are quantized from the same activation (act_i8, act_scale).
-            # Gate GEMM writes gate_buf; up GEMM + SiLU-gated EVT writes hidden
-            # directly — eliminating the separate gate_geglu_merged kernel.
+            # Gate and up GEMMs round to BF16 before GELU(gate) * up.
             gate_name = f"encoder_ffn_gate_w_{i}"
             up_name   = f"encoder_ffn_up_w_{i}"
             act_scale = self._int8_scale_buf(gate_name, seq)
@@ -2051,8 +2093,8 @@ class Pi05Pipeline:
                 B["encoder_gate_buf"].ptr.value,
                 seq, ENC_H, ENC_D,
                 act_scale.ptr.value, stream)
-            # Up GEMM + SiLU(gate)*up in EVT epilogue → encoder_hidden (seq, ENC_H)
-            self._int8_silu_gated_gemm_fused(
+            # INT8 up GEMM + GEGLU → encoder_hidden (seq, ENC_H).
+            self._int8_geglu_gemm(
                 act_i8_ptr, up_name,
                 B["encoder_gate_buf"].ptr.value,
                 B["encoder_hidden"].ptr.value,
@@ -2102,10 +2144,10 @@ class Pi05Pipeline:
                 B["encoder_hidden"].ptr.value,
                 seq, ENC_H, ENC_D, stream=stream)
 
-        # SiLU(gate) * up → hidden (already done by silu_gated EVT above for INT8),
+        # GELU(gate) * up → hidden (already done above for INT8),
         # then FFN down GEMM.
         if use_int8_enc:
-            # encoder_hidden already has SiLU(gate)*up from the EVT kernel above.
+            # encoder_hidden already has GELU(gate) * up.
             # Just run the down projection.
             self._enc_int8_gemm(
                 B["encoder_hidden"].ptr.value, seq * ENC_H,
@@ -2416,7 +2458,7 @@ class Pi05Pipeline:
                 B["x_normed_buf"].ptr.value,
                 ds, DEC_D, DEC_NH * DEC_HD, stream=stream)
 
-        # C4→C5: gate*residual + AdaRMSNorm + FFN gate_up (fused SiLU-gated for INT8)
+        # C4→C5: gate*residual + AdaRMSNorm + FFN gate/up and GEGLU
         gu_name   = f"decoder_ffn_gate_up_w_{i}"    # FP8/BF16 merged name (legacy)
         gate_name = f"decoder_ffn_gate_w_{i}"       # INT8 separate gate
         up_name   = f"decoder_ffn_up_w_{i}"         # INT8 separate up
@@ -2460,9 +2502,8 @@ class Pi05Pipeline:
                     B["decoder_gate_merged"].ptr.value,
                     ds, 2 * DEC_H, DEC_D, stream)
             elif self.use_int8_decoder:
-                # INT8: separate gate GEMM → decoder_gate_buf,
-                #       up GEMM + SiLU-gated EVT → decoder_hidden.
-                #       Eliminates gate_geglu_merged (C6).
+                # Separate W8A8 gate/up GEMMs preserve the BF16 rounding
+                # boundary before Pi0.5's GELU gating.
                 act_scale_gu_ptr = self._int8_scale_buf(gate_name, ds).ptr.value
                 act_i8 = B["dec_act_int8"].ptr.value
                 self._int8_gemm_fused(
@@ -2470,7 +2511,7 @@ class Pi05Pipeline:
                     B["decoder_gate_buf"].ptr.value,
                     ds, DEC_H, DEC_D,
                     act_scale_gu_ptr, stream)
-                self._int8_silu_gated_gemm_fused(
+                self._int8_geglu_gemm(
                     act_i8, up_name,
                     B["decoder_gate_buf"].ptr.value,
                     B["decoder_hidden"].ptr.value,
@@ -2485,7 +2526,7 @@ class Pi05Pipeline:
                     B["decoder_hidden"].ptr.value,
                     ds, DEC_H, DEC_D, stream=stream)
 
-        # C6: SiLU(gate) * up → FFN down
+        # C6: GELU(gate) * up → FFN down
         down_name = f"decoder_ffn_down_w_{i}"
         if fused:
             act_scale_down = self._fp8_static_scale_ptr(down_name)
@@ -2508,7 +2549,7 @@ class Pi05Pipeline:
                 B["x_normed_buf"].ptr.value,
                 ds, DEC_D, DEC_H, stream)
         elif self.use_int8_decoder:
-            # decoder_hidden already filled by SiLU-gated EVT in C4→C5.
+            # decoder_hidden already filled by GEGLU in C4→C5.
             # Skip gate_geglu_merged — go directly to down GEMM.
             self._int8_gemm(
                 B["decoder_hidden"].ptr.value, ds * DEC_H,

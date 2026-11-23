@@ -9214,6 +9214,16 @@ stages in {2,3}. M in 1..48; K%64==0; (K/64)%kg==0; N%cols==0.
     }, py::arg("input"), py::arg("output"), py::arg("d_act_scale"), py::arg("d_weight_scale"),
        py::arg("n"), py::arg("stream") = 0);
 
+    // The GEMM names below also exist as error stubs in builds without INT8.
+    // Presence of a Python attribute therefore cannot prove build capability.
+    m.def("has_sm80_int8_cutlass", []() {
+#ifdef ENABLE_SM80_INT8_CUTLASS
+        return true;
+#else
+        return false;
+#endif
+    });
+
     m.def("cutlass_int8_silu_gated_bf16out",
           [](uintptr_t act, uintptr_t up_w, uintptr_t act_s, uintptr_t wt_s,
              uintptr_t gate, uintptr_t D, int M, int N, int K, uintptr_t stream) {

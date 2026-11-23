@@ -116,16 +116,17 @@ else()
   message(STATUS "FA2 in-SO attention: DISABLED (sm_${GPU_ARCH})")
 endif()
 
-# SM80-family CUTLASS INT8 kernels used by the Jetson Orin SM87 Pi0.5 fast
-# path. Keep them out of the shared flash_rt_kernels module on other targets
-# so Thor/RTX builds do not inherit unrelated compile/link risk.
-if(NOT DEFINED ENABLE_SM80_INT8_CUTLASS)
-  if(GPU_ARCH STREQUAL "87")
-    set(ENABLE_SM80_INT8_CUTLASS ON)
-  else()
-    set(ENABLE_SM80_INT8_CUTLASS OFF)
-  endif()
+# SM80-family W8A8 Tensor Core GEMMs (INT32 accumulation, BF16 output).
+# Pi0.5 on A800/A100 opts in with:
+#   cmake -B build -S . -DGPU_ARCH=80 -DENABLE_SM80_INT8_CUTLASS=ON
+# Orin keeps its existing default. Other targets keep the sources opt-in.
+set(_sm80_int8_default OFF)
+if(GPU_ARCH STREQUAL "87")
+  set(_sm80_int8_default ON)
 endif()
+option(ENABLE_SM80_INT8_CUTLASS
+       "Build SM80-family CUTLASS W8A8 GEMMs (required for Pi0.5 INT8 on A800/A100)"
+       ${_sm80_int8_default})
 if(ENABLE_SM80_INT8_CUTLASS)
   message(STATUS "SM80-family CUTLASS INT8: ENABLED (sm_${GPU_ARCH})")
 else()

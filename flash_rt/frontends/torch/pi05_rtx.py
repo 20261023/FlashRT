@@ -37,6 +37,7 @@ import torch.nn.functional as F
 from flash_rt.core.utils.actions import unnormalize_actions, LIBERO_ACTION_DIM
 from flash_rt.frontends._fp8_layout import select_fp8_layout
 from flash_rt.models.pi05._lifecycle import serialized, reload_guard
+from flash_rt.models.pi05.int8 import validate_int8_mode
 from flash_rt.hardware.rtx.attn_backend import RtxFlashAttnBackend
 from flash_rt.models.pi05.pipeline_rtx import (
     Pi05Pipeline,
@@ -651,6 +652,11 @@ class Pi05TorchFrontendRtx:
     Mirrors the :class:`ThorPipelineTorch` public API (``set_prompt`` +
     ``infer`` + ``calibrate_with_real_data`` + ``get_latency_stats``) so the
     same eval scripts work on both hardware families.
+
+    On A800/A100 (SM80), ``use_fp8=False, int8_mode="encoder"`` selects
+    dynamic-rowwise W8A8 Gemma prefix GEMMs. ``"encoder_decoder"`` also
+    quantizes the action expert GEMMs. The remaining operations stay BF16.
+    Build with ``-DGPU_ARCH=80 -DENABLE_SM80_INT8_CUTLASS=ON``.
     """
 
     def __init__(self,
@@ -673,7 +679,13 @@ class Pi05TorchFrontendRtx:
                  prefix_precision: Optional[str] = None,
                  sde: bool = False,
                  decoder_precision: Optional[str] = None,
-                 sampler: str = 'euler', probeflow_config=None):
+                 sampler: str = 'euler', probeflow_config=None,
+                 int8_mode: Optional[str] = None):
+        validate_int8_mode(
+            int8_mode, use_fp8=use_fp8, sampler=sampler,
+            prefix_precision=prefix_precision, decoder_precision=decoder_precision,
+            decoder_kernel=decoder_kernel)
+        self._int8_mode = int8_mode
         self._probeflow_config = _resolve_pi05_sampler(
             sampler, probeflow_config, use_fp8=use_fp8, cache_frames=cache_frames,
             sde=sde, denoise_trace=denoise_trace, decoder_kernel=decoder_kernel,
@@ -792,31 +804,48 @@ class Pi05TorchFrontendRtx:
         # a Pi05CFGPipeline and runs classifier-free guidance.
         self._rl_config: Optional[dict] = None
         self._rl_current_prompt_text: Optional[str] = None
-        self._force_int8_decoder = os.environ.get(
-            "FVK_PI05_RTX_FORCE_INT8", "0") == "1"
-        # FVK_PI05_RTX_INT8_ENCODER_ONLY=1: enable INT8 for encoder (large M,
-        # 92% GPU utilisation) but keep decoder in BF16 (M=10 → INT8 CUTLASS
-        # tile waste makes it slower than cuBLASLt BF16 for small M).
-        _enc_only = os.environ.get("FVK_PI05_RTX_INT8_ENCODER_ONLY", "0") == "1"
-        if _enc_only:
-            self._force_int8_decoder = False   # BF16 decoder
-        # On non-FP8 GPUs (e.g. Orin SM87), enable encoder INT8 alongside
-        # decoder INT8 so all large GEMMs benefit from tensor-core acceleration.
-        self._use_int8_encoder = self._force_int8_decoder or _enc_only
-        self._int8_encoder_only = _enc_only
+        if int8_mode is None:
+            self._force_int8_decoder = os.environ.get(
+                "FVK_PI05_RTX_FORCE_INT8", "0") == "1"
+            _enc_only = os.environ.get("FVK_PI05_RTX_INT8_ENCODER_ONLY", "0") == "1"
+            if _enc_only:
+                self._force_int8_decoder = False
+            self._use_int8_encoder = self._force_int8_decoder or _enc_only
+            self._int8_encoder_only = _enc_only
+        else:
+            self._force_int8_decoder = int8_mode == "encoder_decoder"
+            self._use_int8_encoder = int8_mode != "none"
+            self._int8_encoder_only = int8_mode == "encoder"
         # Vision GEMMs (VIS_D=1152, seq=512): static per-tensor INT8 was
         # measured to break encoder cosine (0.991 → 0.282) — disabled
         # permanently. Dynamic per-row INT8 is opt-in via
         # FVK_PI05_RTX_INT8_VISION=1 (untested at branch time; enabling
         # it requires cosine validation on the actual deployment).
         self._use_int8_vision = (
-            os.environ.get("FVK_PI05_RTX_INT8_VISION", "0") == "1")
+            int8_mode is None
+            and os.environ.get("FVK_PI05_RTX_INT8_VISION", "0") == "1")
         self._use_int8_vision_static = False
         env_force_bf16 = os.environ.get("FVK_PI05_RTX_FORCE_BF16", "0") == "1"
         self._force_bf16 = (
             (env_force_bf16 or not supports_fp8()) and
             not self._force_int8_decoder
         )
+        if int8_mode not in (None, "none"):
+            if self.hardware not in (None, "cuda_sm80"):
+                raise ValueError("Explicit Pi0.5 int8_mode requires hardware='cuda_sm80'")
+            if tuple(torch.cuda.get_device_capability()) != (8, 0):
+                raise ValueError("Explicit Pi0.5 int8_mode requires an SM80 GPU (A800/A100)")
+            self.hardware = "cuda_sm80"
+            from flash_rt import flash_rt_kernels as fvk
+            try:
+                available = fvk.has_sm80_int8_cutlass()
+            except AttributeError:
+                available = False
+            if not available:
+                raise RuntimeError(
+                    "Pi0.5 INT8 requires a rebuilt flash_rt_kernels with "
+                    "-DGPU_ARCH=80 -DENABLE_SM80_INT8_CUTLASS=ON; "
+                    "the loaded extension does not contain the INT8 implementation")
 
         # ── Load norm_stats ──
         self._load_norm_stats(checkpoint_dir)
@@ -954,7 +983,7 @@ class Pi05TorchFrontendRtx:
         if self._force_int8_decoder or getattr(self, "_int8_encoder_only", False):
             mode = ("INT8 encoder+decoder" if self._force_int8_decoder
                     else "INT8 encoder only (decoder stays BF16 for M=10 efficiency)")
-            logger.warning("FVK_PI05_RTX_FORCE_INT8/INT8_ENCODER_ONLY set: %s", mode)
+            logger.info("Pi0.5 precision selection: %s (dynamic per-row scales)", mode)
             return {
                 "use_fp8": False,
                 "use_fp8_decoder": False,
@@ -1419,7 +1448,7 @@ class Pi05TorchFrontendRtx:
         for i in range(DEC_L):
             quant(f"decoder_attn_qkv_w_{i}", W["decoder_attn_qkv_w"][i])
             quant(f"decoder_attn_o_w_{i}", W["decoder_attn_o_w"][i])
-            # Separate gate and up for SiLU-gated EVT fusion (same as encoder).
+            # Separate BF16 gate/up outputs for Pi0.5's GELU gating.
             quant(f"decoder_ffn_gate_w_{i}", W["decoder_ffn_gate_w"][i])
             quant(f"decoder_ffn_up_w_{i}", W["decoder_ffn_up_w"][i])
             quant(f"decoder_ffn_down_w_{i}", W["decoder_ffn_down_w"][i])
@@ -1430,12 +1459,12 @@ class Pi05TorchFrontendRtx:
         """Pre-quantize the Gemma-2B encoder GEMM weights to INT8.
 
         Uses the same per-output-channel symmetric INT8 scheme as the
-        decoder path. The merged gate+up weight mirrors the FP8 path to
-        enable the single fused gate_geglu_merged → INT8 CUTLASS route.
+        decoder path. Gate and up remain separate BF16 GEMM outputs before
+        the same GELU(gate) * up operation as the BF16 model.
 
         Keys written into ``self._int8_weights`` (``encoder_`` prefix):
             encoder_attn_qkv_w_{0..17}, encoder_attn_o_w_{0..17},
-            encoder_ffn_gate_up_w_{0..17}  (merged),
+            encoder_ffn_gate_w_{0..17}, encoder_ffn_up_w_{0..17},
             encoder_ffn_down_w_{0..17}
         """
         W = self._ckpt_bf16
@@ -1459,10 +1488,7 @@ class Pi05TorchFrontendRtx:
         for i in range(ENC_L):
             quant(f"encoder_attn_qkv_w_{i}", W["encoder_attn_qkv_w"][i])
             quant(f"encoder_attn_o_w_{i}", W["encoder_attn_o_w"][i])
-            # Keep gate and up SEPARATE for SiLU-gated EVT fusion.
-            # The new cutlass_int8_silu_gated_bf16out kernel reads gate_buf
-            # produced by the gate GEMM and fuses SiLU(gate)*up in the
-            # epilogue, eliminating the separate gate_geglu_merged kernel.
+            # Pi0.5 uses GELU gating, not the SiLU-gated CUTLASS epilogue.
             quant(f"encoder_ffn_gate_w_{i}", W["encoder_ffn_gate_w"][i])
             quant(f"encoder_ffn_up_w_{i}", W["encoder_ffn_up_w"][i])
             quant(f"encoder_ffn_down_w_{i}", W["encoder_ffn_down_w"][i])
@@ -1611,6 +1637,8 @@ class Pi05TorchFrontendRtx:
         """
         if cfg_enable and getattr(self, '_probeflow_config', None) is not None:
             raise NotImplementedError('ProbeFlow does not support CFG yet')
+        if cfg_enable and (self._use_int8_encoder or self._force_int8_decoder):
+            raise NotImplementedError("Pi0.5 INT8 does not support CFG pipelines")
         if not cfg_enable:
             self._rl_config = None
             # If a CFG pipeline was previously built, drop it so the
@@ -1980,10 +2008,11 @@ class Pi05TorchFrontendRtx:
         if not 0.0 <= percentile <= 100.0:
             raise ValueError(f"percentile must be in [0, 100], got {percentile}")
 
-        if getattr(self.pipeline, "use_int8_decoder", False):
+        if (getattr(self.pipeline, "use_int8_decoder", False)
+                or getattr(self.pipeline, "use_int8_encoder", False)):
             if n > 1:
                 logger.info(
-                    "INT8 decoder path uses runtime-dynamic activation scales; "
+                    "INT8 path uses runtime-dynamic activation scales; "
                     "using the first sample to warm buffers and capture the graph.")
             self._calibrate_single_frame(obs_list[0])
             return
@@ -2059,6 +2088,7 @@ class Pi05TorchFrontendRtx:
             # calibration with proper safety inflation makes the cosine
             # drop acceptable).
             if (self.pipeline.use_int8_encoder
+                    and getattr(self, "_int8_mode", None) is None
                     and os.environ.get(
                         "FVK_PI05_RTX_INT8_ENCODER_STATIC", "0") == "1"):
                 self.pipeline.int8_encoder_static_calibrated = True
@@ -2178,13 +2208,15 @@ class Pi05TorchFrontendRtx:
             PrecisionSpec,
         )
 
-        if getattr(self.pipeline, "use_int8_decoder", False):
+        if (getattr(self.pipeline, "use_int8_decoder", False)
+                or getattr(self.pipeline, "use_int8_encoder", False)):
             spec = ModelPrecisionSpec(source="manual")
             for name, scale_t in self._int8_weight_scales.items():
                 scale_val = scale_t.detach().cpu().numpy().astype(np.float32, copy=False)
                 entry = PrecisionSpec(
                     dtype="int8",
-                    granularity="per_tensor",
+                    granularity="per_channel",
+                    axis=0,  # stored weight [N, K]: one scale per output channel
                     scheme="symmetric",
                     scale_source="manual",
                     scale=scale_val,
@@ -2197,16 +2229,19 @@ class Pi05TorchFrontendRtx:
                 scale_val = buf.download_new((count,), np.float32)
                 entry = PrecisionSpec(
                     dtype="int8",
-                    granularity="per_tensor",
+                    granularity="per_channel",
+                    axis=0,  # activation [M, K]: one dynamic scale per row
                     scheme="symmetric",
                     scale_source="runtime_dynamic",
                     scale=scale_val,
-                    calibration_method=method,
-                    calibration_samples=n,
-                    calibration_percentile=percentile,
                 )
                 entry.validate()
-                spec.decoder_layer_specs[name] = entry
+                if name.startswith("encoder_"):
+                    spec.encoder_layer_specs[name] = entry
+                elif name.startswith("decoder_"):
+                    spec.decoder_layer_specs[name] = entry
+                else:
+                    spec.activation_specs[name] = entry
             return spec
 
         spec = ModelPrecisionSpec(source="calibration")
@@ -2341,7 +2376,34 @@ class Pi05TorchFrontendRtx:
             result["prefix_features"] = self._prefix_features_result()[0]
         if sde_used is not None:
             result["step_noise"], result["sde_sigma"] = sde_used
+        if self.pipeline.use_int8_encoder or self.pipeline.use_int8_decoder:
+            result["execution_metadata"] = self.int8_execution_metadata()
         return result
+
+    def int8_execution_metadata(self) -> dict:
+        """Describe the actual prepared W8A8 sites, including BF16 coverage."""
+        pipe = self.pipeline
+        if pipe is None or not (pipe.use_int8_encoder or pipe.use_int8_decoder):
+            raise RuntimeError("The active Pi0.5 pipeline does not execute INT8 GEMMs")
+        if not pipe.int8_executed_sites:
+            raise RuntimeError("Pi0.5 INT8 execution has not been prepared yet")
+        return {
+            "engine": "flashrt",
+            "int8_mode": ("encoder_decoder" if pipe.use_int8_decoder else "encoder"),
+            "gemm_implementation": "cutlass_sm80_s8_s8_s32_bf16",
+            "vision_precision": "int8_w8a8_bf16" if pipe.use_int8_vision else "bf16",
+            "encoder_precision": "int8_w8a8_bf16" if pipe.use_int8_encoder else "bf16",
+            "decoder_precision": "int8_w8a8_bf16" if pipe.use_int8_decoder else "bf16",
+            "attention_precision": "bf16",
+            "action_projection_precision": "bf16",
+            "weight_scale": "per_output_channel",
+            "activation_scale": (
+                "mixed_dynamic_and_frozen_per_row" if pipe.int8_encoder_static_calibrated
+                else "runtime_dynamic_per_row"),
+            "ffn_activation": "gelu_tanh",
+            "use_cuda_graph": self.use_cuda_graph,
+            "observed_int8_gemm_sites": sorted(pipe.int8_executed_sites),
+        }
 
     def _use_full_pipeline_for_next_frame(self) -> bool:
         """Advance the frame counter and select full vs decode-only work."""
@@ -2425,6 +2487,8 @@ class Pi05TorchFrontendRtx:
         """
         if enable and getattr(self, '_probeflow_config', None) is not None:
             raise NotImplementedError('ProbeFlow does not support batching yet')
+        if enable and (self._use_int8_encoder or self._force_int8_decoder):
+            raise NotImplementedError("Pi0.5 INT8 does not support batched pipelines")
         if not enable:
             if isinstance(self.pipeline, Pi05BatchedPipeline):
                 self.pipeline = None
