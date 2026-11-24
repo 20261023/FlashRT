@@ -88,6 +88,10 @@ selected device kernels and stage shares come from allocated profiling runs.
 from a local pinned LeRobot v3 LIBERO subset. It verifies dataset file bytes
 before decoding RGB frames, preserves state/task values and records provenance.
 Only initial Gaussian diffusion noise is generated.
+For a separate robustness campaign, pass `--include-controls`. The manifest
+keeps the original four requests and adds three controls per request, with a
+new noise draw, 10% darker images, or toggled terminal punctuation. Each
+variant records which original request it uses.
 
 ```bash
 python -m examples.vla_autotune.smolvla_workload \

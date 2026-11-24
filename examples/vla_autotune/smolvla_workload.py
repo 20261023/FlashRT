@@ -1,7 +1,7 @@
 """Create explicit real LIBERO requests from a local pinned LeRobot v3 dataset.
 
-The command is CPU-only and never loads a policy. Raw RGB frames, state and
-task text come from the dataset; only initial diffusion noise is generated.
+The command is CPU-only. Raw RGB frames, state and task text come from the
+dataset. Optional controls vary noise, brightness or terminal punctuation.
 """
 
 import argparse
@@ -41,7 +41,8 @@ def verify_dataset_files(root, expected):
     return observed
 
 
-def write_workload(cases, output, *, dataset_identity, seed=7, spec_dir=None):
+def write_workload(cases, output, *, dataset_identity, seed=7, spec_dir=None,
+                   include_controls=False):
     """Serialize already extracted real observations with auditable provenance."""
     from flash_rt.models.smolvla.inputs import validate_observation
     output = Path(output)
@@ -56,26 +57,52 @@ def write_workload(cases, output, *, dataset_identity, seed=7, spec_dir=None):
     output.mkdir(parents=True)
     rng = np.random.default_rng(seed)
     requests = []
-    for index, case in enumerate(cases):
-        name = f'libero-{index:03d}'
+
+    def save(name, case, noise, *, control=None, parent=None):
         np.savez_compressed(
             output / f'{name}.npz', image_0=case['images'][0], image_1=case['images'][1],
-            state=case['state'], noise=rng.standard_normal((1, 50, 32)).astype(np.float32))
-        requests.append({
+            state=case['state'], noise=noise)
+        request = {
             'request_id': name, 'npz_path': f'{name}.npz',
             'fields': {'images': ['image_0', 'image_1'], 'state': 'state'},
             'noise_key': 'noise', 'prompt': case['prompt'],
             'dataset_episode': int(case['episode']), 'dataset_frame': int(case['frame']),
-        })
+        }
+        if control is not None:
+            request.update(control=control, parent_request_id=parent)
+        requests.append(request)
+
+    original_noise = []
+    for index, case in enumerate(cases):
+        noise = rng.standard_normal((1, 50, 32)).astype(np.float32)
+        original_noise.append(noise)
+        save(f'libero-{index:03d}', case, noise)
+    if include_controls:
+        for index, (case, noise) in enumerate(zip(cases, original_noise)):
+            parent = f'libero-{index:03d}'
+            save(parent + '-new-noise', case, rng.standard_normal(noise.shape).astype(np.float32),
+                 control='extra-draw-from-recorded-seed', parent=parent)
+            dark = [np.rint(image.astype(np.float32) * .9).astype(np.uint8)
+                    for image in case['images']]
+            save(parent + '-darken', {**case, 'images': dark}, noise,
+                 control='rgb-times-0.9-round-to-nearest', parent=parent)
+            text = case['prompt'].rstrip()
+            punctuated = text[:-1] if text.endswith('.') else text + '.'
+            save(parent + '-punctuation', {**case, 'prompt': punctuated}, noise,
+                 control='toggle-terminal-period', parent=parent)
     path = output / 'workload.json'
     path.write_text(json.dumps({
-        'schema_version': 1, 'model': 'smolvla', 'workload_id': 'smolvla-libero-real-v1',
+        'schema_version': 1, 'model': 'smolvla',
+        'workload_id': 'smolvla-libero-controls-v1' if include_controls else 'smolvla-libero-real-v1',
         'spec_dir': str(Path(spec_dir).resolve()) if spec_dir is not None else str(
             Path(__file__).resolve().parents[2] / 'flash_rt/models/smolvla'),
         'requests': requests,
-        'provenance': {'kind': 'real_dataset', 'dataset': dataset_identity, 'noise_seed': seed,
+        'provenance': {'kind': 'real_dataset_with_controls' if include_controls else 'real_dataset',
+                       'dataset': dataset_identity, 'noise_seed': seed,
                        'camera_order': list(CAMERAS), 'image_transform': 'none; decoded RGB24',
-                       'state_transform': 'none; dataset float32[8]'},
+                       'state_transform': 'none; dataset float32[8]',
+                       **({'controls': 'Three single-input variants per real request. Variant '
+                                       'changes are recorded on each request.'} if include_controls else {})},
     }, indent=2) + '\n')
     return path
 
@@ -146,10 +173,11 @@ def main(argv=None):
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--seed', type=int, default=7)
     parser.add_argument('--spec-dir', type=Path)
+    parser.add_argument('--include-controls', action='store_true')
     args = parser.parse_args(argv)
     cases, identity = extract_dataset(args.dataset)
     path = write_workload(cases, args.output, dataset_identity=identity, seed=args.seed,
-                          spec_dir=args.spec_dir)
+                          spec_dir=args.spec_dir, include_controls=args.include_controls)
     print(path)
 
 

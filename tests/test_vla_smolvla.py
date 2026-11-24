@@ -158,3 +158,36 @@ def test_smolvla_dataset_provenance_rejects_modified_or_missing_bytes(tmp_path):
         verify_dataset_files(tmp_path, expected)
     with pytest.raises(ValueError, match='missing'):
         verify_dataset_files(tmp_path, {'missing-file': expected['sample']})
+
+
+def test_smolvla_control_workload_preserves_real_requests_and_changes_one_input(tmp_path):
+    from examples.vla_autotune.smolvla_workload import write_workload
+    from flash_rt.vla.autotune.workloads import NPZWorkload
+
+    image = np.full((256, 256, 3), 128, dtype=np.uint8)
+    cases = [{'images': [image, image], 'state': np.arange(8, dtype=np.float32),
+              'prompt': f'Pick object {index}', 'episode': index, 'frame': 0}
+             for index in range(4)]
+    originals = write_workload(cases, tmp_path / 'real', dataset_identity={}, seed=7)
+    path = write_workload(cases, tmp_path / 'extended', dataset_identity={}, seed=7,
+                          include_controls=True)
+    real, extended = NPZWorkload.from_file(originals), NPZWorkload.from_file(path)
+    assert len(extended) == 16 and extended.workload_id != real.workload_id
+    for index in range(4):
+        reference, original = real.request(index), extended.request(index)
+        assert original.request_id == reference.request_id
+        np.testing.assert_array_equal(original.noise, reference.noise)
+        np.testing.assert_array_equal(original.observation['images'], reference.observation['images'])
+        assert original.prompt == reference.prompt
+        noise, dark, prompt = (extended.request(4 + 3 * index + k) for k in range(3))
+        assert not np.array_equal(noise.noise, original.noise)
+        np.testing.assert_array_equal(noise.observation['images'], original.observation['images'])
+        assert noise.prompt == original.prompt
+        np.testing.assert_array_equal(dark.noise, original.noise)
+        assert np.all(dark.observation['images'][0] == 115)
+        assert dark.prompt == original.prompt
+        np.testing.assert_array_equal(prompt.noise, original.noise)
+        np.testing.assert_array_equal(prompt.observation['images'], original.observation['images'])
+        assert prompt.prompt == original.prompt + '.'
+        for control in (noise, dark, prompt):
+            np.testing.assert_array_equal(control.observation['state'], original.observation['state'])
