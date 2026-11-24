@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "model": "smolvla",
+  "name": "Hugging Face SmolVLA LIBERO (pinned first-light Torch profile)",
+  "aliases": [],
+  "identity": {
+    "source": {
+      "status": "pinned", "value": "b8ad81bf397d59dda69ccfc7e74e847f0a9d4fbf",
+      "repository": "https://github.com/huggingface/lerobot",
+      "revision": "b8ad81bf397d59dda69ccfc7e74e847f0a9d4fbf",
+      "sources": ["https://github.com/huggingface/lerobot/tree/b8ad81bf397d59dda69ccfc7e74e847f0a9d4fbf/src/lerobot/policies/smolvla"]
+    },
+    "weights": {
+      "status": "pinned", "value": "6721902bc4d61e50a3bfdb11dfb4cb626f05d102",
+      "repository": "https://huggingface.co/HuggingFaceVLA/smolvla_libero",
+      "revision": "6721902bc4d61e50a3bfdb11dfb4cb626f05d102",
+      "sha256": "af5d8dd361d2389a73ba8fe997df0141f678adf04e7c6ee5bc44502cd432cc26",
+      "weight_file_sha256": "71d9563c8295284acba8fc2d5c19de000d6fe9ba58a406832af7ef3d221ed52f",
+      "sources": ["https://huggingface.co/api/models/HuggingFaceVLA/smolvla_libero/revision/6721902bc4d61e50a3bfdb11dfb4cb626f05d102?blobs=true"],
+      "notes": "sha256 binds the canonical checkpoint directory: README, original config, model, two processor JSONs and their two state files. weight_file_sha256 binds the unchanged published safetensors."
+    },
+    "license": {
+      "status": "pinned", "value": "Apache-2.0",
+      "sources": [
+        "https://github.com/huggingface/lerobot/blob/b8ad81bf397d59dda69ccfc7e74e847f0a9d4fbf/LICENSE",
+        "https://huggingface.co/HuggingFaceVLA/smolvla_libero/blob/6721902bc4d61e50a3bfdb11dfb4cb626f05d102/README.md",
+        "https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct/blob/4cde9d208e19519c36917aa170fffc7e381aa0ad/README.md"
+      ]
+    }
+  },
+  "inputs": {
+    "image_0": {"shape": [256, 256, 3], "dtype": "uint8", "camera": "observation.images.image"},
+    "image_1": {"shape": [256, 256, 3], "dtype": "uint8", "camera": "observation.images.image2"},
+    "state": {"shape": [8], "dtype": "float32"},
+    "noise": {"shape": [1, 50, 32], "dtype": "float32"}
+  },
+  "head": {
+    "type": "flow_matching", "kind": "velocity",
+    "defaults": {"sampler": "euler", "num_steps": 10},
+    "sources": ["https://github.com/huggingface/lerobot/blob/b8ad81bf397d59dda69ccfc7e74e847f0a9d4fbf/src/lerobot/policies/smolvla/modeling_smolvla.py"]
+  },
+  "actions": {
+    "model_dim": 32, "effective_dim": 7, "channels": [0, 1, 2, 3, 4, 5, 6], "horizon": 50,
+    "domain": "denormalized-libero-7d", "worker_domain": "denormalized-libero-7d", "worker_field": "actions",
+    "sources": ["https://huggingface.co/HuggingFaceVLA/smolvla_libero/blob/6721902bc4d61e50a3bfdb11dfb4cb626f05d102/config.json"],
+    "notes": "Full 50-step chunk after the checkpoint action unnormalizer. Effective channels are all public seven actions. select_action queue consumption is outside this inference benchmark."
+  },
+  "stages": [
+    {"stage_id": "host.input", "seams": ["flash_rt/frontends/torch/smolvla_cuda_sm80.py:SmolVLATorchFrontendCudaSm80._host_input"], "profiling_keys": ["host_input"], "notes": ["Original newline/tokenizer/device/normalizer pipeline."]},
+    {"stage_id": "vision.encode", "seams": ["src/lerobot/policies/smolvla/smolvlm_with_expert.py:SmolVLMWithExpertModel.embed_image"], "profiling_keys": ["vision"], "notes": ["Two SigLIP calls; shares interval with connector."]},
+    {"stage_id": "vision.project", "seams": ["src/lerobot/policies/smolvla/smolvlm_with_expert.py:SmolVLMWithExpertModel.embed_image"], "profiling_keys": ["vision"], "notes": ["Pixel shuffle/connector is measured inside embed_image."]},
+    {"stage_id": "prefix.prefill", "seams": ["src/lerobot/policies/smolvla/smolvlm_with_expert.py:SmolVLMWithExpertModel.forward"], "profiling_keys": ["prefix"], "notes": ["Only fill_kv_cache=True; 32 language layers."]},
+    {"stage_id": "denoise.velocity", "seams": ["src/lerobot/policies/smolvla/modeling_smolvla.py:VLAFlowMatching.denoise_step"], "profiling_keys": ["velocity"], "notes": ["Actual Euler route, observed call count per request or capture."]},
+    {"stage_id": "host.launch", "seams": ["flash_rt/models/smolvla/pipeline_cuda_sm80.py:SmolVLAPipelineCudaSm80.run_static"], "profiling_keys": [], "notes": ["Project-owned eager/whole-policy graph dispatch."]},
+    {"stage_id": "host.output", "seams": ["flash_rt/frontends/torch/smolvla_cuda_sm80.py:SmolVLATorchFrontendCudaSm80.infer"], "profiling_keys": ["host_output"], "notes": ["Checkpoint action unnormalizer and CPU output."]}
+  ],
+  "profiling": {
+    "adapter": "flash_rt.vla.adapters.smolvla:install_profile",
+    "keys": {"vision": ["vision.encode", "vision.project"], "prefix": ["prefix.prefill"], "velocity": ["denoise.velocity"], "host_input": ["host.input"], "host_output": ["host.output"]},
+    "expected_keys": {"euler": ["vision", "prefix", "velocity", "host_input", "host_output"]},
+    "strategy": {"kind": "adapter", "hook": "flash_rt.vla.adapters.smolvla:install_profile"}
+  },
+  "attention": [
+    {"id": "vision", "stage": "vision.encode", "mask": "bidirectional", "head_dim": 64, "query_heads": 12, "kv_heads": 12, "gqa": false, "backend": "upstream-transformers-sdpa", "sources": ["SmolVLM2-500M-Video-Instruct pinned config.json:vision_config"]},
+    {"id": "prefix", "stage": "prefix.prefill", "mask": "bidirectional-image-language plus state block", "head_dim": 64, "query_heads": 15, "kv_heads": 5, "gqa": true, "backend": "upstream eager FP32 QK/softmax", "sources": ["SmolVLM2-500M-Video-Instruct pinned config.json:text_config", "LeRobot b8ad81bf smolvlm_with_expert.py:eager_attention_forward"]},
+    {"id": "action", "stage": "denoise.velocity", "mask": "alternating suffix self-attention and cross-attention to cached prefix", "head_dim": 64, "query_heads": 15, "kv_heads": 5, "gqa": true, "backend": "upstream eager FP32 QK/softmax", "sources": ["LeRobot b8ad81bf smolvlm_with_expert.py:forward_cross_attn_layer"]}
+  ],
+  "capabilities": {
+    "stable_execution_fields": ["engine", "coverage", "use_cuda_graph", "native_operators", "noise_contract"],
+    "frameworks": ["torch"], "hardware": ["cuda_sm80"], "precision": "mixed_bf16_fp32",
+    "backends": {"torch": ["torch"]}, "samplers": ["euler"],
+    "options": {
+      "source_dir": {"type": "path"}, "vlm_dir": {"type": "path"},
+      "use_cuda_graph": {"type": "bool", "default": true},
+      "max_graph_profiles": {"type": "integer", "minimum": 1, "default": 4}
+    },
+    "action_domain_resolution": "static",
+    "execution_coverage": {"torch": "upstream-lerobot-neural-operators-project-owned-graph-and-io"}
+  },
+  "features": {"flow_matching": true, "torch_modules": true, "cuda_graph": true, "variable_steps": true, "adaptive_sampler": false, "native_kernels": false},
+  "tools": {
+    "tags": ["flow_matching", "smolvlm", "prefix_kv", "cuda_graph", "libero"],
+    "supported": ["baseline.official_impl", "profile.stage_intervals", "launch.cuda_graph", "sampler.euler_steps"],
+    "unsupported": ["sampler.probeflow", "prefix.vision_pool", "prefix.state_prompt_mode", "quant.int8_pi05", "engine.apxinf"],
+    "defaults": {"num_steps": 10, "euler_steps": [10, 8, 6, 4], "options": {}}
+  },
+  "adapter": {
+    "hooks": {"binding": "flash_rt.vla.adapters.smolvla:binding", "validate": "flash_rt.vla.adapters.smolvla:validate", "profile": "flash_rt.vla.adapters.smolvla:install_profile"},
+    "runtime": {"retire_replaced_pipeline": false, "prompt_state_dependent": false, "prepared_context": false}
+  },
+  "author": {
+    "adapter": "flash_rt.vla.author_adapters.smolvla", "source_package": "src/lerobot",
+    "options": ["vlm_dir"], "default_steps": 10, "fixed_steps": null, "requires_noise_seeds": false
+  },
+  "fixture": {
+    "recipe": "real_libero_lerobot_v3", "fields": {"images": ["image_0", "image_1"], "state": "state"}, "noise_key": "noise",
+    "sources": ["https://huggingface.co/datasets/lerobot/libero/tree/a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4", "examples/vla_autotune/smolvla_workload.py"],
+    "notes": "CPU extraction of real RGB24 frames, state[8], task text for episodes 0 and 1, frames 0 and 40. Only Gaussian initial noise is generated."
+  },
+  "quality": {
+    "scope": "smolvla-libero-public7-v1", "action_dim": 7,
+    "thresholds": {"max_relative_l2": 0.05, "min_cosine": 0.999},
+    "sources": ["User-approved common VLA public quality budget; devlocal/platform/human-note.json"],
+    "notes": "Fixed-input numerical error on all seven public action channels; no closed-loop task success claim."
+  }
+}
