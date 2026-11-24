@@ -1,6 +1,7 @@
 """CPU contracts; actual inference is checked separately on real LIBERO inputs."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -12,6 +13,23 @@ def _config(**changes):
                   hardware='cuda_sm80', options={'source_dir': '/author', 'vlm_dir': '/vlm'})
     values.update(changes)
     return SimpleNamespace(**values)
+
+
+def test_smolvla_routes_vision_attention_and_preserves_mixed_precision_exclusions():
+    from flash_rt.vla.autotune.tools import get_tool
+
+    spec_dir = Path(__file__).resolve().parents[1] / 'flash_rt/models/smolvla'
+    sites = get_tool('attention.sage').attention_sites(
+        'smolvla', hardware='cuda_sm80', spec_dir=spec_dir)
+    vision, = sites['eligible_sites']
+    assert (vision['id'], vision['mask_kind'], vision['head_dim']) == ('vision', 'none', 64)
+    assert vision['shapes']['q'] == [1, 12, 1024, 64]
+    flex = get_tool('attention.flex').attention_sites(
+        'smolvla', hardware='cuda_sm80', spec_dir=spec_dir)
+    masked = {site['id']: site for site in flex['ineligible_sites']}
+    assert set(masked) == {'prefix', 'action_self', 'action_cross'}
+    assert all(site['mask_kind'] == 'arbitrary' and site['gqa'] for site in masked.values())
+    assert all(any('precision' in reason for reason in site['reasons']) for site in masked.values())
 
 
 def test_smolvla_binding_preserves_graph_and_fixed_noise_options():

@@ -61,9 +61,42 @@
     "strategy": {"kind": "adapter", "hook": "flash_rt.vla.adapters.smolvla:install_profile"}
   },
   "attention": [
-    {"id": "vision", "stage": "vision.encode", "mask": "bidirectional", "head_dim": 64, "query_heads": 12, "kv_heads": 12, "gqa": false, "backend": "upstream-transformers-sdpa", "sources": ["SmolVLM2-500M-Video-Instruct pinned config.json:vision_config"]},
-    {"id": "prefix", "stage": "prefix.prefill", "mask": "bidirectional-image-language plus state block", "head_dim": 64, "query_heads": 15, "kv_heads": 5, "gqa": true, "backend": "upstream eager FP32 QK/softmax", "sources": ["SmolVLM2-500M-Video-Instruct pinned config.json:text_config", "LeRobot b8ad81bf smolvlm_with_expert.py:eager_attention_forward"]},
-    {"id": "action", "stage": "denoise.velocity", "mask": "alternating suffix self-attention and cross-attention to cached prefix", "head_dim": 64, "query_heads": 15, "kv_heads": 5, "gqa": true, "backend": "upstream eager FP32 QK/softmax", "sources": ["LeRobot b8ad81bf smolvlm_with_expert.py:forward_cross_attn_layer"]}
+    {
+      "id": "vision", "stage": "vision.encode", "mask": "all patches valid and bidirectional",
+      "mask_kind": "none", "site_kind": "spatial", "phase": "prefill",
+      "head_dim": 64, "query_heads": 12, "kv_heads": 12, "gqa": false,
+      "precision": "bf16", "layout": "BHSD",
+      "shapes": {"q": [1, 12, 1024, 64], "k": [1, 12, 1024, 64], "v": [1, 12, 1024, 64]},
+      "backend": "upstream Transformers attention dispatch; device kernel unobserved",
+      "sources": ["SmolVLM2-500M-Video-Instruct pinned config.json:vision_config", "LeRobot b8ad81bf smolvlm_with_expert.py:embed_image", "Transformers 5.5.4 modeling_smolvlm.py:SmolVLMVisionTransformer.forward"]
+    },
+    {
+      "id": "prefix", "stage": "prefix.prefill", "mask": "bidirectional image and language with padding and a state block",
+      "mask_kind": "arbitrary", "site_kind": "self", "phase": "prefill",
+      "head_dim": 64, "query_heads": 15, "kv_heads": 5, "gqa": true, "storage_kv_heads": 15,
+      "precision": "mixed_bf16_fp32", "layout": "logical-BSHD",
+      "shapes": {"q": [1, "prefix_tokens", 15, 64], "k": [1, "prefix_tokens", 5, 64], "v": [1, "prefix_tokens", 5, 64]},
+      "backend": "upstream eager FP32 QK/softmax and probabilities cast to V dtype",
+      "sources": ["SmolVLM2-500M-Video-Instruct pinned config.json:text_config", "LeRobot b8ad81bf smolvlm_with_expert.py:forward_attn_layer", "LeRobot b8ad81bf smolvlm_with_expert.py:eager_attention_forward"]
+    },
+    {
+      "id": "action_self", "stage": "denoise.velocity", "mask": "action rows over cached prefix and the action suffix",
+      "mask_kind": "arbitrary", "site_kind": "joint", "phase": "denoise",
+      "head_dim": 64, "query_heads": 15, "kv_heads": 5, "gqa": true, "storage_kv_heads": 15,
+      "precision": "mixed_bf16_fp32", "layout": "logical-BSHD",
+      "shapes": {"q": [1, 50, 15, 64], "k": [1, "prefix_tokens+50", 5, 64], "v": [1, "prefix_tokens+50", 5, 64]},
+      "backend": "upstream eager FP32 QK/softmax; self layers interleave with cross layers",
+      "sources": ["LeRobot b8ad81bf smolvlm_with_expert.py:forward", "LeRobot b8ad81bf smolvlm_with_expert.py:forward_attn_layer"]
+    },
+    {
+      "id": "action_cross", "stage": "denoise.velocity", "mask": "action rows over valid cached prefix keys",
+      "mask_kind": "arbitrary", "site_kind": "cross", "phase": "denoise",
+      "head_dim": 64, "query_heads": 15, "kv_heads": 5, "gqa": true, "storage_kv_heads": 15,
+      "precision": "mixed_bf16_fp32", "layout": "logical-BSHD",
+      "shapes": {"q": [1, 50, 15, 64], "k": [1, "prefix_tokens", 5, 64], "v": [1, "prefix_tokens", 5, 64]},
+      "backend": "upstream eager FP32 QK/softmax after expert K/V projections",
+      "sources": ["LeRobot b8ad81bf smolvlm_with_expert.py:forward_cross_attn_layer", "LeRobot b8ad81bf smolvlm_with_expert.py:eager_attention_forward"]
+    }
   ],
   "capabilities": {
     "stable_execution_fields": ["engine", "coverage", "use_cuda_graph", "native_operators", "noise_contract"],

@@ -68,6 +68,20 @@ owns bounded graph profiles keyed by typed input shapes, updates static input
 storage before replay, and releases its own graphs. It reports actual graph
 replay telemetry separately from neural-operator coverage.
 
+## Attention sites on the pinned checkpoint
+
+The two 512×512 camera inputs each produce 1,024 patches before the connector.
+The vision attention has 12 BF16 heads of width 64 and an all-valid patch mask.
+The language prefix and the two action-expert routes use 15 query heads and
+five logical K/V heads. Prefix, suffix self-attention and prefix cross-attention
+have different mask regions. The upstream implementation expands K/V heads,
+computes QK and softmax in FP32, and casts probabilities to the value dtype.
+
+`tools show attention.sage --model smolvla --spec-dir flash_rt/models/smolvla
+--hardware cuda_sm80` reports the vision site as eligible for a port. A port of
+the three masked sites first needs an explicit mixed-precision recipe. The
+selected device kernels and stage shares come from allocated profiling runs.
+
 ## Real input generation and acceptance
 
 `examples/vla_autotune/smolvla_workload.py` extracts episodes 0/1, frames 0/40
