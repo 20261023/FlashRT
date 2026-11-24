@@ -76,6 +76,39 @@ python examples/vla_autotune/external/setup.py apply-sm80 \
 mixed patch states, unrelated untracked files and symlink escapes. An exact
 already-applied tree is a no-op. It never commits or pushes.
 
+## Clean AITune CUDA12 offline installation
+
+For the validated Python 3.11 / Torch 2.11 CU128 profile, use
+`aitune_offline.py install`. It creates a new venv with
+`include-system-site-packages = false`, installs the complete hash-locked
+wheel closure with `--no-index`, and installs unchanged pinned AITune source
+with `[torch211,onnxruntime-gpu-cuda12]`:
+
+```bash
+python examples/vla_autotune/external/aitune_offline.py install \
+  --root /shared/external/new-aitune-cu128 \
+  --base-python /shared/python311/bin/python \
+  --wheelhouse /shared/private-wheels \
+  --lock /shared/private-wheels/runtime-lock.txt \
+  --source-repo /shared/bundles/aitune.bundle
+```
+
+This profile uses official `nvidia-modelopt[onnx]==0.43.0` (CUDA12 CuPy/ORT
+dependencies), `torch-tensorrt==2.11.0+cu128`, `torchao==0.16.0+cu128`,
+and TensorRT **CU12** binaries 10.15.1.29. The general `tensorrt` metapackage
+at 10.15.1.29 depends on CU13 despite TorchTRT's CU128 wheel also requiring
+CU12. `adapt-metapackage` changes only that small public package's dependency
+and labels its output `10.15.1.29+flashrtcu12.1`; neither NVIDIA binary
+wheel bytes nor AITune source are modified. The adaptation and upstream
+SLA are recorded in `source-copies.json` and `licenses/tensorrt-metapackage/`.
+Keep downloaded/built wheels in a private wheelhouse, not in Git.
+
+Official metadata, exact wheel filenames, URLs, SHA256, build actions and
+installed package/import receipts must accompany the wheelhouse. A completed
+install requires `pip check`, the real `cpu_smoke.py --tool aitune` import
+and exact Torch/CUDA/ModelOpt checks. Public package, disk or DNS failures
+are repairable `SETUP_FAILED` states; they are not user §1.3 `BLOCKED`.
+
 ## KernelAgent A800 label
 
 `kernelagent-sm80.json` records the upstream optimization **worker keyword**

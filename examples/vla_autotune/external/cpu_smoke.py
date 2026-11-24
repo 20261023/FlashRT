@@ -83,7 +83,7 @@ def kernelagent(source):
             'optimization_worker_accepts_gpu_name': True}
 
 
-def aitune(source):
+def aitune(source, *, cu128=False):
     """Check real API import/signatures; do not inspect, wrap, or tune a module."""
     import inspect
     import aitune.torch as ait
@@ -91,17 +91,69 @@ def aitune(source):
     assert 'strategy' in inspect.signature(ait.wrap).parameters
     assert 'tune_strategy' not in inspect.signature(ait.wrap).parameters
     assert 'ignore_failing_modules' in inspect.signature(ait.tune).parameters
-    return {'status': 'CPU_IMPORT_PASS', 'api': ['inspect', 'wrap', 'tune', 'save', 'load']}
+    result = {'status': 'CPU_IMPORT_PASS', 'api': ['inspect', 'wrap', 'tune', 'save', 'load']}
+    if cu128:
+        result.update(_aitune_cu128_versions(ait))
+    return result
+
+
+def _aitune_cu128_versions(ait):
+    import importlib.metadata as metadata
+    import site
+
+    import cupy
+    import modelopt
+    import nvtx
+    import onnxruntime
+    import tensorrt
+    import torch
+    import torchao
+    import triton
+
+    versions = {name: metadata.version(name) for name in (
+        'aitune', 'torch', 'triton', 'numpy', 'nvtx', 'nvidia-modelopt',
+        'tensorrt', 'tensorrt-cu12', 'tensorrt-cu12-bindings', 'tensorrt-cu12-libs',
+        'torch-tensorrt', 'torchao', 'cupy-cuda12x', 'onnxruntime-gpu')}
+    installed = [dist.metadata['Name'].lower().replace('_', '-')
+                 for dist in metadata.distributions()]
+    cuda13 = [name for name in installed if 'cu13' in name or 'cuda13' in name]
+    assert not cuda13, f'CUDA13 packages in CUDA12 environment: {cuda13}'
+    assert torch.version.cuda == '12.8'
+    assert versions['torch'] == '2.11.0+cu128'
+    assert versions['triton'] == '3.6.0'
+    assert versions['nvidia-modelopt'] == '0.43.0'
+    assert versions['cupy-cuda12x'] == '13.6.0'
+    assert versions['tensorrt-cu12-libs'] == '10.15.1.29'
+    assert tensorrt.__version__ == '10.15.1.29'
+    assert versions['torch-tensorrt'] == '2.11.0+cu128'
+    assert not site.ENABLE_USER_SITE
+    assert 'include-system-site-packages = false' in (Path(sys.prefix) / 'pyvenv.cfg').read_text()
+    for module in (torch, triton, tensorrt, torchao, modelopt, cupy, nvtx, onnxruntime):
+        assert Path(module.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+    from aitune.torch.backend import torch_tensorrt_aot_backend
+    trt_torch = torch_tensorrt_aot_backend.torch_tensorrt
+    return {'versions': versions, 'torch_compiled_cuda': torch.version.cuda,
+            'tensorrt_runtime': tensorrt.__version__,
+            'torch_tensorrt_cpu_import': 'PASS' if trt_torch is not None else 'BACKEND_UNAVAILABLE',
+            'cuda13_packages': cuda13, 'user_site_enabled': site.ENABLE_USER_SITE,
+            'python': sys.version.split()[0],
+            'prefix': sys.prefix, 'torch_path': torch.__file__,
+            'aitune_path': ait.__file__}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tool', choices=('forgekernel', 'kernelagent', 'aitune'), required=True)
     parser.add_argument('--source', type=Path, required=True)
+    parser.add_argument('--aitune-cu128', action='store_true',
+                        help='require the clean Python 3.11 / Torch 2.11 CU128 wheel profile')
     args = parser.parse_args(argv)
+    if args.aitune_cu128 and args.tool != 'aitune':
+        parser.error('--aitune-cu128 requires --tool aitune')
     os.environ['PYTHON_DOTENV_DISABLED'] = '1'
     os.environ.pop('AUTOWRAPT_BOOTSTRAP', None)
-    result = globals()[args.tool](args.source)
+    kwargs = {'cu128': True} if args.aitune_cu128 else {}
+    result = globals()[args.tool](args.source, **kwargs)
     result.update({'authentication_verified': False, 'gpu_validation': 'NOT_RUN',
                    'functional_validation': 'NOT_RUN'})
     print(json.dumps(result, indent=2))

@@ -193,7 +193,7 @@ def install(tool, root, base_python, *, source_repo=None, wheelhouse=None):
     source, venv = root / 'source', root / 'venv'
     result = {'tool_id': spec['tool_id'], 'upstream': spec, 'base_runtime': base,
               'root': str(root), 'source': str(source), 'python': str(venv / 'bin/python'),
-              'dependency_setup': 'BLOCKED', 'functional_validation': 'NOT_RUN',
+              'dependency_setup': 'SETUP_IN_PROGRESS', 'functional_validation': 'NOT_RUN',
               'gpu_validation': 'NOT_RUN', 'provider': provider_presence()}
     try:
         _run(['git', 'clone', '--no-hardlinks', source_repo or spec['repo'], source], env=env)
@@ -227,6 +227,7 @@ def install(tool, root, base_python, *, source_repo=None, wheelhouse=None):
         freeze = _run([*pip, 'list', '--format=json'], env=env)
         (root / 'packages.json').write_bytes(freeze)
     except (subprocess.CalledProcessError, ValueError) as error:
+        result['dependency_setup'] = 'SETUP_FAILED'
         # Deliberately never serialize exception text or raw subprocess output:
         # dependency tooling can include credentials/URLs in error messages.
         result['failure_type'] = type(error).__name__
@@ -277,7 +278,7 @@ def main(argv=None):
             result = install(args.tool, args.root, args.base_python, source_repo=args.source_repo,
                              wheelhouse=args.wheelhouse)
         except subprocess.CalledProcessError:
-            print(json.dumps({'status': 'BLOCKED', 'root': str(args.root),
+            print(json.dumps({'status': 'SETUP_FAILED', 'root': str(args.root),
                               'reason': 'dependency/source action failed; see setup-result.json'}))
             return 1
     print(json.dumps(result, indent=2))

@@ -71,6 +71,31 @@
       ],
       "copy_scope": "only license/notice files; ForgeKernel patch context additionally contains adapted upstream lines",
       "adaptations": []
+    },
+    {
+      "name": "tensorrt-cu12-metapackage-adapter",
+      "repo": "https://pypi.org/project/tensorrt/10.15.1.29/",
+      "version": "10.15.1.29+flashrtcu12.1",
+      "license": "setup.py: Apache-2.0 header; bundled TensorRT artifacts: NVIDIA TensorRT SLA",
+      "license_files": [
+        {
+          "upstream_path": "tensorrt-10.15.1.29/LICENSE.txt",
+          "local_path": "examples/vla_autotune/external/licenses/tensorrt-metapackage/LICENSE.txt",
+          "sha256": "64bd290f0251405f783ba1d2e155c500542be69795e51147a1d9f11a57bda8cc"
+        }
+      ],
+      "copy_scope": "No NVIDIA binaries vendored. A private wheelhouse keeps official CU12 binaries and one explicitly local dependency-only metapackage build.",
+      "source_url": "https://files.pythonhosted.org/packages/29/8d/1b3ea6493ee07d221fdf655a936f6b9d7c4bebfad7c0fdb879440a4172ad/tensorrt-10.15.1.29.tar.gz",
+      "source_sdist_sha256": "a78fb34aee9695b81a7485ac0648859b802ff1faaac4bde743d9c51d7493204b",
+      "source_setup_sha256": "2c3131a6d7bf0a09fc896da71c88b456c3b4975ea2f3963bcc46531a51b177cd",
+      "adaptation": {
+        "script": "examples/vla_autotune/external/aitune_offline.py:cuda12_metapackage_text",
+        "changes": [
+          "version -> 10.15.1.29+flashrtcu12.1",
+          "tensorrt_cu13 dependency -> tensorrt_cu12 of identical upstream version"
+        ],
+        "wheel_sha256": "8d3a37a3d622f4463a78dcdefd9e3cc56c17501285cfe0139867da1ab8a8b536"
+      }
     }
   ]
 }

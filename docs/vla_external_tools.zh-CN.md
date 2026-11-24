@@ -11,19 +11,27 @@
 |---|---|---|
 | `kernel.forgekernel` | OpenBMB/ForgeKernel `b2c8ae8510e02c28576808910a6b8827721ab7dc` | 独立 editable 环境；五项 SM80 补丁、CLI help 和补丁 CPU 行为检查通过 |
 | `kernel.kernelagent` | meta-pytorch/KernelAgent `e0647170da36ef9b059ac0bd3d60103aa4ed378b` | 独立 editable venv；生成/优化 API 真实 CPU 导入通过；A100 SXM4 标签存在 |
-| `compile.aitune` | ai-dynamo/aitune `1d3a4236ad8f458669d5633715b6956125f2289c` | 固定源码已离线 editable 安装；完整运行依赖 **BLOCKED**，真实导入报缺少 `nvtx` |
+| `compile.aitune` | ai-dynamo/aitune `1d3a4236ad8f458669d5633715b6956125f2289c` | CUDA 12.8 隔离环境安装完成。`pip check` 通过，CPU 导入版本为 `0.4.1.dev194+g1d3a4236a` |
 
-远端共同基础运行时元数据：Python **3.11.17**、Torch **2.11.0+cu128**、
-Triton **3.6.0**、NumPy **1.26.4**。新 venv 只读继承这些包，新增依赖写入
-各自目录，不升级既有环境。源码、安装记录、缓存和 venv 均独立。
+远端运行时版本为 Python **3.11.17**、Torch **2.11.0+cu128**、
+Triton **3.6.0**、NumPy **1.26.4**。ForgeKernel 和 KernelAgent 只读继承
+FlashRT 基础运行时。AITune 续段用独立 wheelhouse 安装完整依赖，
+`include-system-site-packages=false`。三者的源码、缓存和安装记录各自保存。
 精确私有共享盘路径交接于本地 `devlocal/platform/E-interface.md`，不进入公开报告。
 
 ## 可复现操作
 
 安装命令和离线 wheelhouse 流程见
 [`external/README.md`](../examples/vla_autotune/external/README.md)。
-安装器拒绝覆盖已存在目录；AITune 选择上游声明的 `torch211` extra，
-并约束基线 Torch/Triton/NumPy 精确版本。
+安装器使用新目录。AITune 安装上游的 `torch211` 和
+`onnxruntime-gpu-cuda12` extras，并从哈希锁文件安装完整依赖闭包。
+wheelhouse 包含 **86** 个 wheel，共 **8,726,799,408 B**。
+
+| 回执 | SHA-256 |
+|---|---|
+| `runtime-lock.txt` | `aa820c088f3788fcb3cfdd40ee950ef05f0f58bcb64e20258c04500a2ec39c37` |
+| `wheelhouse-manifest.json` | `92d23570f2ee93498f608abac4108cb546a69532db3cbd607fe47605c39a847f` |
+| AITune Git bundle（固定 commit 和 `v0.4.0` tag） | `f4435eab891018a90e268b8e3e4eb0f251d1585b18b2596a93657cf237616b81` |
 
 ForgeKernel 五项补丁：
 
@@ -42,7 +50,7 @@ KernelAgent 的优化 worker 参数由 `kernelagent-sm80.json` 显式提供：
 `gpu_name="NVIDIA A100 SXM4 80GB"`。便利环境变量不是上游自动读取接口。
 实际硬件证据仍必须写真实 A800/SM80，不能把别名当成设备测量。
 
-## 权限与阻塞
+## 权限与环境修复
 
 - 未继承 `ANTHROPIC_API_KEY`、`CLAUDE_CODE_OAUTH_TOKEN`、`OPENAI_API_KEY`；
   不读取、复制或映射其他会话的私有认证。不打印密钥，不进行付费模型请求。
@@ -50,14 +58,15 @@ KernelAgent 的优化 worker 参数由 `kernelagent-sm80.json` 显式提供：
   因而**生成 BLOCKED**，不是可运行/认证成功。
 - KernelAgent 的安装和 CPU 导入可用，但授权 provider 未就绪；
   因而**生成 BLOCKED**，first-valid 不代表最快。
-- AITune 远端 pip 的 DNS 解析失败。离线公共 build wheel 已解决源码构建安装，
-  但完整运行依赖仍未装齐；缺少 `nvtx` 是实际 CPU 导入错误，不能宣称可调优。
-  预解析依赖还发现新版 ModelOpt 可能引入 CUDA 13 依赖，不能把“求解成功”
-  当成 Torch/CUDA 12.8 运行验证。
+- AITune 的 `nvtx` 和远端索引问题已通过离线安装解决。86 个输入文件在传输后核对
+  SHA-256。隔离环境实际导入 Torch `2.11.0+cu128` 和 AITune，CUDA 未初始化。
+  ModelOpt 选官方 CUDA12 依赖的 0.43.0；通用 TensorRT 元包的 CUDA13 默认依赖
+  用明确本地版本的 CU12 元包适配，不篡改或冒称官方二进制 wheel。
 - CUDA 12.8 的 `nvcc` 和 Nsight Compute 2025.1 文件存在；本段未使用它们编译、
   申请计数器权限或执行 GPU。compute node 出网、counter 权限和 sandbox 均未验证。
 
-这些阻塞不能通过关闭 sandbox、借用凭据、修改默认模型或放宽数值门槛绕过。
+真正缺少外部 LLM key 的阻塞不能通过关闭 sandbox、借用凭据、修改默认模型
+或放宽数值门槛绕过；公共包安装和 DNS 问题不属于该类阻塞。
 
 ## 验证与下一段
 
@@ -68,13 +77,12 @@ uv run --no-project --python 3.12 --with numpy --with pytest python -m pytest -q
   tests/test_external_tool_setup.py tests/test_vla_autotune_external.py
 ```
 
-实测 **56 passed，1 skipped**。额外在远端执行 `external/cpu_smoke.py`：
-ForgeKernel 五项补丁 CPU 行为通过；KernelAgent 真实 API 导入通过；
-AITune 如上真实失败。没有 GPU/算子/模型功能或性能通过声明。
-按仓库 AGENTS.md 运行完整共享 CPU 套件，最新结果为
-**748 passed，8 skipped**（19.24 秒）。并行分工尚未集成时曾出现
-16 项非 E 文件失败；初次失败清单与最新完整日志均保留在
-`devlocal/external-tools/`，不以旧结果冒充当前状态。
+续段的命令另含 `tests/test_aitune_offline_setup.py`，实测
+**59 passed，1 skipped**。远端 `external/cpu_smoke.py` 验证了 ForgeKernel
+五项补丁的 CPU 行为及 KernelAgent 的实际 API 导入。
+完整共享 CPU 套件最新结果为 **798 passed，8 skipped**（24.90 秒）。
+中间一次全量运行的两个失败和最终日志保存在
+`devlocal/external-tools/aitune-offline/`。
 
 下一步由主会话另开**模型专属工作段**，明确模型、stage、算子、授权工具和预算：
 真实调用点 capture → 独立生成 → 人工审查/harvest → 独立 oracle 的 operator gate
