@@ -63,13 +63,13 @@ three uint8 camera histories `[6,480,640,3]`, normalized state20, supplied FP32
 noise `[40,32]`, and recorded normalized action oracles. It is not a generic
 robot observation adapter or a task-success benchmark.
 
-Run model execution **inside an allocated Slurm GPU srun step**, not a login
-node. The current runner checks the actual single A800/SM80 device. For example,
+Run model execution **in a GPU batch script on the allocated compute
+node**. The current runner checks the actual single A800/SM80 device. For example,
 inside your site's one-GPU batch script after selecting its existing runtime:
 
 ```bash
 export PYTHONPATH="/snapshot/FlashRT${PYTHONPATH:+:$PYTHONPATH}"
-srun -n 1 -c 8 python -B -u /snapshot/FlashRT/examples/vla_autotune/validate_hyvla.py \
+python -B -u /snapshot/FlashRT/examples/vla_autotune/validate_hyvla.py \
   --checkpoint /local/Hy-Embodied-0.5-VLA-RoboTwin \
   --fixture /local/public-reference/baseline.npz \
   --sampler euler --num-steps 10 --numerical-profile official_local_fp32 \
@@ -134,14 +134,14 @@ V="$REPO/examples/vla_autotune/validate_fastwam.py"
 S="$VLA_TASK_ROOT/fastwam-source/upstream"
 M="$REPO/examples/vla_autotune/fastwam-source/libero_model_resolved.json"
 # Set FAST_CHECKPOINT and WAN_BACKBONE to your resident local assets.
-srun -n 1 -c 8 python -B -u "$V" --prepare-context \
+python -B -u "$V" --prepare-context \
   --source-dir "$S" --backbone-dir "$WAN_BACKBONE" --output "$VLA_TASK_ROOT/context"
 
 COMMON=(--source-dir "$S" --model-config "$M" --checkpoint "$FAST_CHECKPOINT"
         --backbone-dir "$WAN_BACKBONE" --context "$VLA_TASK_ROOT/context/context.npz"
         --warmups 3 --repeats 20 --seed 20261109)
-srun -n 1 -c 8 python -B -u "$V" --reference "${COMMON[@]}" --output "$VLA_TASK_ROOT/upstream"
-srun -n 1 -c 8 python -B -u "$V" --run --native-linear-backend cached \
+python -B -u "$V" --reference "${COMMON[@]}" --output "$VLA_TASK_ROOT/upstream"
+python -B -u "$V" --run --native-linear-backend cached \
   "${COMMON[@]}" --output "$VLA_TASK_ROOT/cached"
 ```
 
@@ -157,9 +157,9 @@ The validator also accepts the new **library** path, separately from the old
 fixed-Euler2 pilot below:
 
 ```bash
-srun -n 1 -c 8 python -B -u "$V" --run --backend torch --num-steps 10 \
+python -B -u "$V" --run --backend torch --num-steps 10 \
   --use-cuda-graph "${COMMON[@]}" --output "$VLA_TASK_ROOT/torch-library-graph10"
-srun -n 1 -c 8 python -B -u "$V" --run --native-linear-backend cached \
+python -B -u "$V" --run --native-linear-backend cached \
   --sampler probeflow --pf-max 10 --use-cuda-graph \
   "${COMMON[@]}" --output "$VLA_TASK_ROOT/cached-library-graph-pf"
 ```
@@ -181,9 +181,9 @@ paths can use the same capture strategy for a fair execution comparison:
 
 ```bash
 G="$REPO/examples/vla_autotune/fast_graph/run_velocity_graph.py"
-srun -n 1 -c 8 python -B -u "$G" --runner "$V" --run --native-linear-backend cached \
+python -B -u "$G" --runner "$V" --run --native-linear-backend cached \
   "${COMMON[@]}" --output "$VLA_TASK_ROOT/cached-graph"
-srun -n 1 -c 8 python -B -u "$G" --runner "$V" --reference \
+python -B -u "$G" --runner "$V" --reference \
   "${COMMON[@]}" --output "$VLA_TASK_ROOT/upstream-graph"
 ```
 
@@ -236,7 +236,7 @@ immutable script in the recorded official and native runtimes, serially in one
 allocation, with fresh output directories:
 
 ```bash
-srun -n 1 -c 8 python -B -u "$REPO/examples/vla_autotune/hy_trace/frozen_ops.py" \
+python -B -u "$REPO/examples/vla_autotune/hy_trace/frozen_ops.py" \
   --official-trace /runs/accepted-trace/official/baseline \
   --native-report /runs/accepted-trace/native/baseline/result.json \
   --checkpoint /local/Hy-Embodied-0.5-VLA-RoboTwin/model.safetensors \

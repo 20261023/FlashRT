@@ -9,7 +9,7 @@ without `author_baseline` retain the internal reference/candidate/bookend flow.
 before the internal reference. The ordinary `batch` and `controller ingest`
 commands handle it; no separate GPU job or manual comparison step is required.
 Batch runs the author in an isolated process, serially with the other attempts.
-All model computation still requires an allocated Slurm GPU `srun` step.
+The batch script runs Python directly on the allocated Slurm GPU node.
 
 For example, a DM author config is:
 

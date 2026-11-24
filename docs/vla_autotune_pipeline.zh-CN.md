@@ -37,6 +37,8 @@
 
 ## 二、代码模块
 
+单节点 Python 实验按《内蒙超级云计算中心 N46H2 分区用户手册 v2.2》§2.3.1 提交。登录节点执行一次 `sbatch -p gpu_a800 --gpus=1 ./run.sh`。脚本加载环境后直接执行 `python -B -m flash_rt.vla.autotune.batch --plan /shared/plan.json`。分区按申请的卡数分配 CPU 和内存。用手册 §2.4 的 `parajobs` 查看状态，控制器按作业号等待自然终态，再取回结果。自动化模式把分区和卡数写在 `#SBATCH` 行中，使用 `sbatch --parsable` 取得作业号。
+
 | 模块 | 作用 |
 |---|---|
 | `stages.py` | stage 地图：每个模型每一游对应哪段代码，profile 区间怎么归到 stage，Amdahl 上限 |

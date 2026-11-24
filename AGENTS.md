@@ -28,6 +28,10 @@ through the symlinks in `.claude/skills/`.
 - Put scratch reports, probes and logs in `devlocal/<feature>/`. It is git-ignored; never
   force-add it.
 - Run model computation only inside an allocated Slurm GPU step, never on a login node.
+- Follow the N46H2 user manual v2.2 §2.3.1 for single-node Python: submit one
+  `sbatch` script with the partition and GPU count. Run Python directly in the
+  allocated batch step, let Slurm allocate CPUs and memory, and wait for the
+  confirmed job ID to finish naturally.
 
 ## Tests
 

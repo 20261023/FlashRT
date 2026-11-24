@@ -136,7 +136,7 @@ py -c "
 from flash_rt.vla.autotune.slurm import render_sbatch, SlurmResources
 print(render_sbatch(job_name='at-<cid>', workdir='/abs/flashrt', output='/abs/results/<cid>/slurm-%j.out',
       argv=['python', '-B', '-m', 'flash_rt.vla.autotune.batch', '--plan', '/abs/<campaign root>/plan.json'],
-      resources=SlurmResources(partition='gpu_a800', gpus=1, time_limit='01:00:00')))
+      resources=SlurmResources(partition='gpu_a800', gpus=1)))
 " > /abs/round.sbatch
 ```
 
@@ -145,7 +145,7 @@ controller root is local). Then:
 
 ```bash
 py -m flash_rt.vla.autotune.controller submit --root <campaign root> --script /abs/round.sbatch --ssh-host <host>
-py -m flash_rt.vla.autotune.controller wait --root <campaign root> --ssh-host <host> --interval 30 --timeout 14400
+py -m flash_rt.vla.autotune.controller wait --root <campaign root> --ssh-host <host> --interval 30
 # fetch /abs/results/<cid> to a local directory, then:
 py -m flash_rt.vla.autotune.controller ingest --root <campaign root> --results <fetched dir> --job-finished
 ```

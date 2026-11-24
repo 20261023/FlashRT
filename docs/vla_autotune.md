@@ -118,9 +118,7 @@ python -m flash_rt.vla.autotune.controller init \
 python -m flash_rt.vla.autotune.controller submit \
   --root campaign-r1 --script /remote/round1.sbatch --ssh-host gpu
 python -m flash_rt.vla.autotune.controller wait \
-  --root campaign-r1 --ssh-host gpu --interval 15 --timeout 14400
-# Inside one allocated compute step, never on the login node:
-python -m flash_rt.vla.autotune.batch --plan /remote/plan.json
+  --root campaign-r1 --ssh-host gpu --interval 15
 # After fetching the output tree and confirming job completion:
 python -m flash_rt.vla.autotune.controller ingest \
   --root campaign-r1 --results fetched-results --job-finished
@@ -131,7 +129,7 @@ list of extra human/agent candidates. `submit` and `--ssh-host` explicitly opt
 into scheduler/SSH actions; other commands never submit. `wait` only monitors
 confirmed IDs and persists scheduler state, atomically promoting queued attempts
 to running. A terminal scheduler state does not ingest, validate, reject or rank
-model outputs; timeout is resumable and does not fail the worker attempts.
+model outputs. An interrupted monitor can resume waiting for the same job ID.
 
 The ledger has `submission_unknown` for lost scheduler responses. Reconcile an
 externally confirmed ID with `queued --root campaign-r1 --job-id 12345`, which is
@@ -139,6 +137,11 @@ idempotent for that same job; never automatically resubmit unknown submissions.
 The low-level `submitting`/`queued` pair remains available for externally managed
 submissions. Initialization and group transitions are atomic; failed proposal
 validation cannot leave a partially initialized campaign. Retries use new IDs.
+
+On this cluster, the single-node Python recipe in §2.3.1 of the N46H2 v2.2
+user manual submits one batch script. The renderer puts the partition and GPU
+count in `#SBATCH` directives and executes Python directly on the compute node.
+The site assigns CPU and memory according to the selected GPU partition.
 This is a single-controller tool, not a distributed scheduler.
 
 ## Execution identity and historical results
