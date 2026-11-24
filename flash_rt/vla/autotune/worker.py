@@ -53,8 +53,8 @@ def _write_json(path, value):
 
 
 def _device_info():
-    if not os.environ.get('SLURM_JOB_ID') or socket.gethostname().startswith('ln'):
-        raise RuntimeError('Real model experiments must run in an allocated Slurm compute step')
+    from .slurm import require_gpu_allocation
+    require_gpu_allocation()
     import torch
     properties = torch.cuda.get_device_properties(0)
     return {'name': properties.name, 'uuid': str(getattr(properties, 'uuid', '')),

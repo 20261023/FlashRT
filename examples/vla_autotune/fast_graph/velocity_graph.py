@@ -6,9 +6,6 @@ scratch, like the common raw-velocity contract; samplers must consume/clone them
 """
 from __future__ import annotations
 
-import os
-
-
 FIELDS = {'latents_action', 'timestep_action', 'context', 'context_mask',
           'video_cache_k', 'video_cache_v', 'action_attention_mask'}
 
@@ -51,8 +48,8 @@ def native_calls(fn):
 
 
 def capture_cuda(fn, static):
-    if not os.environ.get('SLURM_JOB_ID') or not os.environ.get('SLURM_STEP_ID', '').isdigit():
-        raise RuntimeError('CUDA capture requires the allocated srun step')
+    from flash_rt.vla.autotune.slurm import require_gpu_allocation
+    require_gpu_allocation()
     import torch
     device = static['latents_action'].device
     if device.type != 'cuda':

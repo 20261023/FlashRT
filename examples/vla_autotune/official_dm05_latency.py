@@ -10,6 +10,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import socket
 from pathlib import Path
 import statistics
 import sys
@@ -28,8 +29,11 @@ def main():
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--repeats", type=int, default=10)
     args = parser.parse_args()
-    if not os.environ.get("SLURM_JOB_ID") or not os.environ.get("SLURM_STEP_ID"):
-        raise RuntimeError("Model computation requires an allocated Slurm GPU step")
+    host = socket.gethostname().split('.')[0]
+    node = os.environ.get('SLURMD_NODENAME') or os.environ.get('SLURM_JOB_NODELIST', '')
+    if (not os.environ.get('SLURM_JOB_ID', '').isdigit() or host.startswith(('ln', 'login'))
+            or host != node.split('.')[0] or os.environ.get('CUDA_VISIBLE_DEVICES') in (None, '', '-1')):
+        raise RuntimeError("Model computation requires an allocated Slurm GPU compute node")
     if args.output.exists():
         raise FileExistsError(args.output)
     args.output.mkdir(parents=True)

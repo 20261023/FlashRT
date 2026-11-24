@@ -1,7 +1,7 @@
 """Produce bound original-author outputs for the ordinary VLA experiment loop.
 
 See author_baseline.md. This is a harness companion, never a project backend.
-Model imports/computation require an allocated GPU srun step. It reuses the
+Model computation requires an allocated GPU compute node. It reuses the
 loaders and source APIs of the adjacent official_*_latency entrypoints.
 """
 
@@ -12,7 +12,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import socket
 import sys
 import time
 from types import SimpleNamespace
@@ -31,13 +30,8 @@ def _module(filename, name):
 
 
 def _require_step():
-    host = socket.gethostname().split('.')[0]
-    if (not os.environ.get('SLURM_JOB_ID', '').isdigit()
-            or not os.environ.get('SLURM_STEP_ID', '').isdigit()
-            or host.startswith(('ln', 'login'))
-            or host != os.environ.get('SLURMD_NODENAME', '').split('.')[0]
-            or os.environ.get('CUDA_VISIBLE_DEVICES') in (None, '', '-1')):
-        raise RuntimeError('Author model execution requires an actual allocated GPU srun compute step')
+    from flash_rt.vla.autotune.slurm import require_gpu_allocation
+    return require_gpu_allocation()
 
 
 def _prompt(request):
@@ -343,7 +337,7 @@ def main(argv=None):
         print(json.dumps({'origin': 'author', 'kind': record['kind'],
                           'repeats': record['repeats'], 'new_model_requests': 0}), flush=True)
         return 0
-    _require_step()
+    step = _require_step()
     args.output.mkdir(parents=True, exist_ok=False)
     try:
         # Force local assets; never implicitly fetch a model during a campaign.
@@ -429,7 +423,7 @@ def main(argv=None):
             'implementation': metadata['implementation'], 'checkpoint': spec['checkpoint'],
             'gpu': {'name': properties.name, 'uuid': str(getattr(properties, 'uuid', '')),
                     'capability': list(torch.cuda.get_device_capability())},
-            'job_id': os.environ['SLURM_JOB_ID'], 'step_id': os.environ['SLURM_STEP_ID'],
+            'job_id': os.environ['SLURM_JOB_ID'], 'step_id': step,
             'runtime': {'python': sys.version, 'executable': sys.executable,
                         'torch': torch.__version__, 'cuda': torch.version.cuda},
             'warmup': args.warmup, 'untimed_prepare_requests': len(workload),

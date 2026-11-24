@@ -61,8 +61,8 @@ def main():
     parser.add_argument('--warmup', type=int, default=5)
     parser.add_argument('--repeats', type=int, default=10)
     args = parser.parse_args()
-    if not os.environ.get('SLURM_JOB_ID') or not os.environ.get('SLURM_STEP_ID'):
-        raise RuntimeError('Model computation requires an allocated Slurm GPU step')
+    from flash_rt.vla.autotune.slurm import require_gpu_allocation
+    step = require_gpu_allocation()
     if args.warmup != 5 or args.repeats != 10:
         raise ValueError('This fixed formal profile requires five warmup and ten formal requests per case')
     if args.output.exists():
@@ -150,7 +150,7 @@ def main():
                 modules[module.__name__] = {'path': module.__file__, 'sha256': sha256(module.__file__)}
         report = {
             'model': 'dm05', 'backend': args.backend, 'role': args.role, 'origin': 'project',
-            'job_id': os.environ['SLURM_JOB_ID'], 'step_id': os.environ['SLURM_STEP_ID'],
+            'job_id': os.environ['SLURM_JOB_ID'], 'step_id': step,
             'gpu': torch.cuda.get_device_name(), 'gpu_capability': [8, 0],
             'gpu_properties': str(torch.cuda.get_device_properties(0)),
             'source_identity': identity, 'native_modules': modules,

@@ -6,6 +6,7 @@ import importlib.util
 import inspect
 import json
 import os
+import socket
 from pathlib import Path
 import sys
 import time
@@ -25,8 +26,11 @@ def main(argv=None):
     p.add_argument('--warmup',type=int,default=8)
     p.add_argument('--repeats',type=int,required=True)
     args=p.parse_args(argv)
-    if not os.environ.get('SLURM_JOB_ID') or not os.environ.get('SLURM_STEP_ID','').isdigit():
-        raise RuntimeError('Run the actual benchmark inside an allocated GPU srun step')
+    host = socket.gethostname().split('.')[0]
+    node = os.environ.get('SLURMD_NODENAME') or os.environ.get('SLURM_JOB_NODELIST', '')
+    if (not os.environ.get('SLURM_JOB_ID', '').isdigit() or host.startswith(('ln', 'login'))
+            or host != node.split('.')[0] or os.environ.get('CUDA_VISIBLE_DEVICES') in (None, '', '-1')):
+        raise RuntimeError('Run this benchmark on the allocated GPU compute node')
     args.output.mkdir(parents=True,exist_ok=False)
     import numpy as np
     import torch

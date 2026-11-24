@@ -1,4 +1,4 @@
-"""Rendered scripts are exercised locally with a non-submitting srun shim."""
+"""Rendered batch scripts run the payload directly."""
 
 from dataclasses import FrozenInstanceError
 from importlib import import_module
@@ -24,14 +24,14 @@ def test_default_resources_and_site_policy_are_rendered_without_cpu_header():
     directives = [line for line in script.splitlines() if line.startswith('#SBATCH')]
     assert directives == [
         '#SBATCH --job-name=campaign', '#SBATCH --partition=gpu_a800',
-        '#SBATCH --gres=gpu:1', '#SBATCH --nodes=1', '#SBATCH --ntasks=1',
+        '#SBATCH --gpus=1',
         '#SBATCH --chdir=/repo',
         '#SBATCH --output=/results/%j.log',
     ]
     assert 'set -euo pipefail' in script
     assert all('--cpus-per-task' not in line and '--cpus-per-gpu' not in line
                for line in directives)
-    assert 'exec srun -n 1 python -m worker' in script
+    assert 'exec python -m worker' in script
 
 
 def test_header_paths_and_command_arguments_are_quoted_as_literals():
@@ -43,10 +43,9 @@ def test_header_paths_and_command_arguments_are_quoted_as_literals():
     assert ['--job-name=campaign \'quoted\''] in directives
     assert ['--chdir=/repo with spaces'] in directives
     assert ['--output=/results with spaces/%j.log'] in directives
-    invocation = next(line for line in script.splitlines() if 'srun -n' in line)
+    invocation = next(line for line in script.splitlines() if line.startswith('exec '))
     assert shlex.split(invocation) == [
-        'exec', 'srun', '-n', '1',
-        'python', 'a b', "it's literal",
+        'exec', 'python', 'a b', "it's literal",
     ]
 
 
@@ -58,7 +57,7 @@ def test_directive_backslashes_are_escaped_for_slurms_non_shell_parser():
         argv=['python', r'argument\literal'])
     assert r"#SBATCH --chdir='/repo\\literal'" in script.splitlines()
     assert r"#SBATCH --output='/results\\literal/%j.log'" in script.splitlines()
-    invocation = next(line for line in script.splitlines() if 'srun -n' in line)
+    invocation = next(line for line in script.splitlines() if line.startswith('exec '))
     assert shlex.split(invocation)[-1] == r'argument\literal'
 
 
@@ -93,14 +92,13 @@ def test_invalid_command_and_environment_are_rejected(argv, env):
 
 
 def _run_locally(tmp_path, allocated_cpus):
-    # This shim never launches its arguments. There is no call to Slurm, a
-    # model, a GPU, or even Python in the generated command under test.
-    shim = tmp_path / 'srun'
+    # The payload shim records argv and environment without executing a model.
+    shim = tmp_path / 'record-argv'
     shim.write_text('#!/bin/bash\nprintf "%s\\0" "$@" "$PAYLOAD"\n')
     shim.chmod(0o700)
     script = _slurm().render_sbatch(
         job_name='campaign', workdir=tmp_path, output=tmp_path / '%j.log',
-        argv=['python', '-m', 'never_run', 'a b', "it's literal", '$(touch injected)'],
+        argv=['record-argv', '-m', 'never_run', 'a b', "it's literal", '$(touch injected)'],
         env={'PAYLOAD': 'one\ntwo $(touch also_injected)'},
     )
     env = {'PATH': f'{tmp_path}:/usr/bin:/bin'}
@@ -115,8 +113,7 @@ def test_script_inherits_allocation_and_preserves_literal_argv_and_env(tmp_path,
     result = _run_locally(tmp_path, allocated_cpus)
     assert result.returncode == 0, result.stderr
     assert result.stdout.split(b'\0') == [
-        b'-n', b'1', b'python', b'-m',
-        b'never_run', b'a b', b"it's literal", b'$(touch injected)',
+        b'-m', b'never_run', b'a b', b"it's literal", b'$(touch injected)',
         b'one\ntwo $(touch also_injected)', b'',
     ]
     assert not (tmp_path / 'injected').exists()

@@ -22,10 +22,12 @@ VARIANTS = ('baseline', 'state', 'noise')
 def require_step(env=None, hostname=None):
     env = os.environ if env is None else env
     host = (hostname or socket.gethostname()).split('.')[0]
-    if (not env.get('SLURM_JOB_ID', '').isdigit() or not env.get('SLURM_STEP_ID', '').isdigit()
-            or host.startswith(('ln', 'login')) or host != env.get('SLURMD_NODENAME', '').split('.')[0]
+    step = env.get('SLURM_STEP_ID', 'batch')
+    node = env.get('SLURMD_NODENAME') or env.get('SLURM_JOB_NODELIST', '')
+    if (not env.get('SLURM_JOB_ID', '').isdigit() or not (step == 'batch' or step.isdigit())
+            or host.startswith(('ln', 'login')) or host != node.split('.')[0]
             or env.get('CUDA_VISIBLE_DEVICES') in (None, '', '-1')):
-        raise RuntimeError('Diagnostic model execution requires an allocated GPU srun compute step')
+        raise RuntimeError('Diagnostic model execution requires an allocated GPU srun or sbatch compute node')
 
 
 def _perm(perm, rows):

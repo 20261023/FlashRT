@@ -1,6 +1,6 @@
 """Real Hy-Embodied-0.5-VLA validation; one candidate per allocated GPU process.
 
-Inference requires an actual Slurm srun GPU step. --compare is CPU-only. Nothing
+Inference requires an allocated Slurm GPU compute node. --compare is CPU-only. Nothing
 imports Torch, loads weights, downloads assets, or submits jobs at module import.
 This is raw normalized-model-action validation, NOT a robot success benchmark.
 """
@@ -110,8 +110,12 @@ def make_observation(arrays, camera_keys):
 
 def require_slurm_step(env=None):
     env = os.environ if env is None else env
-    if (not env.get('SLURM_JOB_ID') or not env.get('SLURM_STEP_ID', '').isdigit()):
-        raise RuntimeError('Model validation requires an allocated Slurm srun GPU step; never run on login')
+    step = env.get('SLURM_STEP_ID', 'batch')
+    node = env.get('SLURMD_NODENAME') or env.get('SLURM_JOB_NODELIST', '')
+    batch = (step == 'batch' and node.split('.')[0] == platform.node().split('.')[0]
+             and not node.lower().startswith(('ln', 'login')))
+    if not env.get('SLURM_JOB_ID', '').isdigit() or not (batch or step.isdigit()):
+        raise RuntimeError('Model validation requires an allocated Slurm GPU compute node')
     if env.get('CUDA_VISIBLE_DEVICES', '') in ('', '-1', 'NoDevFiles', 'none', 'void'):
         raise RuntimeError('Allocated GPU step must expose CUDA_VISIBLE_DEVICES')
     if env.get('FLASHRT_HYVLA_FORCE_ARCH', '0') not in ('', '0'):
@@ -441,7 +445,7 @@ def run_candidate(args):
         'profile': PROFILES[args.numerical_profile], 'official_reference_profile': OFFICIAL_PROFILE,
         'config': config_record, 'backend_description': describe_backend(config),
         'checkpoint': checkpoint, 'fixture': fixture, 'model_sources': sources,
-        'job_id': os.environ['SLURM_JOB_ID'], 'step_id': os.environ['SLURM_STEP_ID'],
+        'job_id': os.environ['SLURM_JOB_ID'], 'step_id': os.environ.get('SLURM_STEP_ID', 'batch'),
         'host': platform.node(), 'gpu': gpu,
         'runtime': {'python': platform.python_version(), 'executable': sys.executable,
                     'torch': torch.__version__, 'cuda': torch.version.cuda, 'numpy': np.__version__},

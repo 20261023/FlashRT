@@ -5,9 +5,24 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from numbers import Integral
+import os
 from os import fspath
 import re
 from shlex import quote
+import socket
+
+
+def require_gpu_allocation(env=None, hostname=None):
+    """Identify a single-node GPU batch or compute step before model loading."""
+    env = os.environ if env is None else env
+    host = (hostname or socket.gethostname()).split('.')[0]
+    node = env.get('SLURMD_NODENAME') or env.get('SLURM_JOB_NODELIST', '')
+    step = env.get('SLURM_STEP_ID', 'batch')
+    if (not env.get('SLURM_JOB_ID', '').isdigit() or host.lower().startswith(('ln', 'login'))
+            or host != node.split('.')[0] or not (step == 'batch' or step.isdigit())
+            or env.get('CUDA_VISIBLE_DEVICES', '').lower() in ('', '-1', 'nodevfiles', 'none', 'void')):
+        raise RuntimeError('Requires an allocated Slurm GPU on its compute node')
+    return step
 
 
 def _directive(value, name, *, path=False):
@@ -37,8 +52,8 @@ def render_sbatch(*, job_name, workdir, output, argv,
                   resources=SlurmResources(), env=None) -> str:
     """Return a shell-quoted script without invoking sbatch or srun.
 
-    Request GPUs and let the site assign CPUs and walltime. Run the command
-    as one compute task inside the allocation.
+    N46H2 manual §2.3.1: request GPUs and run the single-node Python command
+    directly in the batch script. Slurm assigns CPUs and walltime.
     """
     if not isinstance(resources, SlurmResources):
         raise TypeError('resources must be SlurmResources')
@@ -60,7 +75,7 @@ def render_sbatch(*, job_name, workdir, output, argv,
             raise ValueError('env values must be strings without NUL')
     directives = [
         ('job-name', job_name), ('partition', resources.partition),
-        ('gres', f'gpu:{resources.gpus}'), ('nodes', '1'), ('ntasks', '1'),
+        ('gpus', str(resources.gpus)),
         ('chdir', workdir), ('output', output),
     ]
     lines = ['#!/bin/bash']
@@ -71,7 +86,7 @@ def render_sbatch(*, job_name, workdir, output, argv,
         lines.append(f'#SBATCH --{name}={escaped}')
     lines.extend(['', 'set -euo pipefail'])
     lines.extend(f'export {key}={quote(env[key])}' for key in sorted(env))
-    lines.append('exec srun -n 1 ' + ' '.join(quote(arg) for arg in argv))
+    lines.append('exec ' + ' '.join(quote(arg) for arg in argv))
     return '\n'.join(lines) + '\n'
 
 

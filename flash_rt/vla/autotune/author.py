@@ -46,6 +46,8 @@ _DM_SOURCE_REVISION = '03f799120d425ead51d9482bb1da950b6dabade9'
 _DM_WEIGHT_REVISION = '5cd18734814abb075a9ccfd9ad6d16777b5cf10e'
 _DM_WEIGHT_SHA256 = 'b7da77f516ebd0c0c68faed2f0cfe1c68985b7b874e49dda4292d8d286de20dd'
 _DM_PYTHON_SHA256 = '28617ae3b6db5a887d6291e32bfac0406666f79188ec759dad5e22e1404dd462'
+# Producer used by job 329331 before the single-node sbatch entrypoint change.
+_DM_LEGACY_PRODUCER_SHA256 = '599d9e318deda0717277e909802f597154128071ce86ef15429841979c020cd7'
 _PINNED_REVISIONS = {
     'dm05': _DM_SOURCE_REVISION,
     'hyvla': 'af57e7507ec5964b52fdf6296741e553cbcd3288',
@@ -315,7 +317,7 @@ def _legacy_dm_inputs(path, spec):
                 'output_action_dim': 14, 'internal_action_dim': 32, 'chunk': 50}
     if (any(record.get(key) != value for key, value in required.items())
             or spec['source_revision'] != _DM_SOURCE_REVISION or spec['num_steps'] != 10
-            or record.get('script_sha256') != file_sha256(script)):
+            or record.get('script_sha256') not in (_DM_LEGACY_PRODUCER_SHA256, file_sha256(script))):
         raise AuthorReferenceError('Legacy DM reference does not match the pinned original author producer/profile')
     cases = record.get('cases')
     if not isinstance(cases, list) or len(cases) != 4 or len({case['id'] for case in cases}) != 4:

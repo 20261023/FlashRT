@@ -64,10 +64,12 @@ def check_nfe_once(model,infer,request,*,expected,synchronize):
 
 def require_step():
     host=socket.gethostname().split('.')[0]
-    if (not os.environ.get('SLURM_JOB_ID','').isdigit() or not os.environ.get('SLURM_STEP_ID','').isdigit()
-            or host.startswith(('ln','login')) or host!=os.environ.get('SLURMD_NODENAME','').split('.')[0]
+    step = os.environ.get('SLURM_STEP_ID', 'batch')
+    node = os.environ.get('SLURMD_NODENAME') or os.environ.get('SLURM_JOB_NODELIST', '')
+    if (not os.environ.get('SLURM_JOB_ID','').isdigit() or not (step == 'batch' or step.isdigit())
+            or host.startswith(('ln','login')) or host != node.split('.')[0]
             or os.environ.get('CUDA_VISIBLE_DEVICES') in (None,'','-1')):
-        raise RuntimeError('Official Native measurement requires an allocated GPU srun compute step')
+        raise RuntimeError('Official Native measurement requires an allocated GPU srun or sbatch compute node')
 
 
 def save_complete(output,result,samples,*,control_actions):
