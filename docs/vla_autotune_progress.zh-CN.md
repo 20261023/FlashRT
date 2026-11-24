@@ -36,6 +36,7 @@
 | 360006、360007、360012 | DM0.5、Hy、π0.5 当前配置回归 | 三份控制器提交回执均为 `acknowledged`，调度器在 04:37 UTC 显示三项均为 `PENDING (Priority)` |
 | 360054 | FastWAM 八输入 E20 → E16 → E18 → E20，加原作者 E20 | 控制器已提交，`sacct` 回读 `PENDING`。该作业使用稳态缓存；空缓存成本由 359953 测量 |
 | SmolVLA 第二轮 | 使用 `aad3312a` 的 ready snapshot `f98c0ba181a2a96063ff`，schema 3，参考 → CUDA Graph → 复测 | 已通过来源与计划预检。首轮 359991 自然结束后提交，届时取得新作业号 |
+| 361529 | SmolVLA 动作专家图，schema 3 | 已确认提交。作者 → 原源码 eager → 候选图 → 同候选源码 eager → 原源码复测。四个真实请求与前轮相同，等待结果回收 |
 
 **BLOCKED 项：**当前 Git 身份没有 `origin`（上游仓库）写权限：需要仓库维护者授予 `autotune/complete` 写入权限。KernelAgent／ForgeKernel 缺可用于生成的已授权 LLM 凭据；需要提供工具运行环境可使用的 provider。其他本地开发和 GPU 实验继续。A800 上 FP8/NVFP4 不可用；`dev/vla-autotune-flashrt` 的 H4 合入与默认配置变更由人决定。
 
@@ -51,10 +52,11 @@
 | 2026-11-24 15:07 UTC 工作树恢复 | 从已推送的 `f38e2232` 恢复 `autotune/complete`。重启作业观察，恢复阶段选择器的算子证据入口 | 恢复后的 CPU 套件 786 passed、6 skipped。调度器回读 13 个作业仍在排队。SmolVLA 修正版计划和提交脚本均保存在集群 | 本段已记账，待下次用量截点汇总 |
 | 2026-11-24 15:13 UTC 调优准备 | 固定 SmolVLA 视觉、前缀和两种 action attention 的形状、mask 与数值路径 | SmolVLA 实际 CPU 处理器走完四个固定请求，未加载神经网络或初始化 CUDA。CPU 路由将视觉列为可迁移，三个混合精度调用点给出拒绝原因 | 计入工具路由与声明工作段 |
 | 2026-11-24 15:21 UTC 恢复后用量 | 重取 OpenCode 原生消息并重建四张表。`39148049` 支持用合并区间的上限判断是否仍可选游 | `39148049` 的规定套件 788 passed、6 skipped。原生消息重读可复算 05:17 截点的所有已知计数 | 本轮 430,726,943 总处理，25,507,871 非缓存。未归属 11,069,881（2.57%），69 条缺失。05:17 截点曾见一条无 usage 记录，本次重读未返回，原截点保留原观测 |
+| 2026-11-24 15:31 UTC SmolVLA graph 排查 | Transformers 固定版本的视觉位置编码使用 CUDA 布尔索引，SDPA 还根据掩码的 `.all()` 做 Python 分支。独立候选 `14b8e093` 将捕获边界收至动作专家的 Transformer | 候选 CPU 851 passed、6 skipped。CPU 模拟验证了变化输入、每请求缓存刷新和回放次数，实际 CUDA Graph 仍待 GPU。基线 `155a88237f83362e61ec` 与候选 `6dcc72adfcdbc1afcefa` 使用同一 harness | SmolVLA `debugging` 段 |
 
 调度器在 11 月 24 日 23:16 北京时间预计 Hy 快照作业于 11 月 25 日 09:10 开始，五个现有模型及 SmolVLA 的回归于 11 月 26 日 04:43 开始。观察器和回收器已恢复。进度随作业分配变化，终态和动作复算更新到 [整合报告](reports/2026-11-24-vla-autotune-final.zh-CN.md)。
 
-**K 全仓收集检查**在同一 CPU 环境（PyTorch `2.11.0+cpu`、NumPy `2.5.4`、pytest `9.2.0`）分别对精确提交执行 `python -m pytest --collect-only -q tests --tb=short`。指定起点 `1993762` 收集 3,995 项，`00685ce6` 收集 3,362 项。两次报告相同的 10 组文件与异常。阶段 CPU 套件的通过数另见轮次表。
+**K 全仓收集检查**在同一 CPU 环境（PyTorch `2.11.0+cpu`、NumPy `2.5.4`、pytest `9.2.0`）分别对精确提交执行 `python -m pytest --collect-only -q tests --tb=short`。指定起点 `1993762` 收集 3,995 项，`00685ce6` 收集 3,362 项，恢复后的 `0346528e` 收集 3,415 项。三次报告相同的 10 个测试文件收集错误。阶段 CPU 套件的通过数见轮次表。
 
 | 涉及的测试文件（`tests/` 下） | 当前环境缺少 |
 |---|---|
