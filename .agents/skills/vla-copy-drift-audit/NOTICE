@@ -57,3 +57,8 @@ Changes made by FlashRT (2026-11-15)
   - Replaced the PI0.5-on-MUSA worked example with FlashRT target spellings in
     references/flashrt-targets.md. Changed the report location to
     devlocal/<feat>/reports/. Added agents/openai.yaml.
+
+Subsequent FlashRT maintenance
+  - Marked the retired Hy observers and FastWAM Euler2 graph pilot as historical
+    Git sources in SKILL.md and references/flashrt-targets.md. The audit method,
+    upstream pin, verbatim archive and license are unchanged.

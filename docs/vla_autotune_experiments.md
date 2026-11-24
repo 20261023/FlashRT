@@ -16,8 +16,11 @@ discriminating experiments, negative findings and subsequent revisions—see
 
 These are engineering observations from a bounded A800 iteration, **not** a
 blanket hardware qualification, a model leaderboard, or robot task-success
-results. Runnable validation, graph-pilot and profiling scripts are under
-[`examples/vla_autotune`](../examples/vla_autotune/README.md). Weights, private
+results. Current validation and profiling scripts are under
+[`examples/vla_autotune`](../examples/vla_autotune/README.md). Retired Hy diagnostics
+and the old graph pilot remain available at their recorded Git revisions; the
+[cleanup inventory](vla_autotune_cleanup.zh-CN.md) maps their provenance.
+Weights, private
 environments, raw tensors, traces and generated result directories are not
 distributed with these notes.
 

@@ -47,7 +47,7 @@ git diff "$BASE" "$T" -- flash_rt/vla/autotune          # harness moved? the can
 | `csrc/attention/flash_attn_2_src/` | its `VENDOR.md` | flash-attention tag `v2.7.4.post1`; CUTLASS `c506e16788cb08416a4a57e11a9067beeee29420` | text, a subset (fwd only), plus FlashRT's own `fa2_wrapper.cu` |
 | `csrc/attention/flash_attn_4_src/`, `csrc/attention/flashinfer_xqa_src/` | their `VENDOR.md` | as recorded there | read each record's modification list |
 | FastWAM upstream model (not vendored; `source_dir`) | `examples/vla_autotune/fastwam-source/SOURCE.json` | `yuantianyuan01/FastWAM@7faa71108368fbb3b6885649f112af607427a2d4` | **contract pair, semantic-review-only**. `flash_rt/models/fastwam/*` relies on upstream seams that `FastWAMActionPipeline._validate_model` checks: `_encode_input_image_latents_tensor`, `_append_proprio_to_context`, `_build_mot_attention_mask`, `_denoise_action_with_video_cache`, `mot.prefill_video_cache_tensor`, and the video expert's attention-mask mode and patch size |
-| `examples/vla_autotune/hy_trace/*.py` observers | each file's docstring, e.g. `reference_observer.py` | official Hy source `af57e7507ec5964b52fdf6296741e553cbcd3288`; the repository URL is not in the file | semantic-review-only: they hook official symbols and never re-implement them |
+| historical Hy observers (`hy_trace`) | each file's docstring at its recorded Git revision; see `docs/vla_autotune_cleanup.zh-CN.md` | official Hy source `af57e7507ec5964b52fdf6296741e553cbcd3288`; the repository URL is not in the observer | retired from the current tree; semantic-review-only when reviewing a historical snapshot |
 
 - **openpi today: `blocked: no upstream pin`.** Resolving it is a separate task.
   Find the upstream repository and a commit whose files, with the VENDOR.md
@@ -61,11 +61,11 @@ git diff "$BASE" "$T" -- flash_rt/vla/autotune          # harness moved? the can
   gh api "repos/<o>/<r>/contents/<path>?ref=<pin>" --jq .content | base64 -d > devlocal/<feat>/drift/pin/<file>
   gh api "repos/<o>/<r>/contents/<path>?ref=<T>"   --jq .content | base64 -d > devlocal/<feat>/drift/tip/<file>
   ```
-- **No implicit copy pairs.**
-  `examples/vla_autotune/fast_graph/velocity_graph.py` (added in `73b381b`) and
+- **No implicit copy pairs.** The retired FastWAM Euler2 example graph pilot
+  (added in `73b381b`; see `docs/vla_autotune_cleanup.zh-CN.md`) and
   `flash_rt/models/fastwam/velocity_graph.py` (added in `e5028b9`) are similar,
-  but no record declares one a copy of the other. Without an explicit mapping,
-  the audit stops rather than guessing.
+  but no record declares one a copy of the other. When reviewing their historical
+  trees, the audit still needs an explicit mapping.
 
 ## (c) Agent skills
 

@@ -93,7 +93,7 @@ def official():
 
 
 def test_original_author_prepare_and_sampler_receive_host_converted_inputs_and_fixed_noise(official):
-    import torch
+    torch = pytest.importorskip('torch')
     calls=[]
     class Model:
         def sample_actions(self,*,images,img_masks,state,lang_tokens,lang_masks,noise):
@@ -181,7 +181,8 @@ def test_selected_worker_row_requires_complete_bound_measurement_not_a_label(com
         value=call();assert value['latency_ms']==2.5 and value['nfe']==10 and value['origin']=='project'
         assert 'backend_config' not in value
     else:
-        with pytest.raises(ValueError,match='measurement|NFE|cleanup|coverage|source|selected'):call()
+        message = 'frontend|framework|selected' if bad == 'framework' else 'measurement|NFE|cleanup|coverage|source|selected'
+        with pytest.raises(ValueError,match=message):call()
 
 
 def test_fast_selected_graph_requires_observed_execution_coverage(comparison):

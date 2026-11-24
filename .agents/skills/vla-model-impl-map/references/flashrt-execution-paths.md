@@ -158,8 +158,9 @@ numbers because line numbers drift. Nothing here is a measured cost.
     once, and each step copies only `latents_action` and `timestep_action`
     before `replay`.
   - Sampler and integration are not captured.
-  - The experimental pilot `examples/vla_autotune/fast_graph/velocity_graph.py`
-    is a separate copy.
+   - The retired Euler2 example pilot is historical source, not an active
+     execution path. Consult `docs/vla_autotune_cleanup.zh-CN.md` for its Git
+     watermark; inspect the library-owned driver above for current behavior.
 - Repeated work: every step passes the same `context`. The upstream model
   recomputes `text_embedding(context)` and every layer's cross-attention K/V
   (tool `cache.fastwam_text_crossattn_kv`). This lives in upstream source, so

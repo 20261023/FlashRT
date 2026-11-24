@@ -1,6 +1,6 @@
 ---
 name: vla-copy-drift-audit
-description: Audit copy drift in FlashRT so upstream or baseline changes do not silently pass a copy by. Covers three targets - a patch or port candidate whose base commit is older than the current autotune baseline (rebase drift before promoting a winner), FlashRT copies of upstream reference code (training/_vendor/openpi_pi0_pytorch, csrc vendored attention sources, the FastWAM upstream pin, hy_trace official-source observers), and third_party/agent-skills plus the adapted vla-* skills against their upstream repositories. It takes one import watermark per file, uses git merge-file probes and hunk dispositions (absorbed, absorb-now, decline, pending), and writes a report under devlocal. Use before promoting or merging a candidate, after the baseline moves, when syncing vendored code or skills, or when reviewing a copy. Chinese triggers - 漂移审计, baseline 前进, rebase 漂移, vendor 同步, 上游更新, 拷贝核对.
+description: Audit copy drift in FlashRT so upstream or baseline changes do not silently pass a copy by. Covers three targets - a patch or port candidate whose base commit is older than the current autotune baseline (rebase drift before promoting a winner), FlashRT copies of upstream reference code (training/_vendor/openpi_pi0_pytorch, csrc vendored attention sources, the FastWAM upstream pin, historical Hy observers), and third_party/agent-skills plus the adapted vla-* skills against their upstream repositories. It takes one import watermark per file, uses git merge-file probes and hunk dispositions (absorbed, absorb-now, decline, pending), and writes a report under devlocal. Use before promoting or merging a candidate, after the baseline moves, when syncing vendored code or skills, or when reviewing a copy. Chinese triggers - 漂移审计, baseline 前进, rebase 漂移, vendor 同步, 上游更新, 拷贝核对.
 license: Apache-2.0. Complete terms in LICENSE.txt
 metadata:
   upstream-repo: "https://github.com/infinigence/ApxInf"
@@ -17,7 +17,7 @@ its source:
 | target | the copy | its source | the risk |
 |---|---|---|---|
 | (a) candidate | files a patch/port candidate changed, as of its `base_commit` | the same paths at the **current** baseline commit | the winner was measured on an old base; the baseline has since fixed or changed the code it touches |
-| (b) vendored reference code | `training/_vendor/openpi_pi0_pytorch/`, `csrc/attention/*_src/`, observers bound to an official source revision | the upstream project at its recorded pin, and upstream now | upstream fixed a copied file; FlashRT keeps the old behavior with no signal |
+| (b) vendored reference code | `training/_vendor/openpi_pi0_pytorch/`, `csrc/attention/*_src/`, retained observers bound to an official source revision | the upstream project at its recorded pin, and upstream now | upstream fixed a copied file; FlashRT keeps the old behavior with no signal |
 | (c) agent skills | `third_party/agent-skills/**` and `.agents/skills/*` (vendored unmodified, or adapted `vla-*`) | the upstream repos pinned in `third_party/agent-skills/manifest.json` and the `upstream-commit` metadata | upstream improved or corrected a skill after the pin |
 
 In this skill, **drift** means exactly one thing: a source change that the copy
@@ -38,7 +38,9 @@ stays with `vla-operator-gate` and the bookended controller campaign.
    - `training/_vendor/openpi_pi0_pytorch/VENDOR.md`;
    - `csrc/attention/<x>_src/VENDOR.md`;
    - `examples/vla_autotune/fastwam-source/SOURCE.json`;
-   - the revision line of an `examples/vla_autotune/hy_trace/*.py` observer;
+   - an official-source observer's revision line, if the audited tree contains it
+     (retired Hy observers are in the Git revisions listed by
+     `docs/vla_autotune_cleanup.zh-CN.md`, not the current working tree);
    - `third_party/agent-skills/<project>/VENDOR.md` plus `manifest.json`;
    - the `NOTICE` of an adapted skill.
 3. [references/flashrt-targets.md](references/flashrt-targets.md) gives the
