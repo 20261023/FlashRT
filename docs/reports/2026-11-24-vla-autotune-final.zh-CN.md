@@ -23,7 +23,7 @@ FlashRT 用模型声明接入作者代码和固定输入，用分游 profile 选
 
 完整 29 点历史表含 28 项实测和 1 项 NR。历史逐点主导者缺少同期记录，按 NR 保留。
 本轮主导列依据决策账本。开工规则由人明确给定，已有记录中 SmolVLA 专项人工干预为
-0 次。至 05:17 UTC，SmolVLA 接入累计处理 39,679,343 token。接入耗时由 `onboard verify`
+0 次。至 15:21 UTC，SmolVLA 接入累计处理 50,127,303 token。接入耗时由 `onboard verify`
 完成回执计算。见 [29 点原始 CSV](2026-11-14-vla-latency-comparison.csv)、
 [模型全过程 Token 表](2026-11-24-vla-token-usage-model-lifecycle.csv)、
 [接入时间和成本](2026-11-24-vla-token-usage-onboarding-trend.csv)、
@@ -36,10 +36,10 @@ FlashRT 用模型声明接入作者代码和固定输入，用分游 profile 选
 | FastWAM | 32,129,035 | 0 | 86,028,825 |
 | Hy | 17,007,184 | 30,862,713 | 3,778,138 |
 | DM0.5 | NR | 6,399,622 | 6,986,521 |
-| SmolVLA | 39,679,343 | 0 | 0 |
+| SmolVLA | 50,127,303 | 0 | 0 |
 
 零表示对应阶段无已归属计数。用量表另列共有框架、排查、测量和历史未知阶段。
-计数含历史估算归属和本轮账本，截点为 05:17 UTC。见 [本轮统计口径](2026-11-24-vla-token-usage.zh-CN.md)。
+计数含历史估算归属和本轮账本，截点为 15:21 UTC。见 [本轮统计口径](2026-11-24-vla-token-usage.zh-CN.md)。
 
 ### 已观察到的历史结果
 
