@@ -12,31 +12,14 @@ latency comparison. **Official Native means the author's original execution
 stack**. Published numbers with a different GPU/input/sampling/statistical/timing
 protocol are context-only; the helper refuses to manufacture a speedup ratio
 from them. Missing values are NR, not zero latency. Read the dated
-[experiment notes](../../docs/vla_autotune_experiments.md) and
+[consolidated experiment notes](../../docs/reports/2026-11-24-vla-autotune-final.zh-CN.md) and
 [reports](../../docs/reports) for measured selections and their input scope.
 
-`official_hyvla_latency.py` is an allocation-only timing wrapper around the
-unmodified author `HyVLA` APIs: original `prepare_images/state/language` followed
-by original `policy.model.sample_actions` with fixed noise, then completed CPU
-raw action output. Author code is exported from a fixed Git revision and import
-paths/load completeness are checked. One untimed NFE control restores its
-observer before formal warmups/samples. This is an official-implementation
-self-test with an explicit host-to-CPU boundary. Cold load and warmup remain
-separate; raw arrays are written before a completed JSON result.
-
-`official_native_latency.py` adds direct author OpenPI JAX/PyTorch and FastWAM
-A800 measurements. It records author-default and selected-matched Euler step
-counts separately. OpenPI uses its original model/Policy/model transforms;
-the resident LeRobot π0.5 checkpoint uses a temporary outer `model.` loading
-namespace and strict shared-weight-aware safetensors loading for its tied
-embedding. H50 and discrete-state settings are explicit.
-FastWAM uses the author's original compiled `infer_action` and cached T5 inputs.
-Cold compile/load is excluded and reported separately.
-
-`official_dm05_latency.py` measures the author OpenDM implementation;
-`dm05_project_latency.py` measures the project implementation.
-`prepare_dm05_workload.py` prepares the declared workload. Author-baseline
-configuration and execution are described in [author_baseline.md](author_baseline.md).
+[`author_baseline.py`](author_baseline.py) runs the original policy selected by the
+model declaration. Its loader verifies source, checkpoint, workload, noise and action
+domain before original-author outputs can qualify a candidate. See the
+[author baseline protocol](author_baseline.md). `dm05_project_latency.py` measures
+the project implementation; `prepare_dm05_workload.py` converts legacy author fixtures.
 
 For an explicit FastWAM compiled candidate, use `backend="torch"` with
 `options={..., "compile_action_infer": True, "use_cuda_graph": False}` in the
@@ -189,7 +172,7 @@ git show 199376281801427abccbb307056b27e74eab1429:examples/vla_autotune/fast_gra
 
 The [cleanup inventory](../../docs/vla_autotune_cleanup.zh-CN.md) maps every
 retired script and test to its reason and import watermark. The
-[measured notes](../../docs/vla_autotune_experiments.md) and
-[research record](../../docs/reports/2026-11-12-vla-autotune-research-process.zh-CN.md)
+[consolidated measured notes](../../docs/reports/2026-11-24-vla-autotune-final.zh-CN.md#historical-record) and
+[research synthesis](../../docs/reports/2026-11-24-vla-autotune-final.zh-CN.md#research-history)
 retain historical results and failures. Run historical reproductions from their
 recorded immutable source, runtime and input artifacts.

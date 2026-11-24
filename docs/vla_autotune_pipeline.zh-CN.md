@@ -86,7 +86,7 @@ python -m flash_rt.vla.autotune.tools list --all --markdown
 |---|---|---|
 | 配置（现成） | `sampler.euler_steps`、`sampler.probeflow`、`launch.cuda_graph`、`gemm.fastwam_linear_backend`、`compile.fastwam_inductor`（FastWAM 的 torch.compile）、`prefix.vision_pool`、`prefix.state_prompt_mode`、`precision.hy_numerical_profile` | ready |
 | 分析 | `profile.stage_intervals`、`profile.pi05_dataflow`、`analysis.lever_pricing` 为 ready；`profile.ncu_kernel` 需要 ncu 权限 | — |
-| 官方基线 | `baseline.official_impl`：π0 / π0.5 / FastWAM 用 `official_native_latency.py`，Hy 用 `official_hyvla_latency.py`，DM0.5 用 `official_dm05_latency.py` | ready |
+| 官方基线 | `baseline.official_impl`：`author_baseline.py` 读取模型声明中的 `author.adapter` 并计时 | ready |
 | DM0.5 配置 | `compile.dm05_inductor` 生成 Torch 编译候选，`launch.cuda_graph` 可从 eager 基线生成开图候选。固定 BF16、三视角、Euler10 | ready |
 | 现成的外部项目 | `kernel.forgekernel`（OpenBMB/ForgeKernel）、`kernel.kernelagent`（meta-pytorch/KernelAgent）、`engine.apxinf`（infinigence/ApxInf，只支持 π0.5）、`compile.aitune`（NVIDIA AITune） | needs_setup |
 | 需要原生扩展的 SM80 配置 | `fusion.hy_rope_qknorm_kvwrite`、`quant.int8_pi05` | needs_setup，`tools list --all` 可见，`tools propose` 可先生成候选 |
@@ -167,7 +167,7 @@ python -m flash_rt.vla.autotune.decisions summary --log $AT/decisions.jsonl --ma
 
 - Hy 配置实验已在 A800 作业 `356212` 中跑完整轮，使用 7 个输入、每配置 35 次正式计时和首尾两次基线。项目需要分别记录带源码快照的实验和各外部工具的实测情况。
 - `controller init --author-baseline /absolute/author.json` 将作者实现纳入同一轮实验，支持现场运行和绑定已有正式输出。所有候选及首尾基线同时检查项目误差 `quality` 和作者误差 `author_quality`。具体参数见[作者基线流程](../examples/vla_autotune/author_baseline.md)。
-- ForgeKernel、KernelAgent 和 AITune 的外部环境按各自 adapter 的 `setup` 字段部署。FastWAM、DM0.5 的 ApxInf 历史运行边界见[五模型延迟表](reports/2026-11-14-vla-latency-comparison.zh-CN.md)。
+- ForgeKernel、KernelAgent 和 AITune 的外部环境按各自 adapter 的 `setup` 字段部署。FastWAM、DM0.5 的 ApxInf 历史运行边界见[五模型整合报告](reports/2026-11-24-vla-autotune-final.zh-CN.md#a800-results)，历史观察不代表本轮强 schema 已复现。
 
 ### 从已测配置生成候选
 
