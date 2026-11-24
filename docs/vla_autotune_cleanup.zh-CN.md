@@ -222,8 +222,8 @@ Git 映射负责解析它们。旧报告提交与实际运行 source_ref 明确�
   README 均转到新报告；旧固定 Git 链接保留，不改写成当前实现。
 - 保留 FastWAM 专门架构／ApxInf 来源说明，但增加“历史阅读边界”，明确缓存的
   “尚未测量”属于旧日期。保留 DM0.5 组合优化的内容身份和冷成本细节。
-- 保留 11-14 延迟 `.json/.csv`；保留 11-15 与 11-16 所有 token 原始 JSON/CSV、
-  token 说明和当前 H 四表。它们是统计输入或口径来源，H 合并／复现确认前不裁剪。
+- J 检查点保留 11-14 延迟 `.json/.csv`、11-15／16 token 原始 JSON/CSV 与说明、
+  当前 H 四表；H 后续确认复现并封装九个重叠入口，见下方 [H 历史保留](#h-history-retention)。
 - J 未删除 token segment／decision append-only 账本、作者计时入口、外部工具源增量、
   LICENSE／NOTICE、snapshot 实现、物理源码快照、候选 worktree 或原始结果目录。
   作者入口由 C 的声明适配迁移另行维护，不由报告清理认定其运行资格。
@@ -241,3 +241,53 @@ Git 映射负责解析它们。旧报告提交与实际运行 source_ref 明确�
 | 当前文档链接 | 检查时共 809 个 Markdown 本地链接，新增断链 0；22 个 tracked symlink 无失效；16 处上游归档与 1 处训练文档既有缺项未改。整合报告显式锚点亦逐项核对。 |
 | 全量审计的非文档发现 | 同次审计仍报告 `flash_rt/vla/author_adapters/dm05.py:192` 指向已删除作者脚本，已交主代理/C 核实；J 未修改该适配器，**不宣称全量审计退出成功**。 |
 | `git diff --check` | 通过。最终精确 staged tree 的 CPU／GPU 验收由主代理另跑，不以文档保全检查替代。 |
+
+<a id="h-history-retention"></a>
+
+## H 历史 Token 保留与重叠入口收口（2026-11-24，Codex）
+
+H 采用后只保留一个当前历史输入
+[vla-token-history.json](reports/vla-token-history.json)，附
+[原发布分组、截点、归属和复现说明](reports/vla-token-history.zh-CN.md)。
+包内嵌入 11-15 完整阶段来源及 11-16 三份完整原 JSON，原始 JSON 序列化摘要逐项
+对应 `199376281801427abccbb307056b27e74eab1429`。阶段原名、模型分组、计数、
+时间、缺失记录、归属依据和迟到结算说明不变；不把原发布分组重写成事后新分组。
+
+`previous_latest_cumulative_source` 绑定 11-16 编译优化后旧最新基线：
+**1,741,698,368 总处理／51,414,720 非缓存／1,690,283,648 cache-read**。
+11-15 原发布与 11-16 两个中间快照仍各有原身份及原值。只对互不重叠的窗口求和，
+不累加多个同起点累计快照，也不重复相加三份完整新增窗口。旧 14 条缺失保持未知；
+DM0.5 的历史接入阶段保持 unknown。旧最新基线不会随本轮四表重新生成而变动。
+
+先验证内容和复现、迁移当前引用，再从当前工作树撤下以下九个重叠入口。
+表中链接均固定到原提交；包内 `archived_artifacts` 保存每个原路径、字节数和
+SHA-256，可逐文件复核。11-15 的五份原发布文件继续保留；其他非 Token 数据不在此
+清理范围。J 对初次加列 Markdown 所做的现行延迟入口迁移由新历史说明承接。
+
+| 撤下路径（相对 `docs/reports/`，链接为固定 Git 原文） | 内容保留与删除原因 |
+|---|---|
+| [2026-11-16-vla-development-token-usage.json](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage.json) | 完整嵌入 `snapshots[1].data`，摘要 `948b7bb8…`；初次五模型中间累计窗口，不再维护单独统计输入。 |
+| [2026-11-16-vla-development-token-usage.csv](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage.csv) | `snapshots[1].data.models` 可重建相同 LF 字节和原摘要；与 JSON 分组重复，撤下单独副本。 |
+| [2026-11-16-vla-development-token-usage.zh-CN.md](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage.zh-CN.md) | 原数、窗口、排除刚开始的 DM 补接入和活动估算限制归入历史说明，延迟链接转到 J 报告；原完整措辞由固定 Git 保留。 |
+| [2026-11-16-vla-development-token-usage-post-dm05.json](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage-post-dm05.json) | 完整嵌入 `snapshots[2].data`，摘要 `d862d263…`；保留补接入中间窗口及一条迟到结算，不与初次窗口相加。 |
+| [2026-11-16-vla-development-token-usage-post-dm05.csv](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage-post-dm05.csv) | 从 `snapshots[2].data.models` 重建相同字节；作为重复导出撤下。 |
+| [2026-11-16-vla-development-token-usage-post-dm05.zh-CN.md](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage-post-dm05.zh-CN.md) | 计时边界、76 会话范围、迟到结算、不把活动差额解释为纯编码成本等保留于历史说明；撤下重复报告正文。 |
+| [2026-11-16-vla-development-token-usage-dm05-optimized.json](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage-dm05-optimized.json) | 完整嵌入 `snapshots[3].data`，摘要 `c492024f…`，由旧最新指针固定；当前包的历史总量读取该对象，撤下独立重叠输入。 |
+| [2026-11-16-vla-development-token-usage-dm05-optimized.csv](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage-dm05-optimized.csv) | 可从 `snapshots[3].data.models` 按原顺序、原 LF 换行重建并校验摘要；旧延迟 JSON 提供固定原 CSV 地址。 |
+| [2026-11-16-vla-development-token-usage-dm05-optimized.zh-CN.md](https://github.com/20261023/FlashRT/blob/199376281801427abccbb307056b27e74eab1429/docs/reports/2026-11-16-vla-development-token-usage-dm05-optimized.zh-CN.md) | 原“最新”限定为历史旧最新；77 会话、799 条增量记录、最后完成 step 后 1 ms 截点和原累计均转入历史说明，避免继续当当前账单入口。 |
+
+### H 当前引用与验证边界
+
+- `token_usage.py` 的现行命令例与 CPU 历史接入测试均改传单一历史包。读取器保留
+  原四份 `source` 与 SHA-256，拒绝摘要错误、同名不同内容及错误旧最新指针，
+  与同一原文件重复传参也不会重复保留或计入。
+- 11-14 延迟 JSON 只精确迁移 token 的 `source`、CSV 恢复地址和中间窗口指针；
+  历史模型计数、29 个延迟点、质量数据及原 NR 均不改。J 整合报告只替换两条
+  历史数据引用，不重写其结果正文。
+- 生成报告的 CSV writer 显式使用 `lineterminator='\n'`；四份当前公开 CSV 的
+  LF 归一化由主代理负责。本次没有重写归档原字节、摘要或现有账本记录。
+- 冻结历史的三份 JSON／CSV、四个原截点、14 条缺失、各模型旧总量及阶段代理
+  均有 CPU 行为回归；新模型 DM 接入阶段未知继续验证。H 03:57 六份生成输出在
+  四个旧输入改为一个包后已实测相同；CSV 换行固定后的复核另列最终回执。
+- 本段只追加自身 start/end 和 `decisions add --actor agent` 的 Codex 记录；
+  不提交、不推送，不清理物理结果、源码快照、候选 worktree 或无关数据。

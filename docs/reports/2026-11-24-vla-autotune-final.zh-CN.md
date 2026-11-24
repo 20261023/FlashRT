@@ -435,8 +435,8 @@ FastWAM **164.187／3.286 M**、Hy **773.134／14.489 M**、
 DM0.5 **116.318／4.618 M**，共有 **627.277／28.419 M**（总处理／非缓存）。
 这些是旧截点，不与更早 16:48:53、17:48:57 的累计快照相加；
 不能用旧累计额与新增窗口重复计费。底层
-[旧 JSON](2026-11-16-vla-development-token-usage-dm05-optimized.json)、
-[CSV](2026-11-16-vla-development-token-usage-dm05-optimized.csv) 继续保留。
+[历史数据包](vla-token-history.json)保留原 JSON、阶段与旧最新累计基线；
+[原发布口径及 CSV 恢复方式](vla-token-history.zh-CN.md)继续可查。
 
 **待验收：**H 收口截点、未归属占比与 missing-usage 审计、方法／游对应的实际
 节省毫秒、新模型真实接入起止时间。目前没有证据的单元保持 unknown／NR。

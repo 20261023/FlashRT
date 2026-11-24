@@ -395,8 +395,7 @@ def test_historical_snapshots_preserved_and_never_summed_over_each_other(tmp_pat
 
 def test_new_model_onboarding_duration_and_missing_dm_historical_phase(tmp_path):
     root = Path(__file__).resolve().parents[1]
-    history = [root / 'docs/reports/2026-11-15-vla-migration-token-usage.json',
-               root / 'docs/reports/2026-11-16-vla-development-token-usage-dm05-optimized.json']
+    history = [root / 'docs/reports/vla-token-history.json']
     report = usage.build_report([], [], history=history,
                                 run_start=1795486880000, cutoff=1795486881000)
     assert report['historical_total']['all_processed_tokens'] == 1741698368

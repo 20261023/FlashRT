@@ -18,8 +18,7 @@ Examples (no torch or model computation):
     python -m flash_rt.vla.autotune.token_usage report \
         --records devlocal/tokens/native.jsonl \
         --run-start 2026-11-24T02:21:18.867Z \
-        --history docs/reports/2026-11-15-vla-migration-token-usage.json \
-        --history docs/reports/2026-11-16-vla-development-token-usage-dm05-optimized.json \
+        --history docs/reports/vla-token-history.json \
         --output docs/reports/2026-11-24-vla-token-usage
 
 Collectors only project whitelisted metadata, never prompts, reasoning,
@@ -56,6 +55,7 @@ COUNTERS = ('input', 'output', 'reasoning', 'cache_read', 'cache_write')
 DEFAULT_MODELS = ('pi0', 'pi05', 'fastwam', 'hyvla', 'dm05')
 SEGMENTS = 'docs/vla_autotune_token_segments.jsonl'
 SCHEMA = 'flash_rt.autotune.token_usage.v1'
+HISTORY_SCHEMA = 'flash_rt.autotune.token_history.v1'
 _OLD_PHASES = {'initial_adaptation': 'onboarding', 'precision_debugging': 'debugging',
                'optimization': 'optimization', 'benchmark_reporting': 'measurement',
                'shared_iteration': 'framework', 'context_compaction': 'framework'}
@@ -558,12 +558,58 @@ def collect_codex(paths):
     return deduplicate(rows)
 
 
+def _historical_sources(paths):
+    """Expand an archive without changing its original JSON identities or bytes."""
+    for path in paths:
+        raw = Path(path).read_bytes()
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError('historical input must be a JSON object')
+        if data.get('schema') != HISTORY_SCHEMA:
+            yield Path(path).name, hashlib.sha256(raw).hexdigest(), data, False
+            continue
+        entries = data.get('snapshots')
+        if (not isinstance(entries, list) or not entries
+                or any(not isinstance(entry, dict) for entry in entries)):
+            raise ValueError('historical package must contain snapshot objects')
+        previous = data.get('previous_latest_cumulative_source')
+        bound = [entry for entry in entries if entry.get('source') == previous]
+        if len(bound) != 1:
+            raise ValueError('previous latest cumulative snapshot is not uniquely bound')
+        window = bound[0]['data']['window']
+        start = utc_ms(window.get('start_ms', window.get('start_utc')))
+        cutoff = utc_ms(window.get('cutoff_ms', window.get('cutoff_utc')))
+        for entry in entries:
+            source = entry['source']
+            if not isinstance(source, str) or not source or Path(source).name != source:
+                raise ValueError('historical source must be an original filename')
+            snapshot = entry['data']
+            # These archived JSON files all used this encoding. Keeping field
+            # order allows their original SHA-256 values to be verified directly.
+            encoded = (json.dumps(snapshot, ensure_ascii=False, indent=2,
+                                  allow_nan=False) + '\n').encode('utf-8')
+            digest = hashlib.sha256(encoded).hexdigest()
+            if digest != entry.get('sha256'):
+                raise ValueError('historical snapshot digest differs from its archived original')
+            window = snapshot['window']
+            if utc_ms(window.get('start_ms', window.get('start_utc'))) != start:
+                raise ValueError('historical package snapshots must have a common start')
+            if source != previous and utc_ms(window.get('cutoff_ms', window.get('cutoff_utc'))) >= cutoff:
+                raise ValueError('previous latest cumulative snapshot must have the unique latest cutoff')
+            yield source, digest, snapshot, True
+
+
 def _historical(paths):
     """Freeze input values and select disjoint latest cumulative windows."""
-    snapshots = []
-    for path in paths:
-        data_bytes = Path(path).read_bytes()
-        data = json.loads(data_bytes)
+    snapshots, seen = [], set()
+    sources = list(_historical_sources(paths))
+    archived_digests = {source: digest for source, digest, _, archived in sources if archived}
+    for source, digest, data, _ in sources:
+        if source in archived_digests and archived_digests[source] != digest:
+            raise ValueError('conflicting historical source with different original bytes')
+        if (source, digest) in seen:
+            continue
+        seen.add((source, digest))
         window = data['window']
         start = utc_ms(window.get('start_ms', window.get('start_utc')))
         cutoff = utc_ms(window.get('cutoff_ms', window.get('cutoff_utc')))
@@ -591,7 +637,7 @@ def _historical(paths):
                 raise ValueError('historical phase counters must be complete')
             stages.append({'model': _label(row['model'], 'historical model'),
                            'phase': _OLD_PHASES[row['stage']], **_enrich(counters)})
-        snapshots.append(dict(source=Path(path).name, sha256=hashlib.sha256(data_bytes).hexdigest(),
+        snapshots.append(dict(source=source, sha256=digest,
                               start_ms=start, cutoff_ms=cutoff, models=models, phases=stages,
                               initial_phase_end_ms=window.get('initial_phase_end_ms')))
     snapshots.sort(key=lambda s: (s['start_ms'], s['cutoff_ms']))
@@ -871,7 +917,7 @@ def _atomic_write(path, text, *, private=False):
 
 def _csv(rows, fields):
     output = io.StringIO(newline='')
-    writer = csv.DictWriter(output, fieldnames=fields)
+    writer = csv.DictWriter(output, fieldnames=fields, lineterminator='\n')
     writer.writeheader()
     writer.writerows(rows)
     return output.getvalue()
@@ -994,7 +1040,8 @@ def main(argv=None):
     sub = commands.add_parser('report')
     sub.add_argument('--records', action='append', default=[])
     sub.add_argument('--segments', default=SEGMENTS)
-    sub.add_argument('--history', action='append', default=[])
+    sub.add_argument('--history', action='append', default=[],
+                     help='Frozen history package or standalone snapshot JSON (repeatable)')
     sub.add_argument('--run-start', required=True)
     sub.add_argument('--cutoff')
     sub.add_argument('--experiments', help='JSON list: model/stage/tool/before_ms/after_ms')
