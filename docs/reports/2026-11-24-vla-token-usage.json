@@ -1,0 +1,2106 @@
+{
+  "schema": "flash_rt.autotune.token_usage.v1",
+  "window": {
+    "run_start_utc": "2026-11-24T02:21:18.867000+00:00",
+    "cutoff_utc": "2026-11-24T03:57:08.343866+00:00",
+    "creation_time_rule": "start <= message.created < end"
+  },
+  "current_run": {
+    "total": {
+      "input": 10590542,
+      "output": 438723,
+      "reasoning": 202309,
+      "cache_read": 178982144,
+      "cache_write": 0,
+      "uncached_work_tokens": 11231574,
+      "all_processed_tokens": 190213718
+    },
+    "records": 922,
+    "missing_usage_records": 23,
+    "missing_counters": {
+      "input": 23,
+      "output": 23,
+      "reasoning": 23,
+      "cache_read": 23,
+      "cache_write": 23
+    },
+    "source": "账本",
+    "source_totals": {
+      "账本": {
+        "input": 10590542,
+        "output": 438723,
+        "reasoning": 202309,
+        "cache_read": 178982144,
+        "cache_write": 0,
+        "uncached_work_tokens": 11231574,
+        "all_processed_tokens": 190213718
+      }
+    },
+    "unattributed": {
+      "total": {
+        "input": 80017,
+        "output": 3277,
+        "reasoning": 396,
+        "cache_read": 1320320,
+        "cache_write": 0,
+        "uncached_work_tokens": 83690,
+        "all_processed_tokens": 1404010
+      },
+      "records": 29,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 80017,
+          "output": 3277,
+          "reasoning": 396,
+          "cache_read": 1320320,
+          "cache_write": 0,
+          "uncached_work_tokens": 83690,
+          "all_processed_tokens": 1404010
+        }
+      }
+    },
+    "unattributed_fraction": 0.007381223682300348,
+    "passes_unattributed_gate": true,
+    "gate_uses_known_recorded_counters": true
+  },
+  "gap": {
+    "total": {
+      "input": 7912908,
+      "output": 235798,
+      "reasoning": 161195,
+      "cache_read": 145814912,
+      "cache_write": 0,
+      "uncached_work_tokens": 8309901,
+      "all_processed_tokens": 154124813
+    },
+    "records": 478,
+    "missing_usage_records": 0,
+    "missing_counters": {
+      "input": 0,
+      "output": 0,
+      "reasoning": 0,
+      "cache_read": 0,
+      "cache_write": 0
+    },
+    "source": "估算",
+    "source_totals": {
+      "估算": {
+        "input": 7912908,
+        "output": 235798,
+        "reasoning": 161195,
+        "cache_read": 145814912,
+        "cache_write": 0,
+        "uncached_work_tokens": 8309901,
+        "all_processed_tokens": 154124813
+      }
+    },
+    "start_utc": "2026-11-16T13:02:44.308000+00:00",
+    "end_utc": "2026-11-24T02:21:18.867000+00:00",
+    "ranges": [
+      {
+        "start_utc": "2026-11-16T13:02:44.308000+00:00",
+        "end_utc": "2026-11-24T02:21:18.867000+00:00"
+      }
+    ],
+    "counter_basis": "native counters; task attribution estimated"
+  },
+  "historical_total": {
+    "input": 46287373,
+    "output": 2314962,
+    "reasoning": 2812385,
+    "cache_read": 1690283648,
+    "cache_write": 0,
+    "uncached_work_tokens": 51414720,
+    "all_processed_tokens": 1741698368
+  },
+  "historical_snapshots": [
+    {
+      "source": "2026-11-15-vla-migration-token-usage.json",
+      "sha256": "28e8d9cdf2386814ba24d04228cd5156cb3c998e4a4f701a2262db931f4e7a7a",
+      "start_ms": 1794147641449,
+      "cutoff_ms": 1794744759409,
+      "models": {
+        "shared": {
+          "input": 21956614,
+          "output": 520174,
+          "reasoning": 633453,
+          "cache_read": 515770496,
+          "cache_write": 0,
+          "uncached_work_tokens": 23110241,
+          "all_processed_tokens": 538880737,
+          "usage_records": 1378,
+          "missing_usage_records": 11
+        },
+        "hyvla": {
+          "input": 11308008,
+          "output": 1129375,
+          "reasoning": 1446433,
+          "cache_read": 756510976,
+          "cache_write": 0,
+          "uncached_work_tokens": 13883816,
+          "all_processed_tokens": 770394792,
+          "usage_records": 2155,
+          "missing_usage_records": 3
+        },
+        "fastwam": {
+          "input": 1857130,
+          "output": 206104,
+          "reasoning": 238933,
+          "cache_read": 116914176,
+          "cache_write": 0,
+          "uncached_work_tokens": 2302167,
+          "all_processed_tokens": 119216343,
+          "usage_records": 398,
+          "missing_usage_records": 0
+        },
+        "pi0": {
+          "input": 351149,
+          "output": 37192,
+          "reasoning": 31186,
+          "cache_read": 16795904,
+          "cache_write": 0,
+          "uncached_work_tokens": 419527,
+          "all_processed_tokens": 17215431,
+          "usage_records": 85,
+          "missing_usage_records": 0
+        },
+        "pi05": {
+          "input": 86436,
+          "output": 35149,
+          "reasoning": 47885,
+          "cache_read": 42308480,
+          "cache_write": 0,
+          "uncached_work_tokens": 169470,
+          "all_processed_tokens": 42477950,
+          "usage_records": 89,
+          "missing_usage_records": 0
+        }
+      },
+      "phases": [
+        {
+          "model": "fastwam",
+          "phase": "measurement",
+          "input": 454777,
+          "output": 7852,
+          "reasoning": 17099,
+          "cache_read": 5238528,
+          "cache_write": 0,
+          "uncached_work_tokens": 479728,
+          "all_processed_tokens": 5718256
+        },
+        {
+          "model": "fastwam",
+          "phase": "onboarding",
+          "input": 944766,
+          "output": 100972,
+          "reasoning": 65185,
+          "cache_read": 31018112,
+          "cache_write": 0,
+          "uncached_work_tokens": 1110923,
+          "all_processed_tokens": 32129035
+        },
+        {
+          "model": "fastwam",
+          "phase": "optimization",
+          "input": 457587,
+          "output": 97280,
+          "reasoning": 156649,
+          "cache_read": 80657536,
+          "cache_write": 0,
+          "uncached_work_tokens": 711516,
+          "all_processed_tokens": 81369052
+        },
+        {
+          "model": "hyvla",
+          "phase": "measurement",
+          "input": 790136,
+          "output": 18603,
+          "reasoning": 13842,
+          "cache_read": 12163072,
+          "cache_write": 0,
+          "uncached_work_tokens": 822581,
+          "all_processed_tokens": 12985653
+        },
+        {
+          "model": "hyvla",
+          "phase": "onboarding",
+          "input": 434651,
+          "output": 73584,
+          "reasoning": 41989,
+          "cache_read": 16456960,
+          "cache_write": 0,
+          "uncached_work_tokens": 550224,
+          "all_processed_tokens": 17007184
+        },
+        {
+          "model": "hyvla",
+          "phase": "debugging",
+          "input": 10083221,
+          "output": 1037188,
+          "reasoning": 1390602,
+          "cache_read": 727890944,
+          "cache_write": 0,
+          "uncached_work_tokens": 12511011,
+          "all_processed_tokens": 740401955
+        },
+        {
+          "model": "pi0",
+          "phase": "measurement",
+          "input": 4750,
+          "output": 269,
+          "reasoning": 346,
+          "cache_read": 360448,
+          "cache_write": 0,
+          "uncached_work_tokens": 5365,
+          "all_processed_tokens": 365813
+        },
+        {
+          "model": "pi0",
+          "phase": "onboarding",
+          "input": 346399,
+          "output": 36923,
+          "reasoning": 30840,
+          "cache_read": 16435456,
+          "cache_write": 0,
+          "uncached_work_tokens": 414162,
+          "all_processed_tokens": 16849618
+        },
+        {
+          "model": "pi05",
+          "phase": "measurement",
+          "input": 13558,
+          "output": 4622,
+          "reasoning": 5021,
+          "cache_read": 3548288,
+          "cache_write": 0,
+          "uncached_work_tokens": 23201,
+          "all_processed_tokens": 3571489
+        },
+        {
+          "model": "pi05",
+          "phase": "onboarding",
+          "input": 63073,
+          "output": 24597,
+          "reasoning": 31755,
+          "cache_read": 33314176,
+          "cache_write": 0,
+          "uncached_work_tokens": 119425,
+          "all_processed_tokens": 33433601
+        },
+        {
+          "model": "pi05",
+          "phase": "optimization",
+          "input": 9805,
+          "output": 5930,
+          "reasoning": 11109,
+          "cache_read": 5446016,
+          "cache_write": 0,
+          "uncached_work_tokens": 26844,
+          "all_processed_tokens": 5472860
+        },
+        {
+          "model": "shared",
+          "phase": "measurement",
+          "input": 4003768,
+          "output": 110842,
+          "reasoning": 109104,
+          "cache_read": 74638592,
+          "cache_write": 0,
+          "uncached_work_tokens": 4223714,
+          "all_processed_tokens": 78862306
+        },
+        {
+          "model": "shared",
+          "phase": "framework",
+          "input": 7094533,
+          "output": 36505,
+          "reasoning": 29978,
+          "cache_read": 9088,
+          "cache_write": 0,
+          "uncached_work_tokens": 7161016,
+          "all_processed_tokens": 7170104
+        },
+        {
+          "model": "shared",
+          "phase": "onboarding",
+          "input": 3058703,
+          "output": 159047,
+          "reasoning": 141886,
+          "cache_read": 107851392,
+          "cache_write": 0,
+          "uncached_work_tokens": 3359636,
+          "all_processed_tokens": 111211028
+        },
+        {
+          "model": "shared",
+          "phase": "framework",
+          "input": 7799610,
+          "output": 213780,
+          "reasoning": 352485,
+          "cache_read": 333271424,
+          "cache_write": 0,
+          "uncached_work_tokens": 8365875,
+          "all_processed_tokens": 341637299
+        }
+      ],
+      "initial_phase_end_ms": 1794218192719
+    },
+    {
+      "source": "2026-11-16-vla-development-token-usage.json",
+      "sha256": "948b7bb8f168cbc9d9fae09bde0939257c1406ce00dd7d3110e158c341b9007a",
+      "start_ms": 1794147641449.0,
+      "cutoff_ms": 1794818933180,
+      "models": {
+        "pi0": {
+          "input": 351724,
+          "output": 37684,
+          "reasoning": 43457,
+          "cache_read": 17871104,
+          "cache_write": 0,
+          "uncached_work_tokens": 432865,
+          "all_processed_tokens": 18303969,
+          "usage_records": 87,
+          "missing_usage_records": 0
+        },
+        "pi05": {
+          "input": 86436,
+          "output": 35149,
+          "reasoning": 47885,
+          "cache_read": 42308480,
+          "cache_write": 0,
+          "uncached_work_tokens": 169470,
+          "all_processed_tokens": 42477950,
+          "usage_records": 89,
+          "missing_usage_records": 0
+        },
+        "fastwam": {
+          "input": 2688064,
+          "output": 304940,
+          "reasoning": 292104,
+          "cache_read": 159803776,
+          "cache_write": 0,
+          "uncached_work_tokens": 3285108,
+          "all_processed_tokens": 163088884,
+          "usage_records": 577,
+          "missing_usage_records": 0
+        },
+        "hyvla": {
+          "input": 11899134,
+          "output": 1130448,
+          "reasoning": 1459200,
+          "cache_read": 758644736,
+          "cache_write": 0,
+          "uncached_work_tokens": 14488782,
+          "all_processed_tokens": 773133518,
+          "usage_records": 2161,
+          "missing_usage_records": 3
+        },
+        "dm05": {
+          "input": 2258137,
+          "output": 90402,
+          "reasoning": 89097,
+          "cache_read": 52274304,
+          "cache_write": 0,
+          "uncached_work_tokens": 2437636,
+          "all_processed_tokens": 54711940,
+          "usage_records": 199,
+          "missing_usage_records": 0
+        },
+        "shared": {
+          "input": 25782369,
+          "output": 600055,
+          "reasoning": 750239,
+          "cache_read": 577504512,
+          "cache_write": 0,
+          "uncached_work_tokens": 27132663,
+          "all_processed_tokens": 604637175,
+          "usage_records": 1550,
+          "missing_usage_records": 11
+        }
+      },
+      "phases": [],
+      "initial_phase_end_ms": null
+    },
+    {
+      "source": "2026-11-16-vla-development-token-usage-post-dm05.json",
+      "sha256": "d862d263ff68c4dfd7539113ae4c1847723f19b4392c78ea8326eb49bb706248",
+      "start_ms": 1794147641449.0,
+      "cutoff_ms": 1794822537044,
+      "models": {
+        "pi0": {
+          "input": 351724,
+          "output": 37684,
+          "reasoning": 43457,
+          "cache_read": 17871104,
+          "cache_write": 0,
+          "uncached_work_tokens": 432865,
+          "all_processed_tokens": 18303969,
+          "usage_records": 87,
+          "missing_usage_records": 0
+        },
+        "pi05": {
+          "input": 86436,
+          "output": 35149,
+          "reasoning": 47885,
+          "cache_read": 42308480,
+          "cache_write": 0,
+          "uncached_work_tokens": 169470,
+          "all_processed_tokens": 42477950,
+          "usage_records": 89,
+          "missing_usage_records": 0
+        },
+        "fastwam": {
+          "input": 2688332,
+          "output": 305256,
+          "reasoning": 292382,
+          "cache_read": 160312064,
+          "cache_write": 0,
+          "uncached_work_tokens": 3285970,
+          "all_processed_tokens": 163598034,
+          "usage_records": 578,
+          "missing_usage_records": 0
+        },
+        "hyvla": {
+          "input": 11899134,
+          "output": 1130448,
+          "reasoning": 1459200,
+          "cache_read": 758644736,
+          "cache_write": 0,
+          "uncached_work_tokens": 14488782,
+          "all_processed_tokens": 773133518,
+          "usage_records": 2161,
+          "missing_usage_records": 3
+        },
+        "dm05": {
+          "input": 2678208,
+          "output": 140983,
+          "reasoning": 130928,
+          "cache_read": 85078656,
+          "cache_write": 0,
+          "uncached_work_tokens": 2950119,
+          "all_processed_tokens": 88028775,
+          "usage_records": 298,
+          "missing_usage_records": 0
+        },
+        "shared": {
+          "input": 25792420,
+          "output": 611573,
+          "reasoning": 757885,
+          "cache_read": 587889280,
+          "cache_write": 0,
+          "uncached_work_tokens": 27161878,
+          "all_processed_tokens": 615051158,
+          "usage_records": 1571,
+          "missing_usage_records": 11
+        }
+      },
+      "phases": [],
+      "initial_phase_end_ms": null
+    },
+    {
+      "source": "2026-11-16-vla-development-token-usage-dm05-optimized.json",
+      "sha256": "c492024f16717a3e1e009b3df50c609328e10e4f3d0fe17c53e92a5c0d905d49",
+      "start_ms": 1794147641449.0,
+      "cutoff_ms": 1794834164308,
+      "models": {
+        "pi0": {
+          "input": 351724,
+          "output": 37684,
+          "reasoning": 43457,
+          "cache_read": 17871104,
+          "cache_write": 0,
+          "uncached_work_tokens": 432865,
+          "all_processed_tokens": 18303969,
+          "usage_records": 87,
+          "missing_usage_records": 0
+        },
+        "pi05": {
+          "input": 86436,
+          "output": 35149,
+          "reasoning": 47885,
+          "cache_read": 42308480,
+          "cache_write": 0,
+          "uncached_work_tokens": 169470,
+          "all_processed_tokens": 42477950,
+          "usage_records": 89,
+          "missing_usage_records": 0
+        },
+        "fastwam": {
+          "input": 2688549,
+          "output": 305321,
+          "reasoning": 292452,
+          "cache_read": 160901120,
+          "cache_write": 0,
+          "uncached_work_tokens": 3286322,
+          "all_processed_tokens": 164187442,
+          "usage_records": 579,
+          "missing_usage_records": 0
+        },
+        "hyvla": {
+          "input": 11899134,
+          "output": 1130448,
+          "reasoning": 1459200,
+          "cache_read": 758644736,
+          "cache_write": 0,
+          "uncached_work_tokens": 14488782,
+          "all_processed_tokens": 773133518,
+          "usage_records": 2161,
+          "missing_usage_records": 3
+        },
+        "dm05": {
+          "input": 4232126,
+          "output": 186188,
+          "reasoning": 199578,
+          "cache_read": 111700224,
+          "cache_write": 0,
+          "uncached_work_tokens": 4617892,
+          "all_processed_tokens": 116318116,
+          "usage_records": 397,
+          "missing_usage_records": 0
+        },
+        "shared": {
+          "input": 27029404,
+          "output": 620172,
+          "reasoning": 769813,
+          "cache_read": 598857984,
+          "cache_write": 0,
+          "uncached_work_tokens": 28419389,
+          "all_processed_tokens": 627277373,
+          "usage_records": 1591,
+          "missing_usage_records": 11
+        }
+      },
+      "phases": [],
+      "initial_phase_end_ms": null
+    }
+  ],
+  "historical_attribution_is_estimated": true,
+  "grand_total": {
+    "input": 64790823,
+    "output": 2989483,
+    "reasoning": 3175889,
+    "cache_read": 2015080704,
+    "cache_write": 0,
+    "uncached_work_tokens": 70956195,
+    "all_processed_tokens": 2086036899
+  },
+  "model_lifecycle": [
+    {
+      "model": "pi0",
+      "total": {
+        "input": 633656,
+        "output": 45162,
+        "reasoning": 49555,
+        "cache_read": 24723072,
+        "cache_write": 0,
+        "uncached_work_tokens": 728373,
+        "all_processed_tokens": 25451445
+      },
+      "records": 115,
+      "missing_usage_records": 2,
+      "missing_counters": {
+        "input": 2,
+        "output": 2,
+        "reasoning": 2,
+        "cache_read": 2,
+        "cache_write": 2
+      },
+      "source": "估算+账本",
+      "source_totals": {
+        "估算": {
+          "input": 90753,
+          "output": 2602,
+          "reasoning": 4626,
+          "cache_read": 5799936,
+          "cache_write": 0,
+          "uncached_work_tokens": 97981,
+          "all_processed_tokens": 5897917
+        },
+        "账本": {
+          "input": 542903,
+          "output": 42560,
+          "reasoning": 44929,
+          "cache_read": 18923136,
+          "cache_write": 0,
+          "uncached_work_tokens": 630392,
+          "all_processed_tokens": 19553528
+        }
+      },
+      "phases": {
+        "onboarding": {
+          "input": 346399,
+          "output": 36923,
+          "reasoning": 30840,
+          "cache_read": 16435456,
+          "cache_write": 0,
+          "uncached_work_tokens": 414162,
+          "all_processed_tokens": 16849618
+        },
+        "migration": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "optimization": {
+          "input": 17051,
+          "output": 344,
+          "reasoning": 213,
+          "cache_read": 1110656,
+          "cache_write": 0,
+          "uncached_work_tokens": 17608,
+          "all_processed_tokens": 1128264
+        },
+        "debugging": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "measurement": {
+          "input": 262183,
+          "output": 5862,
+          "reasoning": 3172,
+          "cache_read": 2255232,
+          "cache_write": 0,
+          "uncached_work_tokens": 271217,
+          "all_processed_tokens": 2526449
+        },
+        "framework": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "unknown": {
+          "input": 8023,
+          "output": 2033,
+          "reasoning": 15330,
+          "cache_read": 4921728,
+          "cache_write": 0,
+          "uncached_work_tokens": 25386,
+          "all_processed_tokens": 4947114
+        }
+      }
+    },
+    {
+      "model": "pi05",
+      "total": {
+        "input": 1081142,
+        "output": 67540,
+        "reasoning": 76025,
+        "cache_read": 58873600,
+        "cache_write": 0,
+        "uncached_work_tokens": 1224707,
+        "all_processed_tokens": 60098307
+      },
+      "records": 169,
+      "missing_usage_records": 2,
+      "missing_counters": {
+        "input": 2,
+        "output": 2,
+        "reasoning": 2,
+        "cache_read": 2,
+        "cache_write": 2
+      },
+      "source": "估算+账本",
+      "source_totals": {
+        "估算": {
+          "input": 667165,
+          "output": 27601,
+          "reasoning": 24134,
+          "cache_read": 14682752,
+          "cache_write": 0,
+          "uncached_work_tokens": 718900,
+          "all_processed_tokens": 15401652
+        },
+        "账本": {
+          "input": 413977,
+          "output": 39939,
+          "reasoning": 51891,
+          "cache_read": 44190848,
+          "cache_write": 0,
+          "uncached_work_tokens": 505807,
+          "all_processed_tokens": 44696655
+        }
+      },
+      "phases": {
+        "onboarding": {
+          "input": 63073,
+          "output": 24597,
+          "reasoning": 31755,
+          "cache_read": 33314176,
+          "cache_write": 0,
+          "uncached_work_tokens": 119425,
+          "all_processed_tokens": 33433601
+        },
+        "migration": {
+          "input": 955,
+          "output": 222,
+          "reasoning": 0,
+          "cache_read": 36608,
+          "cache_write": 0,
+          "uncached_work_tokens": 1177,
+          "all_processed_tokens": 37785
+        },
+        "optimization": {
+          "input": 441629,
+          "output": 13798,
+          "reasoning": 18239,
+          "cache_read": 10973184,
+          "cache_write": 0,
+          "uncached_work_tokens": 473666,
+          "all_processed_tokens": 11446850
+        },
+        "debugging": {
+          "input": 327541,
+          "output": 4790,
+          "reasoning": 4006,
+          "cache_read": 1882368,
+          "cache_write": 0,
+          "uncached_work_tokens": 336337,
+          "all_processed_tokens": 2218705
+        },
+        "measurement": {
+          "input": 13558,
+          "output": 4622,
+          "reasoning": 5021,
+          "cache_read": 3548288,
+          "cache_write": 0,
+          "uncached_work_tokens": 23201,
+          "all_processed_tokens": 3571489
+        },
+        "framework": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "unknown": {
+          "input": 234386,
+          "output": 19511,
+          "reasoning": 17004,
+          "cache_read": 9118976,
+          "cache_write": 0,
+          "uncached_work_tokens": 270901,
+          "all_processed_tokens": 9389877
+        }
+      }
+    },
+    {
+      "model": "fastwam",
+      "total": {
+        "input": 3538920,
+        "output": 340835,
+        "reasoning": 321854,
+        "cache_read": 180528640,
+        "cache_write": 0,
+        "uncached_work_tokens": 4201609,
+        "all_processed_tokens": 184730249
+      },
+      "records": 671,
+      "missing_usage_records": 2,
+      "missing_counters": {
+        "input": 2,
+        "output": 2,
+        "reasoning": 2,
+        "cache_read": 2,
+        "cache_write": 2
+      },
+      "source": "估算+账本",
+      "source_totals": {
+        "估算": {
+          "input": 390201,
+          "output": 25063,
+          "reasoning": 25782,
+          "cache_read": 15660288,
+          "cache_write": 0,
+          "uncached_work_tokens": 441046,
+          "all_processed_tokens": 16101334
+        },
+        "账本": {
+          "input": 3148719,
+          "output": 315772,
+          "reasoning": 296072,
+          "cache_read": 164868352,
+          "cache_write": 0,
+          "uncached_work_tokens": 3760563,
+          "all_processed_tokens": 168628915
+        }
+      },
+      "phases": {
+        "onboarding": {
+          "input": 944766,
+          "output": 100972,
+          "reasoning": 65185,
+          "cache_read": 31018112,
+          "cache_write": 0,
+          "uncached_work_tokens": 1110923,
+          "all_processed_tokens": 32129035
+        },
+        "migration": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "optimization": {
+          "input": 559541,
+          "output": 101424,
+          "reasoning": 160436,
+          "cache_read": 85207424,
+          "cache_write": 0,
+          "uncached_work_tokens": 821401,
+          "all_processed_tokens": 86028825
+        },
+        "debugging": {
+          "input": 460170,
+          "output": 10451,
+          "reasoning": 3620,
+          "cache_read": 3967232,
+          "cache_write": 0,
+          "uncached_work_tokens": 474241,
+          "all_processed_tokens": 4441473
+        },
+        "measurement": {
+          "input": 461351,
+          "output": 7926,
+          "reasoning": 17145,
+          "cache_read": 5608320,
+          "cache_write": 0,
+          "uncached_work_tokens": 486422,
+          "all_processed_tokens": 6094742
+        },
+        "framework": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "unknown": {
+          "input": 1113092,
+          "output": 120062,
+          "reasoning": 75468,
+          "cache_read": 54727552,
+          "cache_write": 0,
+          "uncached_work_tokens": 1308622,
+          "all_processed_tokens": 56036174
+        }
+      }
+    },
+    {
+      "model": "hyvla",
+      "total": {
+        "input": 14254308,
+        "output": 1226615,
+        "reasoning": 1502294,
+        "cache_read": 804084352,
+        "cache_write": 0,
+        "uncached_work_tokens": 16983217,
+        "all_processed_tokens": 821067569
+      },
+      "records": 2358,
+      "missing_usage_records": 4,
+      "missing_counters": {
+        "input": 1,
+        "output": 1,
+        "reasoning": 1,
+        "cache_read": 1,
+        "cache_write": 1
+      },
+      "source": "估算+账本",
+      "source_totals": {
+        "估算": {
+          "input": 361918,
+          "output": 34653,
+          "reasoning": 16175,
+          "cache_read": 13313920,
+          "cache_write": 0,
+          "uncached_work_tokens": 412746,
+          "all_processed_tokens": 13726666
+        },
+        "账本": {
+          "input": 13892390,
+          "output": 1191962,
+          "reasoning": 1486119,
+          "cache_read": 790770432,
+          "cache_write": 0,
+          "uncached_work_tokens": 16570471,
+          "all_processed_tokens": 807340903
+        }
+      },
+      "phases": {
+        "onboarding": {
+          "input": 434651,
+          "output": 73584,
+          "reasoning": 41989,
+          "cache_read": 16456960,
+          "cache_write": 0,
+          "uncached_work_tokens": 550224,
+          "all_processed_tokens": 17007184
+        },
+        "migration": {
+          "input": 1862247,
+          "output": 41952,
+          "reasoning": 19015,
+          "cache_read": 25796224,
+          "cache_write": 0,
+          "uncached_work_tokens": 1923214,
+          "all_processed_tokens": 27719438
+        },
+        "optimization": {
+          "input": 107652,
+          "output": 4429,
+          "reasoning": 905,
+          "cache_read": 3665152,
+          "cache_write": 0,
+          "uncached_work_tokens": 112986,
+          "all_processed_tokens": 3778138
+        },
+        "debugging": {
+          "input": 10083221,
+          "output": 1037188,
+          "reasoning": 1390602,
+          "cache_read": 727890944,
+          "cache_write": 0,
+          "uncached_work_tokens": 12511011,
+          "all_processed_tokens": 740401955
+        },
+        "measurement": {
+          "input": 945559,
+          "output": 40449,
+          "reasoning": 22818,
+          "cache_read": 19991296,
+          "cache_write": 0,
+          "uncached_work_tokens": 1008826,
+          "all_processed_tokens": 21000122
+        },
+        "framework": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "unknown": {
+          "input": 820978,
+          "output": 29013,
+          "reasoning": 26965,
+          "cache_read": 10283776,
+          "cache_write": 0,
+          "uncached_work_tokens": 876956,
+          "all_processed_tokens": 11160732
+        }
+      }
+    },
+    {
+      "model": "dm05",
+      "total": {
+        "input": 4752636,
+        "output": 224692,
+        "reasoning": 221607,
+        "cache_read": 136316544,
+        "cache_write": 0,
+        "uncached_work_tokens": 5198935,
+        "all_processed_tokens": 141515479
+      },
+      "records": 479,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算+账本",
+      "source_totals": {
+        "估算": {
+          "input": 333827,
+          "output": 18953,
+          "reasoning": 11809,
+          "cache_read": 18433152,
+          "cache_write": 0,
+          "uncached_work_tokens": 364589,
+          "all_processed_tokens": 18797741
+        },
+        "账本": {
+          "input": 4418809,
+          "output": 205739,
+          "reasoning": 209798,
+          "cache_read": 117883392,
+          "cache_write": 0,
+          "uncached_work_tokens": 4834346,
+          "all_processed_tokens": 122717738
+        }
+      },
+      "phases": {
+        "onboarding": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "migration": {
+          "input": 186683,
+          "output": 19551,
+          "reasoning": 10220,
+          "cache_read": 6183168,
+          "cache_write": 0,
+          "uncached_work_tokens": 216454,
+          "all_processed_tokens": 6399622
+        },
+        "optimization": {
+          "input": 173316,
+          "output": 6049,
+          "reasoning": 2164,
+          "cache_read": 6804992,
+          "cache_write": 0,
+          "uncached_work_tokens": 181529,
+          "all_processed_tokens": 6986521
+        },
+        "debugging": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "measurement": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "framework": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "unknown": {
+          "input": 4392637,
+          "output": 199092,
+          "reasoning": 209223,
+          "cache_read": 123328384,
+          "cache_write": 0,
+          "uncached_work_tokens": 4800952,
+          "all_processed_tokens": 128129336
+        }
+      }
+    },
+    {
+      "model": "shared",
+      "total": {
+        "input": 39788248,
+        "output": 1055015,
+        "reasoning": 996093,
+        "cache_read": 799957888,
+        "cache_write": 0,
+        "uncached_work_tokens": 41839356,
+        "all_processed_tokens": 841797244
+      },
+      "records": 2423,
+      "missing_usage_records": 26,
+      "missing_counters": {
+        "input": 15,
+        "output": 15,
+        "reasoning": 15,
+        "cache_read": 15,
+        "cache_write": 15
+      },
+      "source": "估算+账本",
+      "source_totals": {
+        "估算": {
+          "input": 6069044,
+          "output": 126926,
+          "reasoning": 78669,
+          "cache_read": 77924864,
+          "cache_write": 0,
+          "uncached_work_tokens": 6274639,
+          "all_processed_tokens": 84199503
+        },
+        "账本": {
+          "input": 33719204,
+          "output": 928089,
+          "reasoning": 917424,
+          "cache_read": 722033024,
+          "cache_write": 0,
+          "uncached_work_tokens": 35564717,
+          "all_processed_tokens": 757597741
+        }
+      },
+      "phases": {
+        "onboarding": {
+          "input": 3059111,
+          "output": 159129,
+          "reasoning": 141886,
+          "cache_read": 107872128,
+          "cache_write": 0,
+          "uncached_work_tokens": 3360126,
+          "all_processed_tokens": 111232254
+        },
+        "migration": {
+          "input": 164822,
+          "output": 176,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 164998,
+          "all_processed_tokens": 164998
+        },
+        "optimization": {
+          "input": 2387621,
+          "output": 41655,
+          "reasoning": 31494,
+          "cache_read": 33330688,
+          "cache_write": 0,
+          "uncached_work_tokens": 2460770,
+          "all_processed_tokens": 35791458
+        },
+        "debugging": {
+          "input": 294621,
+          "output": 22,
+          "reasoning": 419,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 295062,
+          "all_processed_tokens": 295062
+        },
+        "measurement": {
+          "input": 4520914,
+          "output": 116964,
+          "reasoning": 110734,
+          "cache_read": 78353152,
+          "cache_write": 0,
+          "uncached_work_tokens": 4748612,
+          "all_processed_tokens": 83101764
+        },
+        "framework": {
+          "input": 21584431,
+          "output": 558628,
+          "reasoning": 530590,
+          "cache_read": 456741248,
+          "cache_write": 0,
+          "uncached_work_tokens": 22673649,
+          "all_processed_tokens": 479414897
+        },
+        "unknown": {
+          "input": 7776728,
+          "output": 178441,
+          "reasoning": 180970,
+          "cache_read": 123660672,
+          "cache_write": 0,
+          "uncached_work_tokens": 8136139,
+          "all_processed_tokens": 131796811
+        }
+      }
+    },
+    {
+      "model": "smolvla",
+      "total": {
+        "input": 661896,
+        "output": 26347,
+        "reasoning": 8065,
+        "cache_read": 9276288,
+        "cache_write": 0,
+        "uncached_work_tokens": 696308,
+        "all_processed_tokens": 9972596
+      },
+      "records": 60,
+      "missing_usage_records": 1,
+      "missing_counters": {
+        "input": 1,
+        "output": 1,
+        "reasoning": 1,
+        "cache_read": 1,
+        "cache_write": 1
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 661896,
+          "output": 26347,
+          "reasoning": 8065,
+          "cache_read": 9276288,
+          "cache_write": 0,
+          "uncached_work_tokens": 696308,
+          "all_processed_tokens": 9972596
+        }
+      },
+      "phases": {
+        "onboarding": {
+          "input": 661896,
+          "output": 26347,
+          "reasoning": 8065,
+          "cache_read": 9276288,
+          "cache_write": 0,
+          "uncached_work_tokens": 696308,
+          "all_processed_tokens": 9972596
+        },
+        "migration": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "optimization": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "debugging": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "measurement": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "framework": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "unknown": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        }
+      }
+    },
+    {
+      "model": "unattributed",
+      "total": {
+        "input": 80017,
+        "output": 3277,
+        "reasoning": 396,
+        "cache_read": 1320320,
+        "cache_write": 0,
+        "uncached_work_tokens": 83690,
+        "all_processed_tokens": 1404010
+      },
+      "records": 29,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 80017,
+          "output": 3277,
+          "reasoning": 396,
+          "cache_read": 1320320,
+          "cache_write": 0,
+          "uncached_work_tokens": 83690,
+          "all_processed_tokens": 1404010
+        }
+      },
+      "phases": {
+        "onboarding": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "migration": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "optimization": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "debugging": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "measurement": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "framework": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 0,
+          "all_processed_tokens": 0
+        },
+        "unknown": {
+          "input": 80017,
+          "output": 3277,
+          "reasoning": 396,
+          "cache_read": 1320320,
+          "cache_write": 0,
+          "uncached_work_tokens": 83690,
+          "all_processed_tokens": 1404010
+        }
+      }
+    }
+  ],
+  "model_stage": [
+    {
+      "model": "dm05",
+      "stage": "unknown",
+      "tool": null,
+      "total": {
+        "input": 173316,
+        "output": 6049,
+        "reasoning": 2164,
+        "cache_read": 6804992,
+        "cache_write": 0,
+        "uncached_work_tokens": 181529,
+        "all_processed_tokens": 6986521
+      },
+      "records": 23,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 173316,
+          "output": 6049,
+          "reasoning": 2164,
+          "cache_read": 6804992,
+          "cache_write": 0,
+          "uncached_work_tokens": 181529,
+          "all_processed_tokens": 6986521
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    },
+    {
+      "model": "dm05",
+      "stage": "vision.encode",
+      "tool": null,
+      "total": {
+        "input": 186683,
+        "output": 19551,
+        "reasoning": 10220,
+        "cache_read": 6183168,
+        "cache_write": 0,
+        "uncached_work_tokens": 216454,
+        "all_processed_tokens": 6399622
+      },
+      "records": 36,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 186683,
+          "output": 19551,
+          "reasoning": 10220,
+          "cache_read": 6183168,
+          "cache_write": 0,
+          "uncached_work_tokens": 216454,
+          "all_processed_tokens": 6399622
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    },
+    {
+      "model": "fastwam",
+      "stage": "unknown",
+      "tool": null,
+      "total": {
+        "input": 101954,
+        "output": 4144,
+        "reasoning": 3787,
+        "cache_read": 4549888,
+        "cache_write": 0,
+        "uncached_work_tokens": 109885,
+        "all_processed_tokens": 4659773
+      },
+      "records": 17,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 101954,
+          "output": 4144,
+          "reasoning": 3787,
+          "cache_read": 4549888,
+          "cache_write": 0,
+          "uncached_work_tokens": 109885,
+          "all_processed_tokens": 4659773
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    },
+    {
+      "model": "hyvla",
+      "stage": "kernel.attention",
+      "tool": null,
+      "total": {
+        "input": 1597874,
+        "output": 27984,
+        "reasoning": 14662,
+        "cache_read": 19082624,
+        "cache_write": 0,
+        "uncached_work_tokens": 1640520,
+        "all_processed_tokens": 20723144
+      },
+      "records": 56,
+      "missing_usage_records": 1,
+      "missing_counters": {
+        "input": 1,
+        "output": 1,
+        "reasoning": 1,
+        "cache_read": 1,
+        "cache_write": 1
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 1597874,
+          "output": 27984,
+          "reasoning": 14662,
+          "cache_read": 19082624,
+          "cache_write": 0,
+          "uncached_work_tokens": 1640520,
+          "all_processed_tokens": 20723144
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    },
+    {
+      "model": "hyvla",
+      "stage": "prefix.prefill",
+      "tool": null,
+      "total": {
+        "input": 247471,
+        "output": 13438,
+        "reasoning": 4250,
+        "cache_read": 6356480,
+        "cache_write": 0,
+        "uncached_work_tokens": 265159,
+        "all_processed_tokens": 6621639
+      },
+      "records": 30,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 247471,
+          "output": 13438,
+          "reasoning": 4250,
+          "cache_read": 6356480,
+          "cache_write": 0,
+          "uncached_work_tokens": 265159,
+          "all_processed_tokens": 6621639
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    },
+    {
+      "model": "hyvla",
+      "stage": "unknown",
+      "tool": null,
+      "total": {
+        "input": 124554,
+        "output": 4959,
+        "reasoning": 1008,
+        "cache_read": 4022272,
+        "cache_write": 0,
+        "uncached_work_tokens": 130521,
+        "all_processed_tokens": 4152793
+      },
+      "records": 17,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 124554,
+          "output": 4959,
+          "reasoning": 1008,
+          "cache_read": 4022272,
+          "cache_write": 0,
+          "uncached_work_tokens": 130521,
+          "all_processed_tokens": 4152793
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    },
+    {
+      "model": "pi0",
+      "stage": "unknown",
+      "tool": null,
+      "total": {
+        "input": 17051,
+        "output": 344,
+        "reasoning": 213,
+        "cache_read": 1110656,
+        "cache_write": 0,
+        "uncached_work_tokens": 17608,
+        "all_processed_tokens": 1128264
+      },
+      "records": 2,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 17051,
+          "output": 344,
+          "reasoning": 213,
+          "cache_read": 1110656,
+          "cache_write": 0,
+          "uncached_work_tokens": 17608,
+          "all_processed_tokens": 1128264
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    },
+    {
+      "model": "pi05",
+      "stage": "unknown",
+      "tool": null,
+      "total": {
+        "input": 432779,
+        "output": 8090,
+        "reasoning": 7130,
+        "cache_read": 5563776,
+        "cache_write": 0,
+        "uncached_work_tokens": 447999,
+        "all_processed_tokens": 6011775
+      },
+      "records": 22,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 432779,
+          "output": 8090,
+          "reasoning": 7130,
+          "cache_read": 5563776,
+          "cache_write": 0,
+          "uncached_work_tokens": 447999,
+          "all_processed_tokens": 6011775
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    },
+    {
+      "model": "shared",
+      "stage": "unknown",
+      "tool": null,
+      "total": {
+        "input": 2552443,
+        "output": 41831,
+        "reasoning": 31494,
+        "cache_read": 33330688,
+        "cache_write": 0,
+        "uncached_work_tokens": 2625768,
+        "all_processed_tokens": 35956456
+      },
+      "records": 112,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 2552443,
+          "output": 41831,
+          "reasoning": 31494,
+          "cache_read": 33330688,
+          "cache_write": 0,
+          "uncached_work_tokens": 2625768,
+          "all_processed_tokens": 35956456
+        }
+      },
+      "before_ms": null,
+      "after_ms": null,
+      "saved_ms": null,
+      "ms_saved_per_million_tokens": null
+    }
+  ],
+  "method_model": [
+    {
+      "tool": "unknown",
+      "model": "dm05",
+      "stage": "vision.encode",
+      "total": {
+        "input": 186683,
+        "output": 19551,
+        "reasoning": 10220,
+        "cache_read": 6183168,
+        "cache_write": 0,
+        "uncached_work_tokens": 216454,
+        "all_processed_tokens": 6399622
+      },
+      "records": 36,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 186683,
+          "output": 19551,
+          "reasoning": 10220,
+          "cache_read": 6183168,
+          "cache_write": 0,
+          "uncached_work_tokens": 216454,
+          "all_processed_tokens": 6399622
+        }
+      }
+    },
+    {
+      "tool": "unknown",
+      "model": "hyvla",
+      "stage": "kernel.attention",
+      "total": {
+        "input": 1597874,
+        "output": 27984,
+        "reasoning": 14662,
+        "cache_read": 19082624,
+        "cache_write": 0,
+        "uncached_work_tokens": 1640520,
+        "all_processed_tokens": 20723144
+      },
+      "records": 56,
+      "missing_usage_records": 1,
+      "missing_counters": {
+        "input": 1,
+        "output": 1,
+        "reasoning": 1,
+        "cache_read": 1,
+        "cache_write": 1
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 1597874,
+          "output": 27984,
+          "reasoning": 14662,
+          "cache_read": 19082624,
+          "cache_write": 0,
+          "uncached_work_tokens": 1640520,
+          "all_processed_tokens": 20723144
+        }
+      }
+    },
+    {
+      "tool": "unknown",
+      "model": "hyvla",
+      "stage": "prefix.prefill",
+      "total": {
+        "input": 247471,
+        "output": 13438,
+        "reasoning": 4250,
+        "cache_read": 6356480,
+        "cache_write": 0,
+        "uncached_work_tokens": 265159,
+        "all_processed_tokens": 6621639
+      },
+      "records": 30,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "账本",
+      "source_totals": {
+        "账本": {
+          "input": 247471,
+          "output": 13438,
+          "reasoning": 4250,
+          "cache_read": 6356480,
+          "cache_write": 0,
+          "uncached_work_tokens": 265159,
+          "all_processed_tokens": 6621639
+        }
+      }
+    },
+    {
+      "tool": "unknown",
+      "model": "hyvla",
+      "stage": "unknown",
+      "total": {
+        "input": 16902,
+        "output": 530,
+        "reasoning": 103,
+        "cache_read": 357120,
+        "cache_write": 0,
+        "uncached_work_tokens": 17535,
+        "all_processed_tokens": 374655
+      },
+      "records": 3,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 16902,
+          "output": 530,
+          "reasoning": 103,
+          "cache_read": 357120,
+          "cache_write": 0,
+          "uncached_work_tokens": 17535,
+          "all_processed_tokens": 374655
+        }
+      }
+    },
+    {
+      "tool": "unknown",
+      "model": "pi05",
+      "stage": "unknown",
+      "total": {
+        "input": 955,
+        "output": 222,
+        "reasoning": 0,
+        "cache_read": 36608,
+        "cache_write": 0,
+        "uncached_work_tokens": 1177,
+        "all_processed_tokens": 37785
+      },
+      "records": 1,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 955,
+          "output": 222,
+          "reasoning": 0,
+          "cache_read": 36608,
+          "cache_write": 0,
+          "uncached_work_tokens": 1177,
+          "all_processed_tokens": 37785
+        }
+      }
+    },
+    {
+      "tool": "unknown",
+      "model": "shared",
+      "stage": "unknown",
+      "total": {
+        "input": 164822,
+        "output": 176,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "uncached_work_tokens": 164998,
+        "all_processed_tokens": 164998
+      },
+      "records": 1,
+      "missing_usage_records": 0,
+      "missing_counters": {
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "source": "估算",
+      "source_totals": {
+        "估算": {
+          "input": 164822,
+          "output": 176,
+          "reasoning": 0,
+          "cache_read": 0,
+          "cache_write": 0,
+          "uncached_work_tokens": 164998,
+          "all_processed_tokens": 164998
+        }
+      }
+    }
+  ],
+  "onboarding_trend": [
+    {
+      "model": "pi0",
+      "onboarding_tokens": 16849618,
+      "historical_onboarding_tokens": 16849618,
+      "historical_total_tokens": 18303969,
+      "historical_completion_is_proxy": true,
+      "historical_start_utc": "2026-11-08T14:20:41.449000+00:00",
+      "historical_end_utc": "2026-11-09T09:56:32.719000+00:00",
+      "start_utc": null,
+      "completed_utc": null,
+      "elapsed_seconds": null,
+      "source": "估算+账本"
+    },
+    {
+      "model": "pi05",
+      "onboarding_tokens": 33433601,
+      "historical_onboarding_tokens": 33433601,
+      "historical_total_tokens": 42477950,
+      "historical_completion_is_proxy": true,
+      "historical_start_utc": "2026-11-08T14:20:41.449000+00:00",
+      "historical_end_utc": "2026-11-09T09:56:32.719000+00:00",
+      "start_utc": null,
+      "completed_utc": null,
+      "elapsed_seconds": null,
+      "source": "估算+账本"
+    },
+    {
+      "model": "fastwam",
+      "onboarding_tokens": 32129035,
+      "historical_onboarding_tokens": 32129035,
+      "historical_total_tokens": 164187442,
+      "historical_completion_is_proxy": true,
+      "historical_start_utc": "2026-11-08T14:20:41.449000+00:00",
+      "historical_end_utc": "2026-11-09T09:56:32.719000+00:00",
+      "start_utc": null,
+      "completed_utc": null,
+      "elapsed_seconds": null,
+      "source": "估算+账本"
+    },
+    {
+      "model": "hyvla",
+      "onboarding_tokens": 17007184,
+      "historical_onboarding_tokens": 17007184,
+      "historical_total_tokens": 773133518,
+      "historical_completion_is_proxy": true,
+      "historical_start_utc": "2026-11-08T14:20:41.449000+00:00",
+      "historical_end_utc": "2026-11-09T09:56:32.719000+00:00",
+      "start_utc": null,
+      "completed_utc": null,
+      "elapsed_seconds": null,
+      "source": "估算+账本"
+    },
+    {
+      "model": "smolvla",
+      "onboarding_tokens": 9972596,
+      "historical_onboarding_tokens": null,
+      "historical_total_tokens": null,
+      "historical_completion_is_proxy": false,
+      "historical_start_utc": null,
+      "historical_end_utc": null,
+      "start_utc": "2026-11-24T02:32:38.369370+00:00",
+      "completed_utc": null,
+      "elapsed_seconds": null,
+      "source": "账本"
+    },
+    {
+      "model": "dm05",
+      "onboarding_tokens": null,
+      "historical_onboarding_tokens": null,
+      "historical_total_tokens": 116318116,
+      "historical_completion_is_proxy": false,
+      "historical_start_utc": null,
+      "historical_end_utc": null,
+      "start_utc": null,
+      "completed_utc": null,
+      "elapsed_seconds": null,
+      "source": "估算+账本"
+    }
+  ],
+  "deduplicated_records": 0,
+  "excluded_historical_overlap_records": 0,
+  "excluded_after_cutoff_records": 0,
+  "unresolved_timestamp_records": 0,
+  "unresolved_timestamp_total": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cache_read": 0,
+    "cache_write": 0,
+    "uncached_work_tokens": 0,
+    "all_processed_tokens": 0
+  },
+  "note": "总处理量包含反复读取的缓存，不等于新增 token，也不能直接换算成费用。",
+  "missing_usage_policy": "缺失 usage 单独计数；计数和总量仅为已记录部分的下界，不把缺失当作 0。",
+  "privacy": "仅发布聚合数据；原生消息、提示词、工具体和逐消息账本不发布。",
+  "collections": [
+    {
+      "start_utc": "2026-11-16T13:02:44.308000+00:00",
+      "cutoff_utc": "2026-11-24T03:57:08.343866+00:00",
+      "records": 1400,
+      "records_sha256": "d36a8fc2c533813c758560b7060a962de6fee1782d4aafed985f29a195c15465",
+      "missing_usage_records": 23
+    }
+  ]
+}

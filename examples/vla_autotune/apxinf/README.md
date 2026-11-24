@@ -16,7 +16,7 @@ DM0.5包中的23份运行时代码保持实测身份；12份后补文档／helpe
 ## FastWAM SM80，实验性
 
 源码包：[fastwam-sm80/](fastwam-sm80/README.md)；实际结果见
-[五模型延迟大表](../../../docs/reports/2026-11-14-vla-latency-comparison.zh-CN.md)。
+[五模型整合报告](../../../docs/reports/2026-11-24-vla-autotune-final.zh-CN.md#a800-results)。
 
 - A800、BF16、224×448 当前帧、cached-T5 128、proprio8、H32／A7、Euler20／shift5。
 - 作业329256完成完整native graph与公共policy，各80份动作；公共policy中位数

@@ -5,6 +5,9 @@ A 阶段由 Codex 执行。审计起点是
 以下“删除”只指当前工作树入口，旧源码、测试及其 Git 历史仍可按提交取回。
 历史报告、token 原始计数、动作结果及快照身份不在本阶段裁剪。
 
+以上是 **A 阶段的审计边界**。J 随后只整合并撤下重复的报告正文，
+没有删除机器数据、token 快照或物理实验结果；见本文末尾“J 报告整合”。
+
 ## 删除前同时核对的三方面
 
 1. **用途与当前路径**：资源已经退出本轮目标，或已有现行实现接替；现行推理、
@@ -25,11 +28,10 @@ A 阶段由 Codex 执行。审计起点是
 仍要求抛出 `ValueError`，没有删除该负例。
 
 清理前报告记载的 Hy 配置是 semantic BF16、Euler8、Graph、SM80 RoPE/QK/KV
-融合，见 [配置扫描](reports/2026-11-23-hy-config-loop.zh-CN.md) 和
-[融合报告](reports/2026-11-23-hy-sm80-fusion.zh-CN.md)。FastWAM 报告记载
+融合，见[整合报告中的配置扫描和融合结果](reports/2026-11-24-vla-autotune-final.zh-CN.md#hy-history)。FastWAM 报告记载
 Euler20、compiled prefill/denoise 和请求内文本 K/V 缓存，见
-[同轮缓存比较](reports/2026-11-23-fastwam-text-kv-campaign.zh-CN.md)。
-这些实现、选项和报告均保留；最终 best 以本轮后续决策为准。
+[同轮缓存比较](reports/2026-11-24-vla-autotune-final.zh-CN.md#fastwam-history)。
+这些实现、选项和历史证据均保留；旧报告正文已由 J 整合，最终 best 以本轮后续决策为准。
 
 ## 删除的 Hy 旧诊断：逐文件来源和测试
 
@@ -42,8 +44,8 @@ Euler20、compiled prefill/denoise 和请求内文本 K/V 缓存，见
 所有行都退出当前目标：Hy 已改为 public20 的延迟—误差预算，旧 EXACT、
 固定 Gold 轨迹、逐层 RMS/attention/LSE 闭环不再是速度搜索前提。
 历史负结果仍完整留在
-[实验记录](vla_autotune_experiments.md) 和
-[研究过程](reports/2026-11-12-vla-autotune-research-process.zh-CN.md)。
+[完整历史逐轮记录](reports/2026-11-24-vla-autotune-final.zh-CN.md#historical-record)和
+[研究过程整合](reports/2026-11-24-vla-autotune-final.zh-CN.md#research-history)。
 
 | 删除脚本 | 旧用途 | A / C | 同时删除的专用测试 |
 |---|---|---|---|
@@ -119,8 +121,8 @@ NOTICE 和 VENDOR 表一致性检查，新增水位均为 `3e1c77aa`。
 
 | 资源 | 处理与边界 |
 |---|---|
-| `docs/reports/**` | 全部保留，包括旧失败、修订、延迟比较及原始 token JSON/CSV；等 J/H 汇总后再判冗余。 |
-| `docs/vla_autotune_experiments.md` | 完整历史正文保留，只将入口说明改成当前脚本与历史 Git 源码的区分。 |
+| `docs/reports/**` | A 检查点全部保留；J 后仅撤下下表八份重复 Markdown。11-14 延迟 JSON/CSV、全部旧 token JSON/CSV、专门架构与移植来源说明继续保留。 |
+| `docs/vla_autotune_experiments.md` | J 将完整历史正文迁入整合报告附录；原路径保留短重定向，不再维护第二份正文。 |
 | `docs/vla_autotune_token_segments.jsonl` | 只追加本阶段 start/end，不重写其他会话段；计数由 J/H 汇总。 |
 | `docs/vla_autotune_decisions.jsonl` | 通过 `decisions add --actor agent` 追加 Codex 决策，不改已有记录。 |
 | `flash_rt/vla/autotune/snapshots.py` 及 campaign snapshot 测试 | 保留；是 plan v3、native identity、harness pin 的现行实现，A 未编辑。 |
@@ -139,16 +141,35 @@ git show 199376281801427abccbb307056b27e74eab1429:tests/test_hyvla_frozen_vit_ls
 
 ## 验证与待处理项
 
-执行记录将在下列检查结束后填入实际结果：
+默认 `/usr/bin/python` 未安装 pytest；实际测试使用隔离的
+`uv run --no-project --with pytest --with numpy --with pyyaml python` 运行。
+原始要求的套件范围如下：
 
 ```bash
 python -m pytest -q tests/test_vla_campaign_*.py tests/test_vla_experiment_*.py tests/test_vla_autotune_*.py tests/test_vla_agent_skills.py
 python third_party/agent-skills/verify_vendor.py
 ```
 
+| 检查 | 实际结果 |
+|---|---|
+| AGENTS CPU 套件，第二次集成检查 | 690 passed、7 skipped、21 failed（14.81s）。失败集中于其他负责人正在改动的 profile/ModelSpec/tool/token 接口；A 未修改对应实现。不能据此宣称共享框架验收通过。 |
+| 保留的 Hy fixture/tradeoff、FastWAM fixture/profile/graph/adapter、延迟证据与 agent-skills 测试 | 231 passed、45 skipped、10 subtests passed（1.24s）。Torch 可选功能在当前未安装 Torch 的 CPU 环境跳过。 |
+| vendor verifier | 91 个文件、5 个来源全部通过；与清理前 pin 相同。 |
+| 链接和导入审计 | 801 个当前 Markdown 本地链接、21 个 tracked symlink；新增断链 0、失效 symlink 0、旧模块 Python 引用 0。 |
+| Git 来源与删除映射 | 32 个审计脚本（含保留 profiler）的 A/C 水位有效；62 个删除路径全部在本文映射；31 个旧脚本均可从固定 Git 基线读取。 |
+| 历史报告及第三方归档保全 | `docs/reports/` 与 `third_party/agent-skills/` 的 58 个原有文件逐字节保留；活跃 vendored 技能另由 verifier 校验。 |
+| `git diff --check` | 通过。 |
+
+共享套件第一次集成检查为 677 passed、7 skipped、22 failed；上述第二次检查
+是在其他接口继续变化后执行，保留实际结果，未将失败重写成通过。原始命令输出、
+失败名称和跨负责人交接放在本地清理验证日志中。主代理应在所有负责人收口后
+重新运行完整套件。
+
 链接审计覆盖当前 Markdown 本地链接、所有 tracked symlink、被删模块的剩余
 Python 引用，以及当前文档内引用的 Git 提交/历史路径。上游原样归档中已有的
-相对链接缺项单列保留；无关产品和其他平台内容不在本轮顺手清理。
+16 处相对链接缺项单列保留；另有 1 处无关训练文档链接缺项。
+仓库已有一个带 Python 占位语法的模板，对其执行文本引用检查；
+没有忽略可执行源码的意外语法错误。无关产品和其他平台内容不在本轮顺手清理。
 
 待主代理/F/其他负责人处理：
 
@@ -162,3 +183,61 @@ Python 引用，以及当前文档内引用的 Git 提交/历史路径。上游�
   `flashvla-ft/` 的既有缺失链接属于无关范围。
 - J/H 收齐最终报告、token 统计、快照 manifests、当前 best 及未结束作业状态后，
   才能重新判断物理快照或结果目录是否满足删除条件。
+
+## J 报告整合（2026-11-24，Codex）
+
+现行结果入口统一为
+[五模型整合报告](reports/2026-11-24-vla-autotune-final.zh-CN.md)。
+该报告分开列项目、partial FlashRT、作者官方实现和 ApxInf，包含历史计时、
+actor 缺口、原 schema／源码身份、数值失败、NR、研究认识修正及新验收待证表。
+G／SmolVLA 的 GPU 作者／项目双门槛、重复计时和优化结果尚不可用，明确为 NR，
+没有把已声明模型或 CPU 通过写成 GPU 资格。
+
+**顺序：先迁移内容与引用，再删除冗余正文。** 本节不改写上方 A 阶段的测试事实；
+其他负责人正在修改的框架、token 及来源文件不由 J 接管。决策用
+`decisions add --actor agent` 追加，summary 明确写 Codex，无提交或推送。
+
+| 旧入口（位于 `docs/`） | 本轮处理 | 保留位置与删除理由 |
+|---|---|---|
+| `reports/2026-11-09-vla-autotune-report.zh-CN.md` | 删除重复 Markdown | 早期四模型执行、graph、筛选和后续反例并入整合报告 §4—6；旧摘要的 Euler13、Hy EXACT 状态有历史范围，避免继续被误读为当前 best。原文仍在固定 Git 基线。 |
+| `reports/2026-11-12-vla-autotune-research-process.zh-CN.md` | 删除重复 Markdown | “问题—区分实验—反例—认识修正”合并到 §6；R34—40 结果前预测通过固定 Git 原文保留，不以事后总结替代其预注册来源。逐轮数值在完整附录保留。 |
+| `reports/2026-11-14-vla-latency-comparison.zh-CN.md` | 仅删除 Markdown | 历史大表、边界、同卡比较、失败与文献并入 §2／5／9；29 点原始 JSON/CSV 逐字节保留，不回填新测量。 |
+| `reports/2026-11-23-dm05-author-loop.zh-CN.md` | 删除重复 Markdown | 全部首测／候选／复测、项目与作者质量、诊断数值及整批超时边界并入 §5.5。 |
+| `reports/2026-11-23-fastwam-text-kv-campaign.zh-CN.md` | 删除重复 Markdown | SIGSEGV 的三点 NR、后续 eager／compiled 六点、144 次正式请求、质量与漂移并入 §5.3；热缓存不冒充冷缓存复验。 |
+| `reports/2026-11-23-hy-config-loop.zh-CN.md` | 删除重复 Markdown | 八个配置、280 次正式请求、七输入双侧质量及 drift 并入 §5.4；不追认为本轮 schema 3。 |
+| `reports/2026-11-23-hy-sm80-fusion.zh-CN.md` | 删除重复 Markdown | 三点延迟、全部诊断值、项目／作者误差及 4.43% drift 并入 §5.4；源码身份限制另列。 |
+| `reports/2026-11-23-pi05-sm80-int8.zh-CN.md` | 删除重复 Markdown | 两轮共八点的延迟、P95、质量、最坏输入、86／176 GEMM 覆盖和未定位首层的限制并入 §5.2，两个失败版本都保留。 |
+| `vla_autotune_experiments.md` | 保留兼容重定向 | 原完整 1524 行实验记录除相对链接适配和标题外迁入整合报告可展开附录；不再同时维护两个版本。 |
+
+被删除 Markdown 的完整原文均可从公开固定提交
+[`199376281801427abccbb307056b27e74eab1429`](https://github.com/20261023/FlashRT/tree/199376281801427abccbb307056b27e74eab1429/docs/reports)
+按原路径读取；整合报告 §9 提供逐文件固定链接。
+append-only 决策日志的旧 `evidence_refs` 仍是当时路径，不反写历史；本节及上述固定
+Git 映射负责解析它们。旧报告提交与实际运行 source_ref 明确分开，缺少的 manifest
+不由整理者补造。
+
+### 引用迁移与不删范围
+
+- 当前 autotune／backend／学习文档、工具流程、FastWAM 缓存说明和 examples
+  README 均转到新报告；旧固定 Git 链接保留，不改写成当前实现。
+- 保留 FastWAM 专门架构／ApxInf 来源说明，但增加“历史阅读边界”，明确缓存的
+  “尚未测量”属于旧日期。保留 DM0.5 组合优化的内容身份和冷成本细节。
+- 保留 11-14 延迟 `.json/.csv`；保留 11-15 与 11-16 所有 token 原始 JSON/CSV、
+  token 说明和当前 H 四表。它们是统计输入或口径来源，H 合并／复现确认前不裁剪。
+- J 未删除 token segment／decision append-only 账本、作者计时入口、外部工具源增量、
+  LICENSE／NOTICE、snapshot 实现、物理源码快照、候选 worktree 或原始结果目录。
+  作者入口由 C 的声明适配迁移另行维护，不由报告清理认定其运行资格。
+  **报告合并不自动授权物理快照清理。**
+- 本轮框架／G 新实测留待主代理填入公开聚合证据；本次只有文档迁移，不把
+  历史测试数字或现有文档检查冒充精确 staged tree 的最终 CPU／GPU 验收。
+
+### J 已执行的保全检查
+
+| 检查 | 实际结果与边界 |
+|---|---|
+| 旧实验正文迁移 | 迁移前 1524 行正文除标题和列明的链接适配外完全相同；从 `Experimental boundary` 开始的全部数值正文还与初始固定基线逐字节相同。 |
+| 历史机器数据 | 12 份旧报告 JSON/CSV 与 `19937628` 字节相同；11-14 保留 29 点，其中 28 个完成计时、1 个原始 NR。 |
+| 11-23 五报告 | 各文件原有小数观测值均可在整合正文找到；八份撤下报告都有逐文件固定 Git 恢复链接，旧来源可解析。 |
+| 当前文档链接 | 检查时共 809 个 Markdown 本地链接，新增断链 0；22 个 tracked symlink 无失效；16 处上游归档与 1 处训练文档既有缺项未改。整合报告显式锚点亦逐项核对。 |
+| 全量审计的非文档发现 | 同次审计仍报告 `flash_rt/vla/author_adapters/dm05.py:192` 指向已删除作者脚本，已交主代理/C 核实；J 未修改该适配器，**不宣称全量审计退出成功**。 |
+| `git diff --check` | 通过。最终精确 staged tree 的 CPU／GPU 验收由主代理另跑，不以文档保全检查替代。 |

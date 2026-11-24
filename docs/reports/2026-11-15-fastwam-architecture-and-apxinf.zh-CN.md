@@ -6,6 +6,11 @@
 完整public policy约149.35 ms**。2026-11-16已核对全部正式作业终态和保存输出；
 研究实现不等于公开引擎已有支持或完成部署验收。
 
+**历史阅读边界：**本文保留 2026-11-15／16 的架构分析；第 5 节“文本 K/V 缓存尚未
+测量”是当时状态，不能作为当前结论。后续 `357482` 已测得 compiled 缓存
+127.912 ms，见[整合报告](2026-11-24-vla-autotune-final.zh-CN.md#fastwam-history)。
+本文不把新结果回填为旧作业或旧 ApxInf 移植的单项收益。
+
 ## 1. 先纠正“FastWAM 适配后很慢”的范围
 
 同一 A800 作业 `327380`，BF16、Euler20、shift5、H32、cached-T5、八案例／80 个正式样本：
@@ -18,7 +23,7 @@
 | partial FlashRT cached Linear＋raw graph | 263.3574 | 比旧项目 graph 高4.9305% |
 
 这些结果来自 **FlashRT `227993d5`／round044／job327380**，不是随后拉取的
-stage-aware harness 已复测结果。完整输入与计时范围见[延迟大表](2026-11-14-vla-latency-comparison.zh-CN.md)。
+stage-aware harness 已复测结果。完整输入与计时范围见[整合延迟表](2026-11-24-vla-autotune-final.zh-CN.md#a800-results)。
 
 新路径80份保存输出与对应作者 compiled20 输出逐元素相同；相对旧 graph 的最坏
 relative L2 为0.0393335742、最低 cosine 为0.9992527670，在原八案例0.05／0.999代理
@@ -178,7 +183,7 @@ cosine为0.9999326110，满足原八案例代理范围，不代表闭环、无�
 `deployable=False`，不替换已选方法。固定NHWC图像布局在计时前准备，历史接口为
 NCHW，且不是同allocation；不给纯engine比值。已有请求级文本KV缓存也不意味着
 整个执行栈一定更快。空间／attention原语目前为未调优组合，尚无新的阶段profile，
-不能把剩余差距定量归给其中一项。详细边界见[大表新增结果](2026-11-14-vla-latency-comparison.zh-CN.md#新增dm05作者参考与fastwam-apxinf实跑)。
+不能把剩余差距定量归给其中一项。详细边界见[整合报告的 FastWAM／ApxInf 历史结果](2026-11-24-vla-autotune-final.zh-CN.md#fastwam-history)。
 
 在**这份研究实现**中，源码可见的具体性能债是：
 

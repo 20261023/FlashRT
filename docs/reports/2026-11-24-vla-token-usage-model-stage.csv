@@ -1,0 +1,10 @@
+model,stage,tool,source,input,output,reasoning,cache_read,cache_write,uncached_work_tokens,all_processed_tokens,missing_usage_records,before_ms,after_ms,saved_ms,ms_saved_per_million_tokens
+dm05,unknown,,估算,173316,6049,2164,6804992,0,181529,6986521,0,,,,
+dm05,vision.encode,,账本,186683,19551,10220,6183168,0,216454,6399622,0,,,,
+fastwam,unknown,,估算,101954,4144,3787,4549888,0,109885,4659773,0,,,,
+hyvla,kernel.attention,,账本,1597874,27984,14662,19082624,0,1640520,20723144,1,,,,
+hyvla,prefix.prefill,,账本,247471,13438,4250,6356480,0,265159,6621639,0,,,,
+hyvla,unknown,,估算,124554,4959,1008,4022272,0,130521,4152793,0,,,,
+pi0,unknown,,估算,17051,344,213,1110656,0,17608,1128264,0,,,,
+pi05,unknown,,估算,432779,8090,7130,5563776,0,447999,6011775,0,,,,
+shared,unknown,,估算,2552443,41831,31494,33330688,0,2625768,35956456,0,,,,

@@ -82,11 +82,11 @@ for a prepared condition and for the lifetime of captured/compiled execution.
 ## Measured scope
 
 A800 job `357482` exercised the ordinary public backend on eight fixed BF16
-Euler20 inputs in eager and compiled modes. Against the faster uncached
-bookend, the cache reduced median latency by 10.28% in eager mode and 6.97%
+Euler20 inputs in eager and compiled modes. Against the faster of the uncached
+reference and bookend, the cache reduced median latency by 10.28% in eager mode and 6.97%
 in compiled mode. Eager actions matched elementwise. Compiled actions had
 worst relative L2 0.003945 and minimum cosine 0.999992.
-See the [campaign report](reports/2026-11-23-fastwam-text-kv-campaign.zh-CN.md).
+See the [consolidated campaign evidence](reports/2026-11-24-vla-autotune-final.zh-CN.md#fastwam-history).
 
 The model-level gate must cover fixed-noise cached/uncached output comparisons,
 per-layer text K/V against uncached upstream projections, Euler and both

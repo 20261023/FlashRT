@@ -461,7 +461,7 @@ PF 是一种自适应步数的采样器（[arXiv 2603.17850](https://arxiv.org/h
 
 FastWAM 这一行里，Euler13 和 ε=0.00006 是同一批 4 个输入、以 Euler20 为参考的对比（job 309386）；ε=0.008 那组来自更早的 job 309097（6 个请求，max10，以 Euler10 为参考）。后来扩大到 12 个输入（job 313779），Euler13 不再合格，FastWAM 退回 Euler20；PF 没有在扩大后的输入上测过。
 
-PF 要发挥作用，前提是不同输入的难度差别很大。在这几个模型上，挑一个合适的固定 N 已经够好。数据来自 [实验记录](vla_autotune_experiments.md)。
+PF 要发挥作用，前提是不同输入的难度差别很大。在这些固定输入实验中，合适的固定 N 曾比 PF 更有利，但扩大输入范围也推翻过减步候选；不能外推未测任务。数据来自[整合实验记录](reports/2026-11-24-vla-autotune-final.zh-CN.md)。
 
 ### 5.6 FastWAM 的时间映射
 
@@ -1072,6 +1072,6 @@ print(metadata["scheduled_steps"], metadata["nfe"], config.timesteps())
 - [统一后端 API 参考](vla_backend.md)：查参数和支持的组合。
 - [autotune 机制](vla_autotune.md)：查实验流程、质量门槛、计时和选择规则。
 - [autotune pipeline](vla_autotune_pipeline.zh-CN.md)：工具池、按游选工具、worktree 对比、skill 和“谁主导”的记录。
-- [实验记录](vla_autotune_experiments.md)：查每个结论对应的实测数据。
-- [中文阶段报告](reports/2026-11-09-vla-autotune-report.zh-CN.md)：四个模型的优化过程和结果。
-- [研究过程记录](reports/2026-11-12-vla-autotune-research-process.zh-CN.md)：Hy 对齐官方实现的排查过程。
+- [五模型整合报告](reports/2026-11-24-vla-autotune-final.zh-CN.md)：当前历史结论、质量失败与新验收待证项。
+- [完整历史逐轮记录](reports/2026-11-24-vla-autotune-final.zh-CN.md#historical-record)：旧实验数值和来源身份。
+- [研究过程与认识修正](reports/2026-11-24-vla-autotune-final.zh-CN.md#research-history)：Hy 原 EXACT 主线、反例与随后目标修订。

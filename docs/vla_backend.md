@@ -254,7 +254,7 @@ latency. Existing public raw-velocity evaluation stays uncompiled.
 On the recorded A800 E20/eight-case run, this opt-in measured137.65ms versus
 250.98ms for the previous raw-body graph and142.44ms for the author's compiled
 API. It met the existing numerical proxy, not a robot-quality guarantee. See
-[the latency report](reports/2026-11-14-vla-latency-comparison.zh-CN.md) for scope,
+[the consolidated latency report](reports/2026-11-24-vla-autotune-final.zh-CN.md#fastwam-history) for scope,
 compile cost, actual input conditions and the separately labelled partial-FlashRT
 baseline; do not generalize this one-allocation result to every device.
 

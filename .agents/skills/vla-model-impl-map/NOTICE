@@ -57,3 +57,8 @@ Changes made by FlashRT (2026-11-15)
   - Moved the FlashRT per-model entry points to
     references/flashrt-execution-paths.md.
   - agents/openai.yaml was rewritten for this skill.
+
+Subsequent FlashRT maintenance
+  - Replaced the retired FastWAM Euler2 pilot's active-path wording in
+    references/flashrt-execution-paths.md with a pointer to its Git provenance.
+    The library driver, upstream pin, verbatim archive and license are unchanged.

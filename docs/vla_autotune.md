@@ -5,13 +5,13 @@ controller, start with the [Chinese learning guide](vla_backend_learning.zh-CN.m
 
 `flash_rt.vla.autotune` is a small controller/worker layer above the
 [execution backend](vla_backend.md), not a new inference engine or serving daemon.
-See [measured iteration notes](vla_autotune_experiments.md) for scoped outcomes,
+See [consolidated measured results](reports/2026-11-24-vla-autotune-final.zh-CN.md) for scoped outcomes,
 including failed candidates, and [source-checkout examples](../examples/vla_autotune/README.md)
 for validation and explicitly experimental graph/diagnostic runners.
 
-For the consolidated Chinese report covering all four models, measured outcomes,
-rejected candidates and acceptance limits, see
-[中文阶段报告](reports/2026-11-09-vla-autotune-report.zh-CN.md).
+For the consolidated Chinese report covering five historical models, measured
+outcomes, rejected candidates and the still-pending new-model qualification, see
+[中文整合报告](reports/2026-11-24-vla-autotune-final.zh-CN.md).
 
 ```text
 Candidate + workload + dataflow hypothesis + source/patch reference

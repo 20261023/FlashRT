@@ -5,7 +5,7 @@
 
 数据：[按模型CSV](2026-11-16-vla-development-token-usage.csv) ·
 [窗口及归属JSON](2026-11-16-vla-development-token-usage.json) ·
-[延迟大表](2026-11-14-vla-latency-comparison.zh-CN.md)。
+[整合延迟表](2026-11-24-vla-autotune-final.zh-CN.md#a800-results)。
 
 ## 窗口与来源
 
