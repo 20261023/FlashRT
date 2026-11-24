@@ -15,10 +15,9 @@ def _slurm():
 def test_default_resources_and_site_policy_are_rendered_without_cpu_header():
     slurm = _slurm()
     resources = slurm.SlurmResources()
-    assert (resources.partition, resources.gpus, resources.cpus, resources.time_limit) == (
-        'gpu_a800', 1, 8, None)
+    assert (resources.partition, resources.gpus) == ('gpu_a800', 1)
     with pytest.raises(FrozenInstanceError):
-        resources.cpus = 16
+        resources.gpus = 2
     script = slurm.render_sbatch(
         job_name='campaign', workdir='/repo', output='/results/%j.log',
         argv=['python', '-m', 'worker'])
@@ -32,7 +31,7 @@ def test_default_resources_and_site_policy_are_rendered_without_cpu_header():
     assert 'set -euo pipefail' in script
     assert all('--cpus-per-task' not in line and '--cpus-per-gpu' not in line
                for line in directives)
-    assert 'srun -n 1 -c 8 --cpu-bind=cores python -m worker' in script
+    assert 'exec srun -n 1 python -m worker' in script
 
 
 def test_header_paths_and_command_arguments_are_quoted_as_literals():
@@ -46,7 +45,7 @@ def test_header_paths_and_command_arguments_are_quoted_as_literals():
     assert ['--output=/results with spaces/%j.log'] in directives
     invocation = next(line for line in script.splitlines() if 'srun -n' in line)
     assert shlex.split(invocation) == [
-        'exec', 'srun', '-n', '1', '-c', '8', '--cpu-bind=cores',
+        'exec', 'srun', '-n', '1',
         'python', 'a b', "it's literal",
     ]
 
@@ -64,13 +63,10 @@ def test_directive_backslashes_are_escaped_for_slurms_non_shell_parser():
 
 
 @pytest.mark.parametrize('kwargs', [
-    {'gpus': 0}, {'gpus': True}, {'cpus': -1}, {'cpus': 1.5},
-    {'time_limit': '00:00:00'}, {'time_limit': '100:00:00'},
-    {'time_limit': '01:60:00'}, {'time_limit': '01:00:60'},
-    {'time_limit': '1:00:00'}, {'time_limit': 'UNLIMITED'},
+    {'gpus': 0}, {'gpus': True}, {'gpus': 1.5},
     {'partition': 'gpu\n#SBATCH --exclusive'},
 ])
-def test_resources_reject_unbounded_invalid_and_injected_values(kwargs):
+def test_resources_reject_invalid_and_injected_values(kwargs):
     with pytest.raises(ValueError):
         _slurm().SlurmResources(**kwargs)
 
@@ -114,25 +110,17 @@ def _run_locally(tmp_path, allocated_cpus):
                           env=env, capture_output=True, timeout=10, check=False)
 
 
-@pytest.mark.parametrize('allocated_cpus', ['8', '16', '08'])
-def test_script_checks_cpu_allocation_and_preserves_literal_argv_and_env(tmp_path, allocated_cpus):
+@pytest.mark.parametrize('allocated_cpus', [None, '1', '32'])
+def test_script_inherits_allocation_and_preserves_literal_argv_and_env(tmp_path, allocated_cpus):
     result = _run_locally(tmp_path, allocated_cpus)
     assert result.returncode == 0, result.stderr
     assert result.stdout.split(b'\0') == [
-        b'-n', b'1', b'-c', b'8', b'--cpu-bind=cores', b'python', b'-m',
+        b'-n', b'1', b'python', b'-m',
         b'never_run', b'a b', b"it's literal", b'$(touch injected)',
         b'one\ntwo $(touch also_injected)', b'',
     ]
     assert not (tmp_path / 'injected').exists()
     assert not (tmp_path / 'also_injected').exists()
-
-
-@pytest.mark.parametrize('allocated_cpus', [None, '0', '7', 'not-a-number', '8(x2)'])
-def test_script_refuses_missing_malformed_or_insufficient_cpu_allocation(tmp_path, allocated_cpus):
-    result = _run_locally(tmp_path, allocated_cpus)
-    assert result.returncode != 0
-    assert result.stdout == b''  # srun was not invoked.
-    assert b'CPU' in result.stderr
 
 
 @pytest.mark.parametrize('stdout, job_id', [

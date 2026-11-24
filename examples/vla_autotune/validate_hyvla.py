@@ -366,7 +366,6 @@ def run_candidate(args):
     from flash_rt.vla import describe_backend, load_backend
 
     gpu = require_cuda(torch)
-    torch.set_num_threads(min(8, int(os.environ.get('SLURM_CPUS_PER_TASK', '2'))))
     torch.manual_seed(17)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False

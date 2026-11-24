@@ -26,29 +26,19 @@ def _directive(value, name, *, path=False):
 class SlurmResources:
     partition: str = 'gpu_a800'
     gpus: int = 1
-    cpus: int = 8
-    time_limit: str | None = None
 
     def __post_init__(self):
         _directive(self.partition, 'partition')
-        for name in ('gpus', 'cpus'):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
-                raise ValueError(f'{name} must be a positive integer')
-        if self.time_limit is not None and (not isinstance(self.time_limit, str)
-                or re.fullmatch(r'[0-9]{2}:[0-5][0-9]:[0-5][0-9]', self.time_limit) is None
-                or self.time_limit == '00:00:00'):
-            raise ValueError('time_limit must be bounded HH:MM:SS between 00:00:01 and 99:59:59')
+        if isinstance(self.gpus, bool) or not isinstance(self.gpus, Integral) or self.gpus < 1:
+            raise ValueError('gpus must be a positive integer')
 
 
 def render_sbatch(*, job_name, workdir, output, argv,
                   resources=SlurmResources(), env=None) -> str:
     """Return a shell-quoted script without invoking sbatch or srun.
 
-    This site's plugin derives CPU allocation from the GPU request: do not put
-    cpus-per-task/per-gpu in the sbatch header. Refuse an insufficient/missing
-    allocation at runtime, then request the exact CPU count on the srun step.
-    Shell exports are emitted only after the CPU check and after all directives.
+    Request GPUs and let the site assign CPUs and walltime. Run the command
+    as one compute task inside the allocation.
     """
     if not isinstance(resources, SlurmResources):
         raise TypeError('resources must be SlurmResources')
@@ -73,26 +63,15 @@ def render_sbatch(*, job_name, workdir, output, argv,
         ('gres', f'gpu:{resources.gpus}'), ('nodes', '1'), ('ntasks', '1'),
         ('chdir', workdir), ('output', output),
     ]
-    if resources.time_limit is not None:
-        directives.append(('time', resources.time_limit))
     lines = ['#!/bin/bash']
     # Slurm's get_argument, unlike a shell, consumes backslash escapes even
     # inside single quotes. Escape those first; argv/exports use normal quote().
     for name, value in directives:
         escaped = quote(value.replace('\\', '\\\\'))
         lines.append(f'#SBATCH --{name}={escaped}')
-    lines.extend([
-        '', 'set -euo pipefail',
-        'allocated_cpus=${SLURM_CPUS_ON_NODE:-0}',
-        'if [[ ! "$allocated_cpus" =~ ^[0-9]+$ ]] '
-        f'|| (( 10#$allocated_cpus < {resources.cpus} )); then',
-        f'    echo "Insufficient allocated CPUs: need {resources.cpus}, '
-        'SLURM_CPUS_ON_NODE=$allocated_cpus" >&2',
-        '    exit 1', 'fi',
-    ])
+    lines.extend(['', 'set -euo pipefail'])
     lines.extend(f'export {key}={quote(env[key])}' for key in sorted(env))
-    lines.append(f'exec srun -n 1 -c {resources.cpus} --cpu-bind=cores '
-                 + ' '.join(quote(arg) for arg in argv))
+    lines.append('exec srun -n 1 ' + ' '.join(quote(arg) for arg in argv))
     return '\n'.join(lines) + '\n'
 
 
