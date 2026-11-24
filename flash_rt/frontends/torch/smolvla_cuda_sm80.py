@@ -13,6 +13,16 @@ from flash_rt.models.smolvla.pipeline_cuda_sm80 import SmolVLAProfile, SmolVLAPi
 from flash_rt.models.smolvla.source import POLICY_SHA256, admit_source, sha256
 
 
+def _load_config(checkpoint):
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+
+    config = PreTrainedConfig.from_pretrained(str(checkpoint), local_files_only=True)
+    if not isinstance(config, SmolVLAConfig):
+        raise ValueError('SmolVLA frontend requires a SmolVLA checkpoint config')
+    return config
+
+
 class SmolVLATorchFrontendCudaSm80:
     execution_coverage = 'upstream-lerobot-neural-operators-project-owned-graph-and-io'
 
@@ -30,12 +40,11 @@ class SmolVLATorchFrontendCudaSm80:
             raise ValueError('SmolVLA onboarding requires the pinned LIBERO weight bytes')
         source = admit_source(source_dir)
         sys.path.insert(0, str(source / 'src'))
-        from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
         from lerobot.policies.factory import make_pre_post_processors
         if not Path(inspect.getfile(SmolVLAPolicy)).resolve().is_relative_to(source / 'src/lerobot'):
             raise ValueError('SmolVLA imported policy differs from the declared pinned author source')
-        config = SmolVLAConfig.from_pretrained(self.checkpoint, local_files_only=True)
+        config = _load_config(self.checkpoint)
         config.vlm_model_name = str(Path(vlm_dir).resolve(strict=True))
         config.device, config.num_steps, config.compile_model = 'cuda', num_steps, False
         policy = SmolVLAPolicy.from_pretrained(

@@ -21,17 +21,26 @@ def validate_options(options):
         raise ValueError('SmolVLA author requires an explicit absolute vlm_dir')
 
 
+def _load_config(checkpoint):
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+
+    config = PreTrainedConfig.from_pretrained(str(checkpoint), local_files_only=True)
+    if not isinstance(config, SmolVLAConfig):
+        raise ValueError('SmolVLA author requires a SmolVLA checkpoint config')
+    return config
+
+
 def load(spec, torch):
     if spec['source_revision'] != REVISION:
         raise ValueError(f'SmolVLA author adapter requires LeRobot revision {REVISION}')
     root = Path(spec['source']).resolve(strict=True)
     sys.path.insert(0, str(root / 'src'))
-    from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
     from lerobot.policies.factory import make_pre_post_processors
     if not Path(inspect.getfile(SmolVLAPolicy)).resolve().is_relative_to(root / 'src/lerobot'):
         raise ValueError('Another LeRobot policy package is already imported')
-    config = SmolVLAConfig.from_pretrained(spec['checkpoint'], local_files_only=True)
+    config = _load_config(spec['checkpoint'])
     config.vlm_model_name = str(Path(spec['options']['vlm_dir']).resolve(strict=True))
     config.device = 'cuda'
     config.num_steps = spec['num_steps']
