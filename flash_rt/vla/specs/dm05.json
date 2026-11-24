@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "model": "dm05",
+  "name": "Dexmal DM0.5 fixed base",
+  "aliases": ["dm05", "dm0.5", "dm0_5"],
+  "identity": {
+    "source": {
+      "status": "pinned", "value": "03f799120d425ead51d9482bb1da950b6dabade9",
+      "repository": "https://github.com/dexmal/opendm", "revision": "03f799120d425ead51d9482bb1da950b6dabade9",
+      "python_sha256": "28617ae3b6db5a887d6291e32bfac0406666f79188ec759dad5e22e1404dd462",
+      "sources": ["flash_rt/models/dm05/weights.py:SOURCE_REVISION", "flash_rt/vla/author_adapters/dm05.py:_DM_PYTHON_SHA256"],
+      "notes": "Project backend imports the verified author CPU transforms only, not the upstream GPU implementation."
+    },
+    "weights": {
+      "status": "pinned", "value": "5cd18734814abb075a9ccfd9ad6d16777b5cf10e",
+      "repository": "https://huggingface.co/Dexmal/DM05", "revision": "5cd18734814abb075a9ccfd9ad6d16777b5cf10e",
+      "sha256": "b7da77f516ebd0c0c68faed2f0cfe1c68985b7b874e49dda4292d8d286de20dd",
+      "filename": "model.safetensors",
+      "sources": ["flash_rt/models/dm05/weights.py:CHECKPOINT_REVISION", "flash_rt/models/dm05/weights.py:MODEL_SHA256"]
+    },
+    "license": {
+      "status": "unknown", "value": null, "code_license": "Apache-2.0",
+      "sources": ["flash_rt/models/dm05/NOTICE", "LICENSE", "docs/dm05_usage.md"],
+      "notes": "Source architecture code is attributed to Apache-2.0 in NOTICE. No independently pinned model-card/license bytes for the weight asset are available here."
+    }
+  },
+  "inputs": {
+    "images": {"shape": [3, 448, 448, 3], "dtype": "uint8", "layout": "current-views,H,W,RGB", "history": false},
+    "state": {"shape": [14], "dtype": "float32", "robot": "DOS W1"},
+    "prompt": {"shape": [], "dtype": "str"},
+    "noise": {"shape": [1, 50, 32], "dtype": "float32", "rounded_to": "bf16"}
+  },
+  "head": {"type": "flow_matching", "defaults": {"sampler": "euler", "num_steps": 10, "chunk_size": 50}, "sources": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.forward"]},
+  "actions": {
+    "model_dim": 32, "effective_dim": 14, "channels": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], "horizon": 50,
+    "domain": "denormalized-absolute-dos-w1-14d", "worker_domain": "denormalized-absolute-dos-w1-14d",
+    "worker_field": "actions", "raw_domain": "normalized-model-actions",
+    "sources": ["docs/dm05_usage.md", "flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80.infer"],
+    "notes": "Absolute public14 CPU actions after DOS W1 reconstruction. Raw normalized32 channels are a different comparison domain."
+  },
+  "stages": [
+    {"stage_id": "host.input", "seams": ["flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80._host_input", "flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80._update_profile"], "profiling_keys": [], "notes": ["Pinned author CPU transforms; exact prefix profile refreshed for each request."]},
+    {"stage_id": "vision.encode", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.vision", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.vision"], "profiling_keys": ["vision"], "notes": ["Three current RGB views; 27 SigLIP layers."]},
+    {"stage_id": "vision.project", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.vision", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.vision"], "profiling_keys": ["vision"], "notes": ["Pooling/projection shares vision interval."]},
+    {"stage_id": "prefix.prefill", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.prefill", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.prefill"], "profiling_keys": ["prefix"], "notes": ["34 layers; interval starts after vision."]},
+    {"stage_id": "denoise.velocity", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.velocity", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.velocity"], "profiling_keys": ["velocity"], "notes": ["One interval per expert call over fixed horizon50."]},
+    {"stage_id": "denoise.schedule", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.forward"], "profiling_keys": [], "notes": ["Fixed Euler10; no reduced-step or ProbeFlow profile."]},
+    {"stage_id": "denoise.routing", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.forward"], "profiling_keys": [], "notes": ["Euler integration is outside disjoint stage intervals."]},
+    {"stage_id": "host.launch", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05ProfileSm80.capture", "flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05ProfileSm80.run"], "profiling_keys": [], "notes": ["Bounded exact-prefix whole-model graph profiles."]},
+    {"stage_id": "host.output", "seams": ["flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80.infer"], "profiling_keys": [], "notes": ["D2H and absolute14 action reconstruction."]},
+    {"stage_id": "kernel.gemm", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.linear", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.velocity"], "profiling_keys": [], "notes": []},
+    {"stage_id": "kernel.attention", "seams": ["flash_rt/models/dm05/attention_cuda_sm80.py:Dm05AttentionSm80.attend"], "profiling_keys": [], "notes": []},
+    {"stage_id": "kernel.norm_elementwise", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:adaptive_rms"], "profiling_keys": [], "notes": []}
+  ],
+  "profiling": {
+    "keys": {"vision": ["vision.encode", "vision.project"], "prefix": ["prefix.prefill"], "velocity": ["denoise.velocity"], "host_input": ["host.input"], "host_output": ["host.output"]},
+    "expected_keys": {"euler": ["vision", "prefix", "velocity"]},
+    "strategy": {"kind": "adapter", "hook": "flash_rt.vla.autotune.profilers.dm:install", "notes": "A diagnostic graph is recaptured to place external event nodes inside the fixed warmed program; production timing remains separate."}
+  },
+  "attention": [
+    {"id": "vision", "stage": "vision.encode", "mask": "bidirectional", "head_dim": 72, "storage_head_dim": {"torch": 72, "flashrt": 96}, "query_heads": 16, "kv_heads": 16, "gqa": false, "backend": "torch-sdpa-or-vendored-fa2-padded-hd96", "sources": ["flash_rt/models/dm05/attention_cuda_sm80.py:Dm05AttentionSm80.__init__"]},
+    {"id": "prefix", "stage": "prefix.prefill", "mask": "arbitrary-materialized-prefix-mask", "head_dim": 256, "query_heads": 8, "kv_heads": 4, "gqa": true, "backend": "torch-sdpa-expanded-kv; compiled-path-native-gqa", "sources": ["flash_rt/models/dm05/attention_cuda_sm80.py:Dm05AttentionSm80.run", "flash_rt/models/dm05/compiled_cuda_sm80.py"]},
+    {"id": "action", "stage": "denoise.velocity", "mask": "unmasked-prefix-plus-complete-action-suffix", "head_dim": 256, "query_heads": 8, "kv_heads": 4, "gqa": true, "backend": "torch-sdpa-or-vendored-fa2; compiled-path-native-gqa", "sources": ["flash_rt/models/dm05/attention_cuda_sm80.py:Dm05AttentionSm80.run", "flash_rt/models/dm05/compiled_cuda_sm80.py"]}
+  ],
+  "capabilities": {
+    "stable_execution_fields": ["engine", "coverage", "native_operators", "torch_regions", "native_gemm_per_request", "native_fa2_per_request", "native_gelu_per_request", "setup_time_modulation_gemm", "vision_patch_tokens_per_image", "pooled_image_tokens", "use_cuda_graph", "graph_scope", "checkpoint", "cpu_source", "reference_math", "noise_contract", "project_optimization"],
+    "frameworks": ["torch"], "hardware": ["cuda_sm80"], "precision": "bf16",
+    "backends": {"flashrt": ["torch"], "torch": ["torch"]}, "samplers": ["euler"],
+    "options": {
+      "source_dir": {"type": "path"}, "use_cuda_graph": {"type": "bool", "default": true},
+      "max_graph_profiles": {"type": "integer", "minimum": 1, "default": 2},
+      "num_views": {"type": "integer", "enum": [3], "default": 3},
+      "project_optimization": {"type": "string", "enum": ["none", "compiled"], "default": "none"}
+    },
+    "action_domain_resolution": "static",
+    "execution_coverage": {"flashrt": "partial-native-gemm-fa2-gelu-torch-norm-rope-prefix-attention", "torch": "project-owned-torch-operators"}
+  },
+  "features": {"flow_matching": true, "cuda_graph": true, "adaptive_sampler": false, "variable_steps": false, "fixed_geometry": true, "compiled_layers": true, "author_cpu_transforms": true, "functional_torch": true, "torch_modules": false, "fp8_weights": false, "nvfp4_weights": false, "cross_frame_kv": false, "batched_inference": false},
+  "tools": {
+    "tags": ["flow_matching", "siglip", "gemma3", "prefix_kv", "cuda_graph", "bf16", "fixed_euler10", "dos_w1"],
+    "supported": ["baseline.official_impl", "profile.stage_intervals", "launch.cuda_graph", "compile.inductor"],
+    "inductor": {"backend": "torch", "frameworks": ["torch"], "samplers": ["euler"], "hardware": ["cuda_sm80"], "stages": ["vision.encode", "prefix.prefill", "denoise.velocity", "kernel.gemm"], "options": {"project_optimization": "compiled"}, "remove_options": [], "reason": "DM0.5 packed projections and compiled vision/prefix/action layers at fixed BF16 Euler10; preserves the explicit graph option.", "sources": ["flash_rt/models/dm05/compiled_cuda_sm80.py", "docs/dm05_usage.md"]},
+    "unsupported": ["sampler.euler_steps", "sampler.probeflow", "prefix.vision_pool", "prefix.state_prompt_mode", "quant.int8_pi05"]
+  },
+  "adapter": {
+    "hooks": {"binding": "flash_rt.vla.adapters.dm05:binding", "validate": "flash_rt.vla.adapters.dm05:validate", "profile": "flash_rt.vla.autotune.profilers.dm:install", "dataflow": "flash_rt.vla.autotune.profilers.dm:describe_dataflow"},
+    "runtime": {"retire_replaced_pipeline": false, "prompt_state_dependent": false, "prepared_context": false}
+  },
+  "author": {
+    "adapter": "flash_rt.vla.author_adapters.dm05", "source_package": "opendm",
+    "options": ["noise_seeds"], "default_steps": 10, "fixed_steps": 10, "requires_noise_seeds": true,
+    "legacy_binder": "flash_rt.vla.author_adapters.dm05:bind_saved"
+  },
+  "fixture": {
+    "recipe": "numpy_seeded_v1", "head_type": "flow_matching", "seed": 0,
+    "fields": {
+      "images": {"shape": [3, 448, 448, 3], "dtype": "uint8", "distribution": "integers", "low": 0, "high": 256, "as_list": true},
+      "state": {"shape": [14], "dtype": "float32", "distribution": "zeros"},
+      "noise": {"shape": [1, 50, 32], "dtype": "float32", "distribution": "standard_normal", "role": "noise"}
+    },
+    "prompt": "Pick up the roller using both arms", "constants": {"robot_type": "DOS W1"},
+    "sources": ["docs/dm05_usage.md", "examples/vla_autotune/prepare_dm05_workload.py"],
+    "notes": "Synthetic smoke recipe; reproducing the four author cases requires their exact source demo images/state/prompts and saved BF16 noise, not fresh synthetic samples."
+  },
+  "quality": {
+    "scope": "dm05-base-absolute-public14-v1", "action_dim": 14,
+    "thresholds": {"max_relative_l2": 0.05, "min_cosine": 0.999},
+    "sources": ["examples/vla_autotune/prepare_dm05_workload.py:main", "docs/dm05_usage.md"],
+    "notes": "The public absolute14 numerical proxy budget. No robot success-rate claim."
+  }
+}

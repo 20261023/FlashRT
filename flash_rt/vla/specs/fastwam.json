@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "model": "fastwam",
+  "name": "FastWAM",
+  "aliases": ["fastwam"],
+  "identity": {
+    "source": {
+      "status": "pinned", "value": "7faa71108368fbb3b6885649f112af607427a2d4",
+      "repository": "https://github.com/yuantianyuan01/FastWAM",
+      "revision": "7faa71108368fbb3b6885649f112af607427a2d4",
+      "sources": ["flash_rt/models/fastwam/config.py:UPSTREAM_COMMIT", "examples/vla_autotune/fastwam-source/SOURCE.json"]
+    },
+    "weights": {"status": "unknown", "value": null, "sources": ["flash_rt/models/fastwam/pipeline.py:load_upstream_fastwam"], "notes": "Released MoT/proprio checkpoint and local Wan backbone are caller assets; neither digest is pinned by this family metadata."},
+    "license": {"status": "unknown", "value": null, "sources": ["flash_rt/models/fastwam/text_kv_cache.py", "examples/vla_autotune/fastwam-source/SOURCE.json"], "code_license": "MIT", "notes": "The adapted source carries upstream MIT text; released checkpoint and Wan/T5 asset licenses require separate pinned verification."}
+  },
+  "inputs": {
+    "input_image": {"shape": [1, 3, 224, 448], "dtype": "float32", "range": [-1, 1], "layout": "BCHW-two-concatenated-cameras"},
+    "proprio": {"shape": [1, 8], "dtype": "float32"},
+    "context": {"shape": [1, 128, 4096], "dtype": "float32"},
+    "context_mask": {"shape": [1, 128], "dtype": "bool"},
+    "prompt": {"shape": [], "dtype": "str", "alternative_to": "context"},
+    "noise": {"shape": [1, 32, 7], "dtype": "float32"}
+  },
+  "head": {
+    "type": "flow_matching", "defaults": {"sampler": "euler", "num_steps": 20, "action_horizon": 32, "sigma_shift": 5.0},
+    "sources": ["flash_rt/models/fastwam/config.py:validate_sampler", "examples/vla_autotune/fastwam-source/libero_model_resolved.json"],
+    "notes": "sigma_shift/action_horizon must still be supplied explicitly at backend validation. Profile defaults do not silently select model geometry."
+  },
+  "actions": {
+    "model_dim": 7, "effective_dim": 7, "channels": [0, 1, 2, 3, 4, 5, 6], "horizon": 32,
+    "domain": "normalized-model-actions-batched", "worker_domain": "normalized-model-actions-batched", "worker_field": "raw_actions_if_available",
+    "sources": ["examples/vla_autotune/fastwam-source/libero_model_resolved.json", "flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline.infer"],
+    "notes": "This declaration describes the inspected LIBERO release profile. The adapter reads action_dim/proprio_dim from the actual model config; unnormalization stays outside FlashRT."
+  },
+  "stages": [
+    {"stage_id": "host.input", "seams": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._observation_tensors", "flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._initial_state"], "profiling_keys": ["condition_vae_video_prefill"], "notes": ["Aggregate condition interval includes _observation_tensors validation/copies and upstream encode_prompt when prompt is supplied; _initial_state noise staging lands in unattributed_ms in historical aggregate records. The split diagnostic adapter can time those host helpers separately."]},
+    {"stage_id": "vision.encode", "seams": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._prepare_condition"], "profiling_keys": ["condition_vae_video_prefill"], "notes": ["First-frame upstream Wan VAE encoding."]},
+    {"stage_id": "prefix.prefill", "seams": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._prepare_condition", "flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline.prepare_condition"], "profiling_keys": ["condition_vae_video_prefill"], "notes": ["30-layer video prefill at t=0 caches video KV once per request."]},
+    {"stage_id": "denoise.velocity", "seams": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._evaluate_at_timestep", "flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._evaluate_clock_velocity", "flash_rt/models/fastwam/velocity_graph.py:FastWAMVelocityGraph.__call__"], "profiling_keys": ["velocity"], "notes": ["30-layer ActionDiT; without cache.fastwam_text_crossattn_kv, text_embedding and per-layer cross-attention K/V projection run every step; first-frame video KV is cached once. The explicit cache option precomputes text/proprio K/V once per request."]},
+    {"stage_id": "denoise.schedule", "seams": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._euler", "flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._build_time_bank"], "profiling_keys": [], "notes": ["Shifted sigma grid; ProbeFlow uses a u-space time map."]},
+    {"stage_id": "denoise.routing", "seams": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._euler", "flash_rt/sampling/torch_probeflow.py:sample_probeflow_torch_"], "profiling_keys": [], "notes": ["Host integration/routing remains residual."]},
+    {"stage_id": "host.launch", "seams": ["flash_rt/models/fastwam/velocity_graph.py:FastWAMVelocityGraph.__call__", "flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline.__init__"], "profiling_keys": [], "notes": ["CUDA graphs work with backend=torch. The backend=flashrt native Linear path requires native_linear_backend=cached."]},
+    {"stage_id": "host.output", "seams": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline.infer", "flash_rt/vla/backend.py:VLABackend.infer"], "profiling_keys": [], "notes": ["Final finite check and completed FP32 CPU actions."]},
+    {"stage_id": "kernel.gemm", "seams": ["flash_rt/models/fastwam/native_linear.py:FlashRTLinear.forward", "flash_rt/models/fastwam/native_linear.py:install_native_linears"], "profiling_keys": [], "notes": ["Native Linear is partial model coverage."]},
+    {"stage_id": "kernel.conv", "seams": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._prepare_condition"], "profiling_keys": [], "notes": ["Convolutions remain upstream Wan VAE operations."]}
+  ],
+  "profiling": {
+    "keys": {"condition_vae_video_prefill": ["host.input", "vision.encode", "prefix.prefill"], "velocity": ["denoise.velocity"], "vision": ["vision.encode"], "prefix": ["prefix.prefill"], "condition_tokens": ["prefix.prefill"], "condition_context": ["prefix.prefill"], "condition_mask": ["prefix.prefill"], "condition_text_kv": ["prefix.prefill"], "host_input": ["host.input"], "host_output": ["host.output"]},
+    "expected_keys": {"euler": ["condition_vae_video_prefill", "velocity"], "probeflow": ["condition_vae_video_prefill", "velocity"]},
+    "strategy": {"kind": "methods", "methods": [{"path": "pipeline._prepare_condition", "key": "condition_vae_video_prefill"}, {"path": "pipeline._evaluate_clock_velocity", "key": "velocity"}]}
+  },
+  "attention": [
+    {"id": "video_self", "stage": "prefix.prefill", "mask": "first-frame-causal", "head_dim": 128, "query_heads": 24, "kv_heads": 24, "gqa": false, "backend": "upstream-torch-sdpa", "sources": ["examples/vla_autotune/fastwam-source/libero_model_resolved.json", "flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._prepare_condition"]},
+    {"id": "action_video_self", "stage": "denoise.velocity", "mask": "mot-group-diagonal-action-rows-over-cached-video-and-action", "head_dim": 128, "query_heads": 24, "kv_heads": 24, "gqa": false, "backend": "upstream-torch-sdpa", "sources": ["examples/vla_autotune/fastwam-source/libero_model_resolved.json", "flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline._evaluate_at_timestep"]},
+    {"id": "text_cross", "stage": "denoise.velocity", "mask": "text-context-validity-and-proprio-extension", "head_dim": 128, "query_heads": 24, "kv_heads": 24, "gqa": false, "backend": "upstream-torch-sdpa; optional-project-kv-cache", "sources": ["flash_rt/models/fastwam/text_kv_cache.py", "examples/vla_autotune/fastwam-source/libero_model_resolved.json"]}
+  ],
+  "capabilities": {
+    "frameworks": ["torch"], "hardware": ["cuda_sm80", "rtx_sm87", "rtx_sm89", "thor", "rtx_sm120"],
+    "precision": "bf16", "backends": {"flashrt": ["torch"], "torch": ["torch"]}, "samplers": ["euler", "probeflow"],
+    "options": {
+      "source_dir": {"type": "path"}, "model_config": {"type": "path"}, "backbone_dir": {"type": "path"},
+      "sigma_shift": {"type": "number", "exclusive_minimum": 0},
+      "action_horizon": {"type": "integer", "minimum": 1},
+      "native_linear_backend": {"type": "string", "enum": ["legacy", "cached"], "default_by_backend": {"flashrt": "legacy"}},
+      "use_cuda_graph": {"type": "bool", "default": false},
+      "compile_action_infer": {"type": "bool", "error_type": "TypeError", "default": false},
+      "cache_text_crossattn_kv": {"type": "bool", "error_type": "TypeError"}
+    },
+    "action_domain_resolution": "static",
+    "execution_coverage": {"flashrt": "partial-native-linear-upstream-other-operators", "torch": "upstream-torch-operators-shared-pipeline"}
+  },
+  "features": {"flow_matching": true, "cuda_graph": true, "adaptive_sampler": true, "variable_steps": true, "prepared_context": true, "native_linear": true, "text_crossattn_kv_cache": true, "compile_action_infer": true, "functional_torch": true, "torch_modules": true, "fp8_weights": false, "nvfp4_weights": false, "cross_frame_kv": false, "batched_inference": false},
+  "tools": {
+    "tags": ["flow_matching", "wan_vae", "video_prefix_kv", "text_cross_attention", "cuda_graph", "bf16"],
+    "supported": ["baseline.official_impl", "profile.stage_intervals", "sampler.euler_steps", "sampler.probeflow", "launch.cuda_graph", "gemm.fastwam_linear_backend", "cache.fastwam_text_crossattn_kv", "compile.inductor"],
+    "defaults": {"euler_steps": [10, 12, 13, 14, 16, 18], "probeflow_max_steps": 20},
+    "inductor": {"backend": "torch", "frameworks": ["torch"], "samplers": ["euler", "probeflow"], "stages": ["host.launch", "denoise.velocity", "prefix.prefill"], "options": {"compile_action_infer": true, "use_cuda_graph": false}, "remove_options": ["native_linear_backend"], "reason": "Compile implemented video prefill/raw denoise regions; backend=torch and use_cuda_graph=False. Cold compilation is separate from steady-state timing.", "sources": ["flash_rt/models/fastwam/pipeline.py:FastWAMActionPipeline.__init__"]},
+    "unsupported": ["prefix.vision_pool", "prefix.state_prompt_mode", "quant.int8_pi05"]
+  },
+  "adapter": {
+    "hooks": {"binding": "flash_rt.vla.adapters.fastwam:binding", "validate": "flash_rt.vla.adapters.fastwam:validate", "profile": "flash_rt.vla.autotune.profilers.fastwam:install", "dataflow": "flash_rt.vla.autotune.profilers.fastwam:describe_dataflow"},
+    "runtime": {"retire_replaced_pipeline": false, "prompt_state_dependent": false, "prepared_context": true}
+  },
+  "author": {
+    "adapter": "flash_rt.vla.author_adapters.fastwam", "source_package": "src/fastwam",
+    "options": ["backbone_dir", "model_config", "sigma_shift", "action_horizon", "compile_action_infer", "noise_seeds"],
+    "default_steps": 10, "fixed_steps": null, "requires_noise_seeds": true
+  },
+  "fixture": {
+    "recipe": "numpy_seeded_v1", "head_type": "flow_matching", "seed": 0,
+    "fields": {
+      "input_image": {"shape": [1, 3, 224, 448], "dtype": "float32", "distribution": "uniform", "low": -1, "high": 1},
+      "proprio": {"shape": [1, 8], "dtype": "float32", "distribution": "zeros"},
+      "context": {"shape": [1, 128, 4096], "dtype": "float32", "distribution": "standard_normal"},
+      "context_mask": {"shape": [1, 128], "dtype": "bool", "distribution": "ones"},
+      "noise": {"shape": [1, 32, 7], "dtype": "float32", "distribution": "standard_normal", "role": "noise"}
+    },
+    "prompt": null,
+    "sources": ["examples/vla_autotune/validate_fastwam.py:validate_fixture", "examples/vla_autotune/fastwam-source/libero_model_resolved.json"],
+    "notes": "Synthetic preprocessed tensors; context values have no claim of tokenizer or T5 provenance."
+  },
+  "quality": {
+    "scope": "numerical_replay", "action_dim": 7,
+    "thresholds": {"status": "unknown", "value": null, "sources": ["flash_rt/vla/autotune/quality.py:quality_contract"], "notes": "Campaign must provide its fixed numerical budget."},
+    "sources": ["flash_rt/vla/autotune/quality.py:quality_contract"]
+  }
+}

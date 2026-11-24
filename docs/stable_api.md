@@ -700,6 +700,22 @@ registering an external-plugin model via `_PIPELINE_MAP`.
 
 ## Adaptation / extension guides
 
+### Declarative VLA model catalog
+
+`flash_rt.vla.model_spec` exposes CPU-only discovery and validation:
+`get_spec(model, *, spec_dir=None)`, `resolve_model(model, *, spec_dir=None)`,
+`list_models(*, spec_dir=None)`, `discover_specs(*, spec_dir=None)`,
+`load_spec(path)`, and `validate_spec(mapping, *, source="<memory>")`.
+Declarations use schema version1 and return detached dictionaries;
+`list_models` returns a tuple of canonical ids.
+
+`BackendConfig(..., spec_dir=None)` accepts an optional trailing discovery scope
+for external JSON declarations. Its sampler defaults to the declared head
+policy; existing builtins still resolve to Euler. Explicit external directories
+supplement builtins and reject duplicate ids/aliases. Backend JSON codecs
+include `spec_dir` only when set, preserving legacy candidate identities.
+See [model spec schema and adapter contract](vla_model_specs.md).
+
 ### DM0.5 fixed-base SM80 profile
 
 `BackendConfig(model="dm05" | "dm0.5", backend="torch" | "flashrt",

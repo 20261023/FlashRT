@@ -8,6 +8,8 @@ from threading import RLock
 import numpy as np
 
 from .config import BackendConfig
+from .model_spec import get_spec
+from .adapters import get_hook
 
 
 class VLABackend:
@@ -26,11 +28,13 @@ class VLABackend:
         self.precision = precision
         self.action_domain = action_domain
         self.action_decoder = action_decoder
+        self._spec = get_spec(config.model, spec_dir=config.spec_dir)
+        self._runtime = self._spec['adapter'].get('runtime', {})
         self._lock = RLock()
         self._prompt = None
         self._prompt_state = None
         self._closed = False
-        self._retired_pi_pipelines = {}
+        self._retired_pipelines = {}
         setter = getattr(frontend, 'set_prompt', None)
         self._has_prompt_setter = callable(setter)
         self._prompt_accepts_state = (
@@ -43,10 +47,10 @@ class VLABackend:
             raise RuntimeError('Backend is closed; load a new backend')
         if not isinstance(observation, dict):
             raise TypeError('observation must be a frontend observation dict')
-        has_context = self.config.model == 'fastwam' and observation.get('context') is not None
+        has_context = self._runtime.get('prepared_context', False) and observation.get('context') is not None
         if has_context:
             if prompt is not None or observation.get('prompt') not in (None, ''):
-                raise ValueError('FastWAM prompt and prepared context are mutually exclusive')
+                raise ValueError(f'{self._spec["name"]} prompt and prepared context are mutually exclusive')
             # FastWAM can consume caller-prepared UMT5 embeddings without a
             # tokenizer/text encoder. An empty label must not trigger encoding.
             selected = ''
@@ -59,10 +63,8 @@ class VLABackend:
         if not isinstance(selected, str):
             raise TypeError('prompt must be text; token-id inputs use the direct frontend')
         state = observation.get('state')
-        # Only Pi0.5 tokenizes state into the prompt. Hy-VLA accepts a state
-        # kwarg for API compatibility but processes it in the action tower.
         state_changed = False
-        if self.config.model == 'pi05' and self._prompt_accepts_state:
+        if self._runtime.get('prompt_state_dependent', False) and self._prompt_accepts_state:
             state_changed = not self._same_state(self._prompt_state, state)
         if selected != self._prompt or state_changed:
             kwargs = {'state': state} if self._prompt_accepts_state else {}
@@ -73,22 +75,22 @@ class VLABackend:
                     self.frontend.set_prompt(selected, **kwargs)
                 setter_failed = False
             finally:
-                if (self.config.model == 'pi0' and previous is not None
+                if (self._runtime.get('retire_replaced_pipeline', False) and previous is not None
                         and previous is not getattr(self.frontend, 'pipeline', None)):
                     # The setter may replace the pipeline before an embedding
                     # upload fails. Keep ownership even if cleanup also fails.
-                    self._retired_pi_pipelines[id(previous)] = previous
+                    self._retired_pipelines[id(previous)] = previous
                     if setter_failed:
                         try:
-                            self._release_retired_pi_pipelines()
+                            self._release_retired_pipelines()
                         except Exception:
                             # Preserve the original setter exception. close()
                             # retries the retained, possibly partly freed set.
                             pass
                     else:
-                        self._release_retired_pi_pipelines()
+                        self._release_retired_pipelines()
             self._prompt = selected
-            if self.config.model == 'pi05' and self._prompt_accepts_state:
+            if self._runtime.get('prompt_state_dependent', False) and self._prompt_accepts_state:
                 self._prompt_state = None if state is None else np.asarray(state).copy()
         if hasattr(self.frontend, 'calibrate_with_real_data') and not getattr(
                 self.frontend, 'calibrated', False):
@@ -100,11 +102,13 @@ class VLABackend:
             return left is right
         return np.array_equal(np.asarray(left), np.asarray(right))
 
-    def _release_retired_pi_pipelines(self):
-        if self._retired_pi_pipelines:
-            from .resources import release_pi_pipeline_graphs
-            release_pi_pipeline_graphs(self._retired_pi_pipelines.values())
-            self._retired_pi_pipelines.clear()
+    def _release_retired_pipelines(self):
+        if self._retired_pipelines:
+            release = get_hook(self._spec, 'release_retired')
+            if release is None:
+                raise RuntimeError('Adapter retires pipelines without a release_retired hook')
+            release(self._retired_pipelines.values())
+            self._retired_pipelines.clear()
 
     def prepare(self, observation: dict, *, prompt: str | None = None):
         """Prepare prompt/calibration/graphs using a representative observation.
@@ -126,7 +130,7 @@ class VLABackend:
         obs = dict(observation)
         # Some frontends also read prompt from the observation. Never let its
         # old label override the effective prompt chosen at this boundary.
-        if self.config.model == 'fastwam' and obs.get('context') is not None:
+        if self._runtime.get('prepared_context', False) and obs.get('context') is not None:
             obs.pop('prompt', None)
         else:
             obs['prompt'] = self._prompt
@@ -189,13 +193,13 @@ class VLABackend:
         """Release owned native graphs/frontend; never flush global caches."""
         with self._lock:
             if not self._closed:
-                self._release_retired_pi_pipelines()
+                self._release_retired_pipelines()
                 close = getattr(self.frontend, 'close', None)
                 if callable(close):
                     close()
-                if self.config.model in ('pi0', 'pi05'):
-                    from .resources import release_pi_frontend_graphs
-                    release_pi_frontend_graphs(self.frontend)
+                release = get_hook(self._spec, 'release')
+                if release is not None:
+                    release(self.frontend)
                 self.frontend = None
                 self._closed = True
 

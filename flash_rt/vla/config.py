@@ -9,16 +9,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 from flash_rt.sampling import ProbeFlowConfig
-
-
-_ALIASES = {
-    'pi0': 'pi0', 'π0': 'pi0',
-    'pi05': 'pi05', 'pi0.5': 'pi05', 'π0.5': 'pi05',
-    'fastwam': 'fastwam',
-    'dm05': 'dm05', 'dm0.5': 'dm05', 'dm0_5': 'dm05',
-    'hyvla': 'hyvla', 'hy-embodied-vla': 'hyvla',
-    'hy-embodied-0.5-vla': 'hyvla', 'hy-embadding-vla': 'hyvla',
-}
+from .model_spec import get_spec
 
 
 @dataclass(frozen=True)
@@ -26,19 +17,23 @@ class BackendConfig:
     model: str
     checkpoint: str
     backend: str = 'flashrt'
-    sampler: str = 'euler'
+    sampler: str | None = None
     hardware: str = 'auto'
     framework: str = 'torch'
     precision: str = 'auto'
     num_steps: int | None = None
     probeflow: ProbeFlowConfig | None = None
     options: Mapping[str, Any] = field(default_factory=dict)
+    spec_dir: str | None = None
 
     def __post_init__(self):
-        try:
-            model = _ALIASES[self.model.lower()]
-        except (KeyError, AttributeError):
-            raise ValueError(f'Unknown VLA model {self.model!r}; use pi0, pi05, fastwam, hyvla or dm05') from None
+        if self.spec_dir is not None:
+            directory = fspath(self.spec_dir)
+            if not isinstance(directory, str) or not directory.strip():
+                raise ValueError('spec_dir must be a nonempty local directory')
+            object.__setattr__(self, 'spec_dir', directory)
+        spec = get_spec(self.model, spec_dir=self.spec_dir)
+        model = spec['model']
         object.__setattr__(self, 'model', model)
         try:
             checkpoint = fspath(self.checkpoint)
@@ -47,15 +42,19 @@ class BackendConfig:
         if not isinstance(checkpoint, str) or not checkpoint.strip():
             raise ValueError('checkpoint must be a nonempty local path')
         object.__setattr__(self, 'checkpoint', checkpoint)
-        if self.backend != 'flashrt' and not (
-                self.backend == 'torch' and model in ('fastwam', 'dm05') and self.framework == 'torch'):
-            raise ValueError('backend="torch" supports Torch FastWAM/DM05; otherwise use backend="flashrt"')
-        if self.sampler not in ('euler', 'probeflow'):
-            raise ValueError('sampler must be euler or probeflow')
-        if self.framework not in ('torch', 'jax'):
-            raise ValueError('framework must be torch or jax')
-        if self.precision not in ('auto', 'fp16', 'bf16'):
-            raise ValueError('precision must be auto/fp16/bf16. Pi0.5 mixed W8A8 uses auto with int8_mode.')
+        caps = spec['capabilities']
+        if self.backend not in caps['backends'] or self.framework not in caps['backends'][self.backend]:
+            raise ValueError(f'{model} backend={self.backend!r} has no {self.framework!r} frontend; '
+                             f'declared backends: {caps["backends"]}')
+        if self.sampler is None:
+            object.__setattr__(self, 'sampler', spec['head']['defaults']['sampler'])
+        if self.sampler not in caps['samplers']:
+            raise ValueError(f'{model} sampler must be one of {caps["samplers"]}')
+        if self.framework not in caps['frameworks']:
+            raise ValueError(f'{model} framework must be one of {caps["frameworks"]}')
+        precisions = {'auto', 'fp16', 'bf16', caps['precision'], *caps.get('precisions', [])}
+        if self.precision not in precisions:
+            raise ValueError(f'precision must be one of {sorted(precisions)}')
         if self.num_steps is not None and (
                 isinstance(self.num_steps, bool) or not isinstance(self.num_steps, Integral)
                 or self.num_steps < 1):
@@ -68,6 +67,9 @@ class BackendConfig:
             raise ValueError('Use probeflow.max_steps, not num_steps, for adaptive sampling')
         if self.sampler == 'probeflow' and self.probeflow is None:
             object.__setattr__(self, 'probeflow', ProbeFlowConfig())
+        if spec['head']['type'] not in ('flow_matching', 'diffusion') and (
+                self.probeflow is not None or self.num_steps is not None):
+            raise ValueError(f'{spec["head"]["type"]} head does not accept denoising steps or probeflow')
         if not isinstance(self.options, Mapping):
             raise TypeError('options must be a mapping of frontend-specific options')
         object.__setattr__(self, 'options', MappingProxyType(dict(self.options)))

@@ -13,7 +13,7 @@ from flash_rt.vla.config import BackendConfig
 
 _BACKEND_FIELDS = {
     'model', 'checkpoint', 'backend', 'sampler', 'hardware', 'framework',
-    'precision', 'num_steps', 'probeflow', 'options',
+    'precision', 'num_steps', 'probeflow', 'options', 'spec_dir',
 }
 _PROBEFLOW_FIELDS = {
     'epsilon', 'probe_horizon', 'min_steps', 'max_steps', 'step_increment',
@@ -72,7 +72,7 @@ def encode_backend(config: BackendConfig) -> dict:
     if not isinstance(config, BackendConfig):
         raise TypeError('config must be a BackendConfig')
     policy = config.probeflow
-    return _json_value({
+    record = {
         'model': config.model, 'checkpoint': config.checkpoint,
         'backend': config.backend, 'sampler': config.sampler,
         'hardware': config.hardware, 'framework': config.framework,
@@ -85,7 +85,12 @@ def encode_backend(config: BackendConfig) -> dict:
             'step_increment': int(policy.step_increment),
         },
         'options': config.options,
-    })
+    }
+    # Preserve canonical bytes and therefore ledger identities of legacy records.
+    # External declarations need the explicit discovery scope on every roundtrip.
+    if config.spec_dir is not None:
+        record['spec_dir'] = config.spec_dir
+    return _json_value(record)
 
 
 def decode_backend(record: dict) -> BackendConfig:
@@ -255,9 +260,14 @@ def validate_result(record: dict) -> None:
             raise ValueError('sampler_metadata must have exactly repeats entries')
         for sampler in samplers:
             _object(sampler, 'sampler_metadata entry')
-            if sampler.get('sampler') not in ('euler', 'probeflow'):
-                raise ValueError('sampler must be euler or probeflow')
+            if candidate is not None:
+                if sampler.get('sampler') != candidate.backend.sampler:
+                    raise ValueError('observed sampler differs from candidate')
+            elif sampler.get('sampler') not in ('euler', 'probeflow'):
+                raise ValueError('historical sampler must be euler or probeflow')
             _integer(sampler.get('nfe'), 'actual nfe', 1)
+            if sampler['sampler'] == 'none' and sampler['nfe'] != 1:
+                raise ValueError('a direct action head must report one evaluation')
         _object(record.get('backend_metadata'), 'backend_metadata')
         _object(record.get('gpu'), 'gpu')
         _text(record.get('outputs_path'), 'outputs_path')

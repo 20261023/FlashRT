@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "model": "pi0",
+  "name": "Physical Intelligence pi0",
+  "aliases": ["pi0", "π0"],
+  "identity": {
+    "source": {
+      "status": "pinned", "value": "dd5c5ca93ce229017477a75fdda9f16654ab91ef",
+      "repository": "https://github.com/Physical-Intelligence/openpi", "revision": "dd5c5ca93ce229017477a75fdda9f16654ab91ef",
+      "sources": ["docs/reports/2026-11-14-vla-latency-comparison.json:measurements[origin=author,model=pi0].source_url"],
+      "notes": "Pin from the recorded official author measurement. The separate training vendor snapshot records only a capture date and is not attested to this revision."
+    },
+    "weights": {
+      "status": "unknown", "value": null,
+      "sources": ["flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx.__init__"],
+      "notes": "Checkpoint is supplied explicitly by the caller; this family declaration does not attest its content."
+    },
+    "license": {
+      "status": "unknown", "value": null,
+      "sources": ["training/_vendor/openpi_pi0_pytorch/VENDOR.md"],
+      "notes": "The available vendor record does not pin upstream code and weight license texts. Resolve against the selected source and checkpoint."
+    }
+  },
+  "inputs": {
+    "images": {"shape": ["num_views", 224, 224, 3], "dtype": "uint8", "layout": "views,H,W,RGB", "default_num_views": 2},
+    "state": {"shape": ["state_dim"], "dtype": "float32", "padded_dim": 32},
+    "prompt": {"shape": [], "dtype": "str"},
+    "noise": {"shape": ["action_horizon", 32], "dtype": "float32"}
+  },
+  "head": {
+    "type": "flow_matching",
+    "defaults": {"sampler": "euler", "num_steps": 10, "chunk_size": 10},
+    "sources": ["flash_rt/models/pi0/pipeline_rtx.py:NUM_STEPS_DEFAULT", "flash_rt/frontends/torch/pi0_rtx.py"]
+  },
+  "actions": {
+    "model_dim": 32, "effective_dim": 7, "channels": [0, 1, 2, 3, 4, 5, 6],
+    "horizon": 10, "domain": "frontend-decoded-libero-7d",
+    "worker_domain": "normalized-padded-model-actions", "worker_field": "raw_actions_if_available",
+    "effective_dim_resolution": "checkpoint",
+    "sources": ["flash_rt/vla/processing.py:load_action_decoder", "flash_rt/models/pi0/pipeline_rtx.py:ACTION_DIM"],
+    "notes": "7 channels and horizon10 are the default LIBERO frontend profile. The recorded author comparison uses horizon50 and three views, explicitly declared in profiles.measured_libero_h50. Checkpoint action processors may declare another public dimension."
+  },
+  "profiles": {
+    "frontend_default": {"num_views": 2, "action_horizon": 10, "sources": ["flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx.__init__"]},
+    "measured_libero_h50": {"batch": 1, "num_views": 3, "image_hw": [224, 224], "action_horizon": 50, "model_dim": 32, "effective_dim": 7, "sources": ["docs/reports/2026-11-14-vla-latency-comparison.json:measurements[origin=author,model=pi0]"]}
+  },
+  "stages": [
+    {"stage_id": "host.input", "seams": ["flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx._fill_img_buf", "flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx.set_prompt", "flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx._fill_state_buf", "flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx._fill_noise_buf"], "profiling_keys": [], "notes": ["Prompt embedding runs on prompt changes; CPU normalization and copies are residual host time."]},
+    {"stage_id": "vision.encode", "seams": ["flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline.vision_encoder"], "profiling_keys": ["full", "prefix"], "notes": ["27-layer SigLIP."]},
+    {"stage_id": "vision.project", "seams": ["flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline.transformer_encoder", "flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline.vision_encoder"], "profiling_keys": ["full", "prefix"], "notes": ["Projector shares the prefill interval."]},
+    {"stage_id": "prefix.prefill", "seams": ["flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline.transformer_encoder"], "profiling_keys": ["full", "prefix"], "notes": ["Prefix KV is reused within one request."]},
+    {"stage_id": "denoise.velocity", "seams": ["flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline.transformer_decoder", "flash_rt/models/pi0/pipeline_rtx_probeflow.py:Pi0ProbeFlowPipeline._evaluate"], "profiling_keys": ["full", "velocity"], "notes": ["Euler full graph includes all steps; ProbeFlow velocity intervals each cover one evaluation."]},
+    {"stage_id": "denoise.schedule", "seams": ["flash_rt/frontends/torch/pi0_rtx.py:_resolve_pi0_sampler", "flash_rt/models/pi0/pipeline_rtx_probeflow.py:Pi0ProbeFlowPipeline._sample"], "profiling_keys": [], "notes": ["NFE is a count, not an interval."]},
+    {"stage_id": "denoise.routing", "seams": ["flash_rt/sampling/torch_probeflow.py:sample_probeflow_torch_", "flash_rt/models/pi0/pipeline_rtx_probeflow.py:Pi0ProbeFlowPipeline._sample"], "profiling_keys": [], "notes": ["Host routing is residual. Euler integration is fused into the output projection."]},
+    {"stage_id": "host.launch", "seams": ["flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline.record_infer_graph", "flash_rt/models/pi0/pipeline_rtx_probeflow.py:Pi0ProbeFlowPipeline.record_infer_graph"], "profiling_keys": [], "notes": ["Eager launch gaps are not kernel execution time."]},
+    {"stage_id": "host.output", "seams": ["flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx.infer", "flash_rt/vla/backend.py:VLABackend.infer"], "profiling_keys": [], "notes": ["Completed CPU output and optional checkpoint decoding."]},
+    {"stage_id": "kernel.gemm", "seams": ["flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline.autotune_gemms", "flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline._encoder_layer", "flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline._decoder_layer"], "profiling_keys": [], "notes": ["Cross-cutting kernel class."]},
+    {"stage_id": "kernel.attention", "seams": ["flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline._vision_layer", "flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline._encoder_layer", "flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline._decoder_layer"], "profiling_keys": [], "notes": []},
+    {"stage_id": "precision.weights", "seams": ["flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx._quantize_all_fp8", "flash_rt/vla/registry.py:load_backend"], "profiling_keys": [], "notes": ["Unified backend selects FP16, with FP8 disabled."]}
+  ],
+  "profiling": {
+    "keys": {"full": ["vision.encode", "vision.project", "prefix.prefill", "denoise.velocity"], "prefix": ["vision.encode", "vision.project", "prefix.prefill"], "velocity": ["denoise.velocity"], "vision": ["vision.encode"], "prefix_only": ["vision.project", "prefix.prefill"], "denoise_all": ["denoise.velocity"], "host_input": ["host.input"], "host_output": ["host.output"]},
+    "expected_keys": {"euler": ["full"], "probeflow": ["prefix", "velocity"]},
+    "strategy": {"kind": "graphs", "graphs": [{"path": "pipeline._graph", "key_by_sampler": {"euler": "full", "probeflow": "prefix"}}, {"path": "pipeline._velocity_graphs.*", "key": "velocity"}]}
+  },
+  "attention": [
+    {"id": "vision", "stage": "vision.encode", "mask": "bidirectional", "head_dim": 72, "query_heads": 16, "kv_heads": 16, "gqa": false, "backend": "vendored-fa2-default; upstream-flash-attn-by-explicit-env", "sources": ["flash_rt/hardware/rtx/attn_backend.py:RtxFlashAttnBackend"]},
+    {"id": "prefix", "stage": "prefix.prefill", "mask": "bidirectional-prefix", "head_dim": 256, "query_heads": 8, "kv_heads": 1, "gqa": true, "backend": "vendored-fa2-default; upstream-flash-attn-by-explicit-env", "sources": ["flash_rt/models/pi0/pipeline_rtx.py:ENC_NH", "flash_rt/hardware/rtx/attn_backend.py:RtxFlashAttnBackend.encoder_attn"]},
+    {"id": "action", "stage": "denoise.velocity", "mask": "state-row-prefix-and-self; action-rows-prefix-and-all-suffix", "head_dim": 256, "query_heads": 8, "kv_heads": 1, "gqa": true, "backend": "vendored-fa2-state-row-split", "sources": ["flash_rt/models/pi0/pipeline_rtx.py:Pi0Pipeline._decoder_layer", "flash_rt/hardware/rtx/attn_backend.py:RtxFlashAttnBackend.decoder_attn"]}
+  ],
+  "capabilities": {
+    "frameworks": ["torch", "jax"], "hardware": ["cuda_sm80", "rtx_sm89", "rtx_sm120"],
+    "precision": "fp16", "backends": {"flashrt": ["torch", "jax"]}, "samplers": ["euler", "probeflow"],
+    "options": {
+      "num_views": {"type": "integer", "minimum": 1},
+      "chunk_size": {"type": "integer", "minimum": 1},
+      "max_prompt_len": {"type": "integer", "minimum": 1},
+      "use_cuda_graph": {"type": "bool", "default": true}
+    },
+    "action_domain_resolution": "checkpoint", "execution_coverage": {}
+  },
+  "features": {"flow_matching": true, "cuda_graph": true, "adaptive_sampler": true, "variable_steps": true, "state_in_prompt": false, "checkpoint_action_decoder": true, "reduced_precision_unified_backend": false, "fp8_weights": true, "nvfp4_weights": false, "functional_torch": false, "torch_modules": false, "cross_frame_kv": false, "batched_inference": false},
+  "tools": {
+    "tags": ["flow_matching", "siglip", "gemma", "prefix_kv", "cuda_graph", "fp16"],
+    "defaults": {"euler_steps": [5, 6, 7, 8, 9], "probeflow_max_steps": 10},
+    "supported": ["baseline.official_impl", "profile.stage_intervals", "sampler.euler_steps", "sampler.probeflow", "launch.cuda_graph"],
+    "unsupported": ["prefix.vision_pool", "prefix.state_prompt_mode", "quant.int8_pi05"],
+    "notes": "Supported means a declared interface exists, not that a candidate has passed quality or improved latency."
+  },
+  "adapter": {
+    "hooks": {"binding": "flash_rt.vla.adapters.pi0:binding", "decoder": "flash_rt.vla.adapters.pi_family:decoder", "release": "flash_rt.vla.adapters.pi_family:release", "release_retired": "flash_rt.vla.adapters.pi_family:release_retired", "profile": "flash_rt.vla.autotune.profilers.pi:install", "dataflow": "flash_rt.vla.autotune.profilers.pi:describe_dataflow"},
+    "runtime": {"retire_replaced_pipeline": true, "prompt_state_dependent": false, "prepared_context": false}
+  },
+  "author": {
+    "adapter": "flash_rt.vla.author_adapters.openpi", "source_package": "src/openpi",
+    "options": ["action_horizon", "max_token_len"], "default_steps": 10,
+    "fixed_steps": null, "requires_noise_seeds": false
+  },
+  "fixture": {
+    "recipe": "numpy_seeded_v1", "head_type": "flow_matching", "seed": 0, "profile": "measured_libero_h50",
+    "backend_options": {"num_views": 3, "chunk_size": 50},
+    "fields": {
+      "images": {"shape": [3, 224, 224, 3], "dtype": "uint8", "distribution": "integers", "low": 0, "high": 256, "as_list": true},
+      "state": {"shape": [7], "dtype": "float32", "distribution": "zeros"},
+      "noise": {"shape": [50, 32], "dtype": "float32", "distribution": "standard_normal", "role": "noise"}
+    },
+    "prompt": "pick up the object",
+    "sources": ["flash_rt/frontends/torch/pi0_rtx.py:Pi0TorchFrontendRtx.infer", "docs/reports/2026-11-14-vla-latency-comparison.json:measurements[origin=author,model=pi0]"],
+    "notes": "Synthetic CPU recipe using measured H50 geometry, not the historical input bytes, model inference evidence or task-success validation."
+  },
+  "quality": {
+    "scope": "numerical_replay", "action_dim": 7,
+    "thresholds": {"status": "unknown", "value": null, "sources": ["flash_rt/vla/autotune/quality.py:quality_contract"], "notes": "Campaign budget must be explicitly provided before evaluation."},
+    "sources": ["flash_rt/vla/autotune/quality.py:quality_contract"]
+  }
+}

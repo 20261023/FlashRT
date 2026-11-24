@@ -1,95 +1,74 @@
-"""Lightweight model capabilities and lazy FlashRT frontend construction."""
+"""CPU-only declarative capabilities and lazy adapter/frontend construction."""
 
 from __future__ import annotations
 
 from dataclasses import asdict
 from importlib import import_module
-from numbers import Integral
-import os
 
+from .adapters import get_hook
 from .backend import VLABackend
 from .config import BackendConfig
+from .model_spec import discover_specs, get_spec, validate_options
 
 
-_CAPABILITIES = {
-    'dm05': {
-        'name': 'Dexmal DM0.5 fixed base', 'precision': 'bf16',
-        'frameworks': ('torch',), 'hardware': ('cuda_sm80',),
-        'action_domain': 'denormalized-absolute-dos-w1-14d',
-        'options': ('source_dir', 'use_cuda_graph', 'max_graph_profiles', 'num_views',
-                    'project_optimization'),
-        'execution_coverage': 'partial-native-gemm-fa2-gelu-torch-norm-rope-prefix-attention',
-    },
-    'pi0': {
-        'name': 'Physical Intelligence pi0', 'precision': 'fp16',
-        'frameworks': ('torch', 'jax'),
-        'hardware': ('cuda_sm80', 'rtx_sm89', 'rtx_sm120'),
-        'action_domain': 'frontend-decoded-libero-7d',
-        'options': ('num_views', 'chunk_size', 'max_prompt_len', 'use_cuda_graph'),
-    },
-    'pi05': {
-        'name': 'Physical Intelligence pi0.5', 'precision': 'bf16',
-        'frameworks': ('torch', 'jax'),
-        'hardware': ('cuda_sm80', 'rtx_sm87', 'rtx_sm89', 'rtx_sm120'),
-        'action_domain': 'frontend-decoded-libero-7d',
-        'options': ('num_views', 'chunk_size', 'max_prompt_len', 'use_cuda_graph',
-                                    'state_prompt_mode', 'vision_pool_factor', 'int8_mode'),
-    },
-    'hyvla': {
-        'name': 'Hy-Embodied-0.5-VLA', 'precision': 'bf16',
-        'frameworks': ('torch',),
-        'hardware': ('cuda_sm80', 'rtx_sm87', 'rtx_sm89', 'thor', 'rtx_sm120'),
-        'action_domain': 'normalized-padded-model-actions',
-        'options': ('use_cuda_graph', 'numerical_profile', 'fused_rope_qknorm_kvwrite'),
-    },
-    'fastwam': {
-        'name': 'FastWAM', 'precision': 'bf16',
-        'frameworks': ('torch',),
-        'hardware': ('cuda_sm80', 'rtx_sm87', 'rtx_sm89', 'thor', 'rtx_sm120'),
-        'action_domain': 'normalized-model-actions-batched',
-        'options': ('source_dir', 'model_config', 'backbone_dir',
-                    'sigma_shift', 'action_horizon', 'native_linear_backend', 'use_cuda_graph',
-                     'compile_action_infer', 'cache_text_crossattn_kv'),
-        'execution_coverage': 'partial-native-linear-upstream-other-operators',
-    },
-}
+def _capability_view(spec):
+    """Keep the historical capability keys as a view of the validated spec."""
+    caps = spec['capabilities']
+    result = {**spec, 'precision': caps['precision'],
+              'frameworks': tuple(caps['frameworks']), 'hardware': tuple(caps['hardware']),
+              'options': tuple(caps['options']), 'action_domain': spec['actions']['domain']}
+    coverage = caps['execution_coverage'].get('flashrt')
+    if coverage is not None:
+        result['execution_coverage'] = coverage
+    return result
+
+
+# Compatibility for existing CPU tool consumers. This is derived data, never a
+# second source of model names, dimensions, policies or frontend routing.
+_CAPABILITIES = {model: _capability_view(spec) for model, spec in discover_specs().items()}
+
+
+def _spec_for(config):
+    if config.spec_dir is None:
+        return _CAPABILITIES[config.model]
+    return _capability_view(get_spec(config.model, spec_dir=config.spec_dir))
 
 
 def _execution_precision(config, spec):
-    if config.model == 'pi05' and config.options.get('int8_mode', 'none') in ('encoder', 'encoder_decoder'):
-        return 'mixed_int8_bf16'
-    return spec['precision']
+    hook = get_hook(spec, 'precision')
+    return hook(config) if hook is not None else spec['capabilities']['precision']
 
 
 def describe_backend(config: BackendConfig) -> dict:
-    """Describe a candidate without importing Torch, loading weights or running it."""
-    spec = _CAPABILITIES[config.model]
-    return {
+    """Describe a declaration without checkpoint access, CUDA, Torch or loading."""
+    spec = _spec_for(config)
+    caps, actions = spec['capabilities'], spec['actions']
+    result = {
         'model': config.model, 'name': spec['name'], 'backend': config.backend,
-        'sampler': config.sampler, 'framework': config.framework,
-        'hardware': config.hardware,
+        'sampler': config.sampler, 'framework': config.framework, 'hardware': config.hardware,
         'precision': _execution_precision(config, spec) if config.precision == 'auto' else config.precision,
         'num_steps': config.num_steps,
         'probeflow': None if config.probeflow is None else asdict(config.probeflow),
-        'frameworks': list(spec['frameworks']),
-        'hardware_paths': list(spec['hardware']),
-        'action_domain': ('resolved_from_checkpoint_on_load' if config.model in ('pi0', 'pi05')
-                          else spec['action_domain']),
-        'default_action_domain': spec['action_domain'],
-        'options': dict(config.options),
-        'runtime_verified': False,
-        **({'execution_coverage': ('upstream-torch-operators-shared-pipeline'
-                                  if config.model == 'fastwam' and config.backend == 'torch'
-                                  else 'project-owned-torch-operators'
-                                  if config.model == 'dm05' and config.backend == 'torch'
-                                  else spec['execution_coverage'])}
-           if 'execution_coverage' in spec else {}),
-        **({'blocker': spec['blocker']} if 'blocker' in spec else {}),
+        'frameworks': list(caps['frameworks']), 'hardware_paths': list(caps['hardware']),
+        'action_domain': ('resolved_from_checkpoint_on_load' if caps['action_domain_resolution'] == 'checkpoint'
+                          else actions['domain']),
+        'default_action_domain': actions['domain'], 'options': dict(config.options),
+        'head_type': spec['head']['type'], 'model_spec_version': spec['schema_version'],
+        'worker_action_domain': actions['worker_domain'],
+        'effective_action_dim': actions['effective_dim'], 'action_channels': actions['channels'],
+        'identity': spec['identity'], 'runtime_verified': False,
     }
+    coverage = caps['execution_coverage'].get(config.backend)
+    if coverage is not None:
+        result['execution_coverage'] = coverage
+    if 'blocker' in caps:
+        result['blocker'] = caps['blocker']
+    if config.spec_dir is not None:
+        result['spec_dir'] = config.spec_dir
+    return result
 
 
-# CUDA capability -> hardware label (also used by the CPU-only autotune tool
-# registry to filter tools by capability without importing Torch).
+# CUDA capability -> hardware label, also read by CPU tool filtering.
 _CUDA_TARGETS = {(8, 0): 'cuda_sm80', (8, 7): 'rtx_sm87', (8, 9): 'rtx_sm89',
                  (11, 0): 'thor', (12, 0): 'rtx_sm120'}
 
@@ -108,158 +87,44 @@ def _cuda_target(requested):
 
 
 def validate_config(config: BackendConfig) -> dict:
-    """Run every CPU-only check load_backend applies before touching a device.
+    """Validate a declaration and adapter policy before touching any device.
 
-    Pure validation: capability blocker, framework/precision, option names and
-    values, FastWAM sampler/option contract and pi05 environment conflicts. No
-    Torch import, no checkpoint access, no hardware probe (``hardware`` is
-    checked against the actual device only by load_backend). Returns the
-    model's capability spec. Raises exactly what load_backend would raise, in
-    the same order.
+    The returned spec retains historical capability keys for existing callers.
+    Adapter validation must remain CPU-only; checkpoint/device checks belong in
+    loading. The same validation always runs at the start of ``load_backend``.
     """
-    spec = _CAPABILITIES[config.model]
-    if 'blocker' in spec:
-        raise NotImplementedError(spec['blocker'])
-    if config.framework not in spec['frameworks']:
+    spec = _spec_for(config)
+    caps = spec['capabilities']
+    if 'blocker' in caps:
+        raise NotImplementedError(caps['blocker'])
+    if config.framework not in caps['frameworks']:
         raise ValueError(f'{config.model} has no {config.framework} frontend in this backend')
+    if config.framework not in caps['backends'].get(config.backend, []):
+        raise ValueError(f'Unsupported {config.model} backend/framework combination')
     precision = _execution_precision(config, spec)
     if config.precision not in ('auto', precision):
         raise ValueError(f'{config.model} backend uses {precision}, not {config.precision}')
-    unknown = set(config.options) - set(spec['options'])
-    if unknown:
-        raise ValueError(f'Unsupported {config.model} options: {sorted(unknown)}')
-    for name in ('num_views', 'chunk_size', 'max_prompt_len'):
-        if name in config.options:
-            value = config.options[name]
-            if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
-                raise ValueError(f'{name} must be a positive integer')
-    if 'use_cuda_graph' in config.options and not isinstance(config.options['use_cuda_graph'], bool):
-        raise ValueError('use_cuda_graph must be a bool')
-    if config.options.get('state_prompt_mode', 'exact') not in ('exact', 'fixed'):
-        raise ValueError('state_prompt_mode must be exact or fixed')
-    if 'vision_pool_factor' in config.options:
-        factor = config.options['vision_pool_factor']
-        if type(factor) is not int or factor not in (1, 2, 4):
-            raise ValueError('vision_pool_factor must be 1, 2 or 4')
-    if config.model == 'hyvla' and config.options.get('numerical_profile', 'semantic_bf16') not in (
-            'semantic_bf16', 'official_local_fp32'):
-        raise ValueError('Unknown HyVLA numerical_profile')
-    if config.model == 'hyvla' and 'fused_rope_qknorm_kvwrite' in config.options:
-        fusion = config.options['fused_rope_qknorm_kvwrite']
-        if not isinstance(fusion, bool):
-            raise ValueError('fused_rope_qknorm_kvwrite must be a bool')
-        if fusion and config.hardware not in ('auto', 'cuda_sm80'):
-            raise ValueError('Hy fused_rope_qknorm_kvwrite requires SM80')
-    if config.model == 'dm05':
-        optimization = config.options.get('project_optimization', 'none')
-        if optimization not in ('none', 'compiled'):
-            raise ValueError('DM05 project_optimization must be none or compiled')
-        if optimization != 'none' and config.backend != 'torch':
-            raise ValueError('DM05 project_optimization requires backend="torch"')
-        if config.sampler != 'euler' or config.num_steps not in (None, 10):
-            raise ValueError('DM05 first profile requires fixed Euler10')
-        source = config.options.get('source_dir')
-        if not isinstance(source, str) or not source.strip():
-            raise ValueError('DM05 requires source_dir pointing to the pinned read-only OpenDM CPU transforms')
-        if config.options.get('num_views', 3) != 3:
-            raise ValueError('DM05 first profile requires num_views=3')
-        capacity = config.options.get('max_graph_profiles', 2)
-        if type(capacity) is not int or capacity < 1:
-            raise ValueError('max_graph_profiles must be a positive integer')
-    if config.model == 'fastwam':
-        if not isinstance(config.options.get('cache_text_crossattn_kv', False), bool):
-            raise TypeError('cache_text_crossattn_kv must be bool')
-        compiled = config.options.get('compile_action_infer', False)
-        if not isinstance(compiled, bool):
-            raise TypeError('compile_action_infer must be bool')
-        if compiled and (config.backend != 'torch' or config.options.get('use_cuda_graph', False)):
-            raise ValueError('Compiled FastWAM requires backend="torch" and use_cuda_graph=False')
-        if config.backend == 'torch' and 'native_linear_backend' in config.options:
-            raise ValueError('native_linear_backend is incompatible with backend="torch"')
-        if config.options.get('native_linear_backend', 'legacy') not in ('legacy', 'cached'):
-            raise ValueError('native_linear_backend must be legacy or cached')
-        if (config.backend == 'flashrt' and config.options.get('use_cuda_graph', False)
-                and config.options.get('native_linear_backend', 'legacy') != 'cached'):
-            raise ValueError('FastWAM native CUDA graph requires native_linear_backend="cached"')
-        missing = {'sigma_shift', 'action_horizon', 'model_config', 'backbone_dir'} - set(config.options)
-        if missing:
-            raise ValueError(f'FastWAM requires explicit options: {sorted(missing)}')
-        from flash_rt.models.fastwam.config import positive_integer, validate_sampler
-        positive_integer(config.options['action_horizon'], 'action_horizon')
-        validate_sampler(config.sampler, config.options['sigma_shift'],
-                         config.num_steps, config.probeflow)
-    if config.model == 'pi05':
-        from flash_rt.models.pi05.int8 import validate_int8_mode
-        mode = config.options.get('int8_mode', 'none')
-        if mode is None:
-            raise ValueError('int8_mode must explicitly name none, encoder, or encoder_decoder')
-        validate_int8_mode(mode, sampler=config.sampler)
-        if mode != 'none' and (config.framework != 'torch' or config.hardware not in ('auto', 'cuda_sm80')):
-            raise ValueError('Pi0.5 W8A8 requires the Torch SM80 frontend')
-        for name, allowed in (
-                ('FLASHRT_PI05_PREFIX_PRECISION', ('fp8',)),
-                ('FLASHRT_PI05_DECODER_PRECISION', ('fp8',)),
-                ('FLASHRT_PI05_DECODER_KERNEL', ('auto', 'cublaslt'))):
-            if name in os.environ and os.environ[name] not in allowed:
-                raise ValueError(f'The BF16 VLA backend conflicts with {name}={os.environ[name]}')
-        # The frontend lets this variable override the option; refuse a silent override.
-        env_mode = os.environ.get('FLASHRT_PI05_STATE_PROMPT_MODE')
-        requested = config.options.get('state_prompt_mode', 'exact')
-        if env_mode is not None and env_mode != requested:
-            raise ValueError(f'The VLA backend option state_prompt_mode={requested} conflicts with '
-                             f'FLASHRT_PI05_STATE_PROMPT_MODE={env_mode}')
+    validate_options(spec, config.options)
+    validator = get_hook(spec, 'validate')
+    if validator is not None:
+        validator(config)
     return spec
 
 
 def load_backend(config: BackendConfig) -> VLABackend:
-    """Construct the requested backend; never substitute another model/method."""
+    """Construct the explicitly declared backend; never substitute a model."""
     spec = validate_config(config)
+    binding = get_hook(spec, 'binding')
+    if binding is None:
+        raise NotImplementedError(f'{config.model} declares no runtime adapter binding')
     precision = _execution_precision(config, spec)
-    decoder = None
-    if config.model in ('pi0', 'pi05'):
-        from .processing import load_action_decoder
-        decoder = load_action_decoder(config.checkpoint)
+    decoder_hook = get_hook(spec, 'decoder')
+    decoder = decoder_hook(config) if decoder_hook is not None else None
     hardware = _cuda_target(config.hardware)
-    if hardware not in spec['hardware']:
+    if hardware not in spec['capabilities']['hardware']:
         raise NotImplementedError(f'{config.model} {precision} path is not adapted for {hardware}')
-    kwargs = dict(config.options)
-    kwargs.update(sampler=config.sampler, probeflow_config=config.probeflow)
-    if config.num_steps is not None and config.model != 'fastwam':
-        kwargs['num_steps'] = config.num_steps
-    if config.model == 'dm05':
-        module = 'flash_rt.frontends.torch.dm05_cuda_sm80'
-        name = 'Dm05TorchFrontendCudaSm80'
-        kwargs['backend'] = config.backend
-    elif config.model == 'fastwam':
-        module = 'flash_rt.frontends.torch.fastwam'
-        name = 'FastWAMTorchFrontend'
-        # This binding is deliberately PARTIAL native execution, recorded in
-        # both candidate descriptors and per-request execution metadata.
-        kwargs.update(native_linear=config.backend == 'flashrt', dtype='bf16', device='cuda',
-                      num_inference_steps=config.num_steps)
-    elif config.model == 'hyvla':
-        module = 'flash_rt.frontends.torch.hyvla_probeflow'
-        name = 'HyVLAFlowFrontend'
-        kwargs['hardware'] = hardware
-    else:
-        module = f'flash_rt.frontends.{config.framework}.{config.model}_rtx'
-        name = ('Pi0' if config.model == 'pi0' else 'Pi05') + (
-            'TorchFrontendRtx' if config.framework == 'torch' else 'JaxFrontendRtx')
-        kwargs['use_fp8'] = False
-        if config.model == 'pi0':
-            kwargs['use_fp8_decoder'] = False
-        else:
-            kwargs['hardware'] = hardware
-            if config.framework == 'torch':
-                kwargs.setdefault('int8_mode', 'none')
-            else:
-                kwargs.pop('int8_mode', None)
-            # These internal selector labels only affect quantized branches;
-            # use_fp8=False keeps actual execution BF16. Pin them so no ambient
-            # NVFP4/skinny selection silently changes the requested path.
-            kwargs.update(prefix_precision='fp8', decoder_precision='fp8',
-                          decoder_kernel='cublaslt')
+    module, name, kwargs = binding(config, hardware)
     frontend = getattr(import_module(module), name)(config.checkpoint, **kwargs)
     return VLABackend(config, frontend, hardware=hardware, precision=precision,
-                      action_domain=decoder.action_domain if decoder is not None else spec['action_domain'],
+                      action_domain=decoder.action_domain if decoder is not None else spec['actions']['domain'],
                       action_decoder=decoder)
