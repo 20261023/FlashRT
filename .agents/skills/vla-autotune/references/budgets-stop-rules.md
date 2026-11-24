@@ -47,6 +47,14 @@ python examples/vla_autotune/next_round.py \
 推荐依赖当前 winner 的 profile。若 `summary.json` 中只有旧诊断，传入同一次测量的
 完整 worker 记录 `--profile` 并核对输入、运行身份和计时边界。
 
+算子迁移候选使用 `--operator-profile` 读同一次诊断请求的关键路径区间。输入对象含
+`schema_version: 1`、`profile_sha256` 和 `regions`。哈希对象是完整 worker 结果
+序列化后的 UTF-8 字节，JSON 参数为 `sort_keys=True`、`separators=(',', ':')`、
+`ensure_ascii=False`、`allow_nan=False`。每个 region 填 `tool`、`stage`、`site` 和
+`critical_path_spans_ms`，按请求起点记录每个 `[start, end]`。需要从时间线确认区间
+确实属于该调用点和游。选择器按区间并集计算占比，检查对应的分游耗时和 attention
+调用点资格。算子占比达到 5% 后才进入选择。
+
 ## 记账规则
 
 - **KEEP 和 best 分开**：合法但没变快的中间结果可以 keep，但它不是 winner。

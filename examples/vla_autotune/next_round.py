@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 from contextlib import redirect_stdout
+import hashlib
 import io
 import json
 import math
@@ -374,7 +375,54 @@ def _stalled(rounds, tool=None):
         value is not None and value < threshold for value in values[-count:])
 
 
-def _table(current, profile, rounds, hours, exhausted, budget, spec_dir):
+def _operator_regions(path, record, profile, model, hardware, spec_dir):
+    """Measure each call site's disjoint contribution on a bound request trace."""
+    if path is None:
+        return {}
+    evidence = _load(path)
+    encoded = json.dumps(record, sort_keys=True, separators=(',', ':'),
+                         ensure_ascii=False, allow_nan=False).encode()
+    if (evidence.get('schema_version') != 1
+            or evidence.get('profile_sha256') != hashlib.sha256(encoded).hexdigest()):
+        raise ValueError('Operator timeline does not match the current worker profile')
+    if not isinstance(evidence.get('regions'), list):
+        raise ValueError('Operator timeline requires a regions list')
+    wall = profile['wall_ms']
+    stage_ms = defaultdict(float)
+    for group in profile['groups']:
+        if len(group['stages']) == 1:
+            stage_ms[group['stages'][0]] += group['ms']
+    scopes = defaultdict(list)
+    for row in evidence['regions']:
+        tool = get_tool(row['tool'])
+        stage, site = row['stage'], row['site']
+        if not isinstance(site, str) or not site.strip():
+            raise ValueError('Operator timeline requires a named call site')
+        if tool.attention_requirements:
+            eligible = tool.attention_sites(model, spec_dir=spec_dir, stage=stage, hardware=hardware)
+            if not any(item['id'] == site and item['stage'] == stage
+                       for item in eligible['eligible_sites']):
+                raise ValueError(f'{site!r} is not an eligible attention site for {tool.tool_id} at {stage}')
+        if stage not in stage_ms:
+            raise ValueError(f'Operator timeline requires a measured enclosing stage for {stage}')
+        spans = row['critical_path_spans_ms']
+        if not isinstance(spans, list) or not spans:
+            raise ValueError('Operator timeline requires nonempty critical-path spans')
+        spans = sorted((_number(start, 'start'), _number(end, 'end', positive=True))
+                       for start, end in spans)
+        last_end, duration = 0.0, 0.0
+        for start, end in spans:
+            if not start < end <= wall:
+                raise ValueError('Operator span lies outside the profiled request')
+            duration += max(0.0, end - max(last_end, start))
+            last_end = max(last_end, end)
+        if duration > stage_ms[stage] + 1e-6:
+            raise ValueError(f'Operator span union exceeds its enclosing stage {stage}')
+        scopes[tool.tool_id].append((duration / wall, stage, site))
+    return {tool_id: max(rows) for tool_id, rows in scopes.items()}
+
+
+def _table(current, profile, operator_regions, rounds, hours, exhausted, budget, spec_dir):
     baseline = Candidate.from_dict(current['incumbent']['candidate'] if current['incumbent']
                                    else current['baseline'])
     model, hardware = baseline.backend.model, baseline.backend.hardware
@@ -412,7 +460,7 @@ def _table(current, profile, rounds, hours, exhausted, budget, spec_dir):
             row['exclusion'] = 'method_budget_exhausted'
         elif _stalled(rounds, tool.tool_id):
             row['exclusion'] = 'three_direction_rounds_below_2_percent'
-        elif tool.tool_id.startswith(('kernel.', 'quant.', 'attention.')):
+        elif tool.tool_id.startswith(('kernel.', 'quant.', 'attention.')) and tool.tool_id not in operator_regions:
             # Broad registry stage labels are not operator occurrence timings.
             # Non-additive probes and summed kernel times cannot substitute.
             row['exclusion'] = 'needs_operator_or_launch_attribution'
@@ -421,6 +469,11 @@ def _table(current, profile, rounds, hours, exhausted, budget, spec_dir):
             if 'denoise.schedule' in mapped:
                 mapped.add('denoise.velocity')
             available = [(share, stage) for stage, share in per_stage.items() if stage in mapped]
+            if tool.tool_id in operator_regions:
+                share, stage, site = operator_regions[tool.tool_id]
+                available = [(share, stage)]
+                row.update(affected_share=share, call_site=site,
+                           share_interpretation='union of observed critical-path call-site spans')
             if available:
                 row['share'], row['stage'] = max(available)
                 row['ideal_region_latency_reduction_ceiling'] = row['share']
@@ -447,8 +500,8 @@ def _action(action, reason, rationale, **fields):
     return {'action': action, 'reason_code': reason, 'rationale': rationale, **fields}
 
 
-def recommend(summary_path, history_path, *, profile_path=None, method_budget_gpuh=6,
-              spec_dir=None):
+def recommend(summary_path, history_path, *, profile_path=None, operator_profile_path=None,
+              method_budget_gpuh=6, spec_dir=None):
     """Return a reproducible recommendation; only ``main`` persists its decision."""
     budget = _number(method_budget_gpuh, 'method budget', positive=True)
     if budget > 6:
@@ -469,7 +522,10 @@ def recommend(summary_path, history_path, *, profile_path=None, method_budget_gp
         record = current['incumbent']
         profile_path = f'{summary_path}#incumbent.stage_metrics'
     profile, gap = _profile(record, current, profile_path)
-    table = _table(current, profile, rounds, hours, exhausted, budget, spec_dir)
+    regions = (_operator_regions(operator_profile_path, record, profile, baseline['model'],
+                                 baseline['hardware'], spec_dir)
+               if gap is None else {})
+    table = _table(current, profile, regions, rounds, hours, exhausted, budget, spec_dir)
     eligible = [row for row in table if row['exclusion'] is None]
     # Largest MEASURED region first, then ready/exact over unimplemented/approximate.
     # This is a planning tie-break, not a forecast of which candidate will win.
@@ -519,7 +575,9 @@ def recommend(summary_path, history_path, *, profile_path=None, method_budget_gp
             share=first['share'], share_interpretation=first['share_interpretation'],
             ideal_region_latency_reduction_ceiling=first['share'],
             predicted_latency_ms=None, remaining_gpu_hours=first['remaining_gpu_hours'],
-            requirements=requirements)
+            requirements=requirements,
+            **{key: first[key] for key in ('call_site', 'affected_share')
+               if key in first and first[key] is not None})
     else:
         remaining = [row for row in table if row['exclusion'] not in HARD_EXCLUSIONS]
         if not remaining:
@@ -538,7 +596,8 @@ def recommend(summary_path, history_path, *, profile_path=None, method_budget_gp
         'schema_version': 1, 'model': spec['model'], 'hardware': baseline['hardware'],
         'workload_id': current['baseline']['workload_id'], 'actor': 'agent',
         'scope': current['scope'], 'features': spec.get('features', {}),
-        'inputs': {'summary': str(summary_path), 'history': str(history_path), 'profile': profile_path},
+        'inputs': {'summary': str(summary_path), 'history': str(history_path), 'profile': profile_path,
+                   'operator_profile': str(operator_profile_path) if operator_profile_path else None},
         'policy': {'method_budget_gpuh': budget, 'min_stage_share': .05,
                    'minimum_profile_coverage': .90, 'direction_rounds': 3,
                    'direction_min_reduction': .02, 'model_rounds': 2, 'model_min_reduction': .03},
@@ -555,6 +614,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--summary', required=True, help='Controller summary.json, alongside plan.json')
     parser.add_argument('--profile', help='Current incumbent worker result.json (default: embedded result)')
+    parser.add_argument('--operator-profile', help='Bound critical-path call-site timeline JSON')
     parser.add_argument('--history', required=True, help='Per-model history, normalized scheduler evidence refs')
     parser.add_argument('--spec-dir', help='External ModelSpec directory; no model-name switch in this script')
     parser.add_argument('--method-budget-gpuh', type=float, default=6)
@@ -567,6 +627,7 @@ def main(argv=None):
         if output.exists() or decision_path.exists():
             raise ValueError('output already exists; use a new round/action path, not a duplicate decision')
         result = recommend(args.summary, args.history, profile_path=args.profile,
+                           operator_profile_path=args.operator_profile,
                            method_budget_gpuh=args.method_budget_gpuh, spec_dir=args.spec_dir)
         chosen = result['chosen_action']
         # The existing decisions add CLI is the only log writer. No new schema,
@@ -578,7 +639,8 @@ def main(argv=None):
                     'stop' if chosen['action'] == 'stop' else 'keep'),
             tool=chosen.get('tool'), stage=chosen.get('stage'),
             rationale=chosen['rationale'], evidence_refs=[
-                str(output), result['inputs']['summary'], result['inputs']['history']])
+                 str(output), result['inputs']['summary'], result['inputs']['history'],
+                 *([result['inputs']['operator_profile']] if args.operator_profile else [])])
         decisions.DecisionLog(args.decision_log).records()  # Refuse a bad log before writing artifacts.
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open('x') as stream:

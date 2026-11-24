@@ -1,5 +1,6 @@
 """CPU outer-loop regressions using real controller-ingested worker envelopes."""
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -114,6 +115,40 @@ def test_uses_real_attribution_and_feature_table_not_predicted_win(tmp_path):
     assert fp8['status'] == 'blocked'
     assert fp8['reason']
     assert result['profile']['attributed_fraction'] == pytest.approx(0.98)
+
+
+def test_call_site_timeline_qualifies_attention_without_double_counting(tmp_path):
+    summary = _campaign(tmp_path)
+    module = _module()
+    profile = module._read_round(summary)['incumbent']
+    evidence = {
+        'schema_version': 1,
+        'profile_sha256': hashlib.sha256(json.dumps(
+            profile, sort_keys=True, separators=(',', ':'), ensure_ascii=False,
+            allow_nan=False).encode()).hexdigest(),
+        'regions': [{'tool': 'attention.flex', 'stage': 'denoise.velocity',
+                     'site': 'action_video_self',
+                     'critical_path_spans_ms': [[4, 8], [7, 10], [20, 24]]}],
+    }
+    timeline = _save(tmp_path / 'attention.json', evidence)
+    exhausted = _save(tmp_path / 'finished.json', {'result': 'other routes evaluated'})
+    history = _history(tmp_path, [summary], exhausted_tools=[
+        {'tool': tool.tool_id, 'reason': 'already evaluated', 'evidence_ref': str(exhausted)}
+        for tool in all_tools() if tool.tool_id != 'attention.flex_attention'])
+    chosen = module.recommend(summary, history, operator_profile_path=timeline)['chosen_action']
+    assert chosen['tool'] == 'attention.flex_attention'
+    assert chosen['call_site'] == 'action_video_self'
+    assert chosen['affected_share'] == pytest.approx(10 / 80)
+
+    evidence['regions'][0]['site'] = 'video_self'
+    _save(timeline, evidence)
+    with pytest.raises(ValueError, match='eligible attention site'):
+        module.recommend(summary, history, operator_profile_path=timeline)
+
+    evidence['profile_sha256'] = '0' * 64
+    _save(timeline, evidence)
+    with pytest.raises(ValueError, match='does not match'):
+        module.recommend(summary, history, operator_profile_path=timeline)
 
 
 @pytest.mark.parametrize('intervals, expected', [
