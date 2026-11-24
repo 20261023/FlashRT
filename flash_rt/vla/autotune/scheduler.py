@@ -7,16 +7,14 @@ from .slurm import parse_submission
 
 
 class SlurmClient:
-    def __init__(self, ssh_host=None, *, runner=None, timeout=60):
+    def __init__(self, ssh_host=None, *, runner=None):
         self.ssh_host = ssh_host
         self.runner = runner or subprocess.run
-        self.timeout = timeout
 
     def _run(self, argv):
         command = (['ssh', '-o', 'BatchMode=yes', self.ssh_host, shlex.join(argv)]
                    if self.ssh_host else argv)
-        return self.runner(command, text=True, capture_output=True,
-                           timeout=self.timeout, check=True)
+        return self.runner(command, text=True, capture_output=True, check=True)
 
     def submit(self, script):
         return parse_submission(self._run(['sbatch', '--parsable', str(script)]).stdout)

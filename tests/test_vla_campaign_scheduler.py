@@ -66,8 +66,7 @@ def test_wait_reconciles_known_job_without_submitting_or_validating_results(tmp_
             state = next(self.states)
             return {'job_id': job_id, 'state': state, 'terminal': state == 'COMPLETED', 'exit_code': '0:0'}
     sleeps = []
-    result = wait_campaign(root, Client(), interval=15, timeout=60,
-                           sleep=sleeps.append, clock=lambda: 0.0)
+    result = wait_campaign(root, Client(), interval=15, sleep=sleeps.append)
     assert result['scheduler_success'] is True
     assert sleeps == [15, 15]
     with CampaignLedger(root / 'ledger.sqlite') as ledger:
@@ -96,7 +95,7 @@ def test_wait_terminal_scheduler_failure_does_not_invent_worker_failure(tmp_path
         assert all(item['state'] == 'queued' and item['result'] is None for item in ledger.attempts())
 
 
-def test_wait_timeout_preserves_unknown_job_and_refuses_unconfirmed_submission(tmp_path):
+def test_wait_refuses_unconfirmed_submission_and_tracks_unknown_until_accounted(tmp_path):
     from flash_rt.vla import BackendConfig
     from flash_rt.vla.autotune.schema import Candidate
     from flash_rt.vla.autotune.controller import initialize_campaign, mark_submitting, mark_queued, wait_campaign
@@ -108,6 +107,8 @@ def test_wait_timeout_preserves_unknown_job_and_refuses_unconfirmed_submission(t
         calls = 0
         def status(self, job_id):
             self.calls += 1
+            if self.calls == 3:
+                return {'job_id': job_id, 'state': 'COMPLETED', 'terminal': True, 'exit_code': '0:0'}
             return {'job_id': job_id, 'state': 'UNKNOWN', 'terminal': False}
     client = Client()
     with pytest.raises(ValueError, match='confirmed'):
@@ -115,12 +116,9 @@ def test_wait_timeout_preserves_unknown_job_and_refuses_unconfirmed_submission(t
     assert client.calls == 0
     mark_submitting(root)
     mark_queued(root, '123')
-    now = [0.0]
-    def sleep(seconds):
-        now[0] += seconds
-    result = wait_campaign(root, client, interval=15, timeout=20, sleep=sleep, clock=lambda: now[0])
-    assert result['timed_out'] is True and result['scheduler_success'] is False
-    assert now == [20.0]
+    sleeps = []
+    result = wait_campaign(root, client, interval=15, sleep=sleeps.append)
+    assert result['scheduler_success'] and sleeps == [15, 15]
 
 
 def test_expired_controller_job_uses_accounting_but_connection_errors_propagate():

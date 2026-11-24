@@ -239,25 +239,22 @@ def submit_campaign(root, script, client):
     return job_id
 
 
-def wait_campaign(root, client, *, interval=15, timeout=None, sleep=None, clock=None):
+def wait_campaign(root, client, *, interval=15, sleep=None):
     """Monitor confirmed jobs only; scheduler completion never validates results.
 
-    An interrupted/expired wait can be resumed safely. No submission, ingestion,
+    An interrupted wait can be resumed safely. No submission, ingestion,
     rejection or winner selection happens here, even for terminal failed jobs.
     """
-    for name, value in (('interval', interval), ('timeout', timeout)):
-        if name == 'timeout' and value is None:
-            continue
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-            raise ValueError(f'{name} must be a positive finite number of seconds')
+    if (isinstance(interval, bool) or not isinstance(interval, (int, float))
+            or not math.isfinite(interval) or interval <= 0):
+        raise ValueError('interval must be a positive finite number of seconds')
     root = Path(root)
-    sleep, clock = sleep or time.sleep, clock or time.monotonic
+    sleep = sleep or time.sleep
     with CampaignLedger(root / 'ledger.sqlite') as ledger:
         attempts = ledger.attempts()
     if not attempts or any(item['job_id'] is None for item in attempts):
         raise ValueError('wait requires a confirmed job ID for every attempt; reconcile unknown submissions first')
     jobs = sorted({item['job_id'] for item in attempts})
-    deadline = math.inf if timeout is None else clock() + timeout
     while True:
         statuses = [client.status(job_id) for job_id in jobs]
         if any(item.get('job_id') != job_id for job_id, item in zip(jobs, statuses)):
@@ -271,17 +268,16 @@ def wait_campaign(root, client, *, interval=15, timeout=None, sleep=None, clock=
                 if queued:
                     ledger.transition_group(queued, ('queued',), 'running')
         terminal = all(item['terminal'] for item in statuses)
-        remaining = deadline - clock()
         output = {
-            'jobs': statuses, 'timed_out': not terminal and remaining <= 0,
+            'jobs': statuses, 'timed_out': False,
             'scheduler_success': terminal and all(
                 item['state'] == 'COMPLETED' and item.get('exit_code') == '0:0' for item in statuses),
             'interpretation': 'Scheduler state only; ingest complete worker bundles before validation/ranking',
         }
         _save_json(root / 'scheduler-status.json', output)
-        if terminal or remaining <= 0:
+        if terminal:
             return output
-        sleep(min(interval, remaining))
+        sleep(interval)
 
 
 def ingest_campaign(root, results_dir, *, job_finished=False):
@@ -437,7 +433,6 @@ def main(argv=None):
     wait.add_argument('--root', required=True)
     wait.add_argument('--ssh-host')
     wait.add_argument('--interval', type=float, default=15)
-    wait.add_argument('--timeout', type=float, help='Optional monitoring deadline in seconds (default: wait for terminal state)')
     ingest = commands.add_parser('ingest')
     ingest.add_argument('--root', required=True)
     ingest.add_argument('--results', required=True)
@@ -481,8 +476,7 @@ def main(argv=None):
         _save_json(Path(args.root) / 'scheduler-status.json', output)
     elif args.command == 'wait':
         from .scheduler import SlurmClient
-        output = wait_campaign(args.root, SlurmClient(args.ssh_host),
-                               interval=args.interval, timeout=args.timeout)
+        output = wait_campaign(args.root, SlurmClient(args.ssh_host), interval=args.interval)
     else:
         output = ingest_campaign(args.root, args.results, job_finished=args.job_finished)
     print(json.dumps(output, indent=2))

@@ -768,7 +768,7 @@ def build_script(manifest, *, gpu_arch='80', cutlass_dir, python='python', extra
         f'STORE={quote(store)}',
         'cd "$SRC"',
         ' '.join(cmake),
-        'cmake --build "$SRC/build" -j "${SLURM_CPUS_ON_NODE:-8}"',
+        'cmake --build "$SRC/build" -j "${SLURM_CPUS_ON_NODE:-$(nproc)}"',
         f'PYTHONPATH="$SRC" PYTHONSAFEPATH=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 {quote(python)} -B '
         f'-m flash_rt.vla.autotune.snapshots record-built --store "$STORE" '
         f'--snapshot-id {manifest["snapshot_id"]} --fingerprint {quote(fingerprint)}',
