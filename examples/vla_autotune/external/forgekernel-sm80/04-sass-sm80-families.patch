@@ -1,0 +1,42 @@
+diff --git a/skills/sass/sass_tools.py b/skills/sass/sass_tools.py
+index 721d731..1afbcd3 100644
+--- a/skills/sass/sass_tools.py
++++ b/skills/sass/sass_tools.py
+@@ -48,6 +48,10 @@ SM90_TENSOR_FAMILIES = (
+     "USETMAXREG", "WARPGROUP",
+ )
+ 
++# Accept Ampere tensor/movement instructions without waiving the other checks.
++SM80_TENSOR_FAMILIES = ("HMMA", "LDGSTS", "LDSM")
++TENSOR_FAMILIES = SM80_TENSOR_FAMILIES + SM90_TENSOR_FAMILIES
++
+ # Lines the profiler injects into its own output stream. Counting these as opcodes
+ # is how a probe once reported ``opcodes={ERROR: 2}`` — the two "instructions" were
+ # ``==ERROR== Could not open report file``.
+@@ -113,7 +117,7 @@ def opcode_histogram(instructions: Iterable[Instr]) -> "Counter[str]":
+ 
+ 
+ def family_counts(instructions: Iterable[Instr],
+-                  families: Sequence[str] = SM90_TENSOR_FAMILIES) -> "Counter[str]":
++                  families: Sequence[str] = TENSOR_FAMILIES) -> "Counter[str]":
+     counts: "Counter[str]" = Counter()
+     for i in instructions:
+         root = i.opcode.split(".", 1)[0]
+@@ -141,7 +145,7 @@ def self_check(profiled_kernel: str,
+                expected_kernel: str,
+                parsed: ParseResult,
+                min_instructions: int = MIN_INSTRUCTIONS,
+-               families: Sequence[str] = SM90_TENSOR_FAMILIES) -> List[str]:
++                families: Sequence[str] = TENSOR_FAMILIES) -> List[str]:
+     """Everything that must hold before a histogram may be believed.
+ 
+     Returns the list of violated expectations; empty means trustworthy. Each check
+@@ -189,7 +193,7 @@ def analyze(sass_text: str,
+             profiled_kernel: str,
+             launch_pairs: Sequence[Tuple[str, float]],
+             min_instructions: int = MIN_INSTRUCTIONS,
+-            families: Sequence[str] = SM90_TENSOR_FAMILIES,
++            families: Sequence[str] = TENSOR_FAMILIES,
+             top: int = 40) -> bool:
+     """Parse, histogram, self-check, and speak the verdict line the driver gates on.
+ 

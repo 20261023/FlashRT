@@ -1,0 +1,36 @@
+diff --git a/hw_kb/cuda/sm80/index.md b/hw_kb/cuda/sm80/index.md
+new file mode 100644
+index 0000000..a67f381
+--- /dev/null
++++ b/hw_kb/cuda/sm80/index.md
+@@ -0,0 +1,12 @@
++# SM80 CUDA knowledge base
++
++FlashRT SM80 enablement of OpenBMB/ForgeKernel at
++`b2c8ae8510e02c28576808910a6b8827721ab7dc` (Apache-2.0).
++
++This tree contains no certified recipes. Every generated recipe requires
++measurement and numerical validation on the allocated target GPU.
++
++GA100 uses `compute_80` / `sm_80`, HMMA (`mma.sync`), LDSM (`ldmatrix`) and
++LDGSTS (`cp.async`). It has no TMA, WGMMA, tcgen05 or FP8 tensor cores.
++Use PM sampling intervals of at least 20000 cycles. Insufficient samples remain
++a failed or partial profiling observation.
+diff --git a/hw_kb/cutedsl/sm80/index.md b/hw_kb/cutedsl/sm80/index.md
+new file mode 100644
+index 0000000..e6acb5d
+--- /dev/null
++++ b/hw_kb/cutedsl/sm80/index.md
+@@ -0,0 +1,12 @@
++# SM80 CuTe DSL knowledge base
++
++FlashRT SM80 enablement of OpenBMB/ForgeKernel at
++`b2c8ae8510e02c28576808910a6b8827721ab7dc` (Apache-2.0).
++
++This tree contains no certified recipes. CuTe DSL availability and device
++compilation must be checked for the installed GPU runtime version.
++
++Set `CUTE_DSL_ARCH=sm_80`. GA100 uses HMMA, LDSM and LDGSTS; it has no TMA,
++WGMMA, tcgen05 or FP8 tensor cores. Use PM sampling intervals of at least
++20000 cycles. These configuration changes do not establish kernel correctness
++or performance.

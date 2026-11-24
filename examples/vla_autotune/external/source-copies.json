@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "name": "forgekernel",
+      "repo": "https://github.com/OpenBMB/ForgeKernel",
+      "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+      "license": "Apache-2.0",
+      "license_files": [
+        {
+          "upstream_path": "LICENSE",
+          "local_path": "examples/vla_autotune/external/licenses/forgekernel/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "upstream_path": "NOTICE",
+          "local_path": "examples/vla_autotune/external/licenses/forgekernel/NOTICE",
+          "sha256": "898a3dfa72f4aeb212149aa67537f6461bca148340b2497241884935ab337139"
+        }
+      ],
+      "copy_scope": "only license/notice files; ForgeKernel patch context additionally contains adapted upstream lines",
+      "adaptations": [
+        {
+          "path": "01-hw-kb-sm80.patch",
+          "sha256": "709f135d2ba823b8544289fd4e24cde1e1258f6fdeac17d88b69a6ad03538e6f"
+        },
+        {
+          "path": "02-cute-arch-sm80.patch",
+          "sha256": "d0333763e7e22824adc76c9356eb21bbd249a3c8a1cae5b14f151bbf1478215e"
+        },
+        {
+          "path": "03-cuda-gencode-sm80.patch",
+          "sha256": "964ca2292e5758e3c1389bcd46943cbe1992ee0207564a309ffdda87ec3451f9"
+        },
+        {
+          "path": "04-sass-sm80-families.patch",
+          "sha256": "ea7b38114ff422f0a5315ddf53a50572b81e2b8befca2f96f41718a46a23d2c2"
+        },
+        {
+          "path": "05-ga100-pm-interval.patch",
+          "sha256": "bccd1bdc40ce4305e3f6e0bbad39d1bee0d9795b5fa03adf4d92259c23f88017"
+        }
+      ]
+    },
+    {
+      "name": "kernelagent",
+      "repo": "https://github.com/meta-pytorch/KernelAgent",
+      "commit": "e0647170da36ef9b059ac0bd3d60103aa4ed378b",
+      "license": "Apache-2.0",
+      "license_files": [
+        {
+          "upstream_path": "LICENSE",
+          "local_path": "examples/vla_autotune/external/licenses/kernelagent/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ],
+      "copy_scope": "only license/notice files; ForgeKernel patch context additionally contains adapted upstream lines",
+      "adaptations": []
+    },
+    {
+      "name": "aitune",
+      "repo": "https://github.com/ai-dynamo/aitune",
+      "commit": "1d3a4236ad8f458669d5633715b6956125f2289c",
+      "license": "Apache-2.0",
+      "license_files": [
+        {
+          "upstream_path": "LICENSE",
+          "local_path": "examples/vla_autotune/external/licenses/aitune/LICENSE",
+          "sha256": "4cd13f7a31e98f51c4fb960a115e9a9ab9c42284ca5d5c9b5ccbcf322de45bfd"
+        }
+      ],
+      "copy_scope": "only license/notice files; ForgeKernel patch context additionally contains adapted upstream lines",
+      "adaptations": []
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "tool_id": "kernel.forgekernel",
+  "repo": "https://github.com/OpenBMB/ForgeKernel",
+  "commit": "b2c8ae8510e02c28576808910a6b8827721ab7dc",
+  "scope": "dedicated SM80 installation only; no GPU or generated-kernel validation",
+  "patches": [
+    {
+      "path": "01-hw-kb-sm80.patch",
+      "sha256": "709f135d2ba823b8544289fd4e24cde1e1258f6fdeac17d88b69a6ad03538e6f"
+    },
+    {
+      "path": "02-cute-arch-sm80.patch",
+      "sha256": "d0333763e7e22824adc76c9356eb21bbd249a3c8a1cae5b14f151bbf1478215e"
+    },
+    {
+      "path": "03-cuda-gencode-sm80.patch",
+      "sha256": "964ca2292e5758e3c1389bcd46943cbe1992ee0207564a309ffdda87ec3451f9"
+    },
+    {
+      "path": "04-sass-sm80-families.patch",
+      "sha256": "ea7b38114ff422f0a5315ddf53a50572b81e2b8befca2f96f41718a46a23d2c2"
+    },
+    {
+      "path": "05-ga100-pm-interval.patch",
+      "sha256": "bccd1bdc40ce4305e3f6e0bbad39d1bee0d9795b5fa03adf4d92259c23f88017"
+    }
+  ],
+  "files": {
+    "hw_kb/cuda/sm80/index.md": {
+      "before": null,
+      "after": "75c3c88d65a39cd4212eafba819cbfde8b67f4a56e0b7daf29957f23b3a64795"
+    },
+    "hw_kb/cutedsl/sm80/index.md": {
+      "before": null,
+      "after": "27e4c50bfcd4b2a72fac20ae83abff54e538ff4b028bfad88f2055e9ddd834e3"
+    },
+    "src/forgekernel/taskcard.py": {
+      "before": "97bf6f42d97318fc4ca25bb984875c0166d6a7a9b14eb4bf846736fb386072ae",
+      "after": "12655c856798258c92a9022adc9b3d6e96890d534ceda4df3b21f2222feb3ef7"
+    },
+    "src/forgekernel/card_template/eval/leaderboard.py": {
+      "before": "f4ba6921a1568f8af7dacc6980802a5ff8760ade9575beb8cfd775943598d228",
+      "after": "6d410fef9a00e6fa589cb9043513f7d573be2fbbdd8688e97d3946a81fb1ca0b"
+    },
+    "skills/sass/sass_tools.py": {
+      "before": "fee39837a1b12226c8f889d1ca50c4e77fd73b12bfd34ad1d9ccf5cc5f24a5ef",
+      "after": "658a6422256178ce112f0a880b873623040a672f1da380b6f6515d01bf1d5a89"
+    },
+    "skills/timeline/pm_timeline_run.py": {
+      "before": "825b7561d9e5b9085b22e8daa25706039b76f69b79166fe0d832ea205ef724fd",
+      "after": "4cc889fffb8ee2e4db74942413df6adcc110bbe59e3a3baca4849478e58de4ee"
+    },
+    "skills/stall/stall_price_run.py": {
+      "before": "3d4de5939c96ebc1422c4d80f7e66ae7aaf51a8e12b2c6e59155e1ff576d1b05",
+      "after": "92456721946ed3a9989ff539c48f79ab8662045d4304168af64173aecb69dae8"
+    }
+  }
+}

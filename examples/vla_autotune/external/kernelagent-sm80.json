@@ -1,0 +1,14 @@
+{
+  "tool_id": "kernel.kernelagent",
+  "upstream_commit": "e0647170da36ef9b059ac0bd3d60103aa4ed378b",
+  "gpu_name": "NVIDIA A100 SXM4 80GB",
+  "hardware_target": "cuda_sm80",
+  "generation": {
+    "num_workers": 3,
+    "model": "claude-sonnet-4-6"
+  },
+  "optimization_worker_kwargs": {
+    "gpu_name": "NVIDIA A100 SXM4 80GB"
+  },
+  "functional_validation": "NOT_RUN"
+}

@@ -1,0 +1,52 @@
+diff --git a/skills/stall/stall_price_run.py b/skills/stall/stall_price_run.py
+index 75ccb69..8fd731d 100644
+--- a/skills/stall/stall_price_run.py
++++ b/skills/stall/stall_price_run.py
+@@ -119,10 +119,11 @@ def expand_bundle(log: str) -> str:
+ # the warp-stall series sample AT --pm-sampling-interval, and 8192 cycles is
+ # what resolves phase structure (65536 gives ~45 samples on a ~1.7 ms kernel).
+ # Fast kernels starve at 8192 — pass `--pm-interval 2048` for sub-0.5 ms ones.
+-PM_INTERVAL = 8192
++PM_INTERVAL = 20000  # GA100 minimum; this dedicated install targets SM80.
+ 
+ 
+ def pm_sections(interval: int) -> list:
++    interval = max(PM_INTERVAL, interval)
+     return ["--section", "PmSampling", "--section", "PmSampling_WarpStates",
+             "--pm-sampling-interval", str(interval),
+             "--pm-sampling-buffer-size", "268435456"]
+@@ -225,7 +226,7 @@ def _render_page(stall_tools):
+ # Once the timeline reports exactly that, one PM-only collection (sections only,
+ # far lighter than --set full) at the interval that doubles the floor replaces it.
+ REPORT_PM = "/tmp/stallprice_pm"
+-PM_MIN_INTERVAL = 128
++PM_MIN_INTERVAL = 20000  # Never retry below the GA100 hardware minimum.
+ _COARSE_RE = re.compile(r"^PMTL-FAIL reason=interval-too-coarse \(max (\d+) stall samples < (\d+)")
+ 
+ 
+@@ -355,6 +356,7 @@ def main(argv=None) -> int:
+     pm_interval = PM_INTERVAL
+     if "--pm-interval" in recipe:
+         pm_interval = int(recipe[recipe.index("--pm-interval") + 1])
++    pm_interval = max(PM_INTERVAL, pm_interval)
+     if "--workload" in recipe:
+         # one workload of a group card (the driver prices the card's meta_workloads one
+         # job each): the launch target's ncu_window follows the variable, which every
+diff --git a/skills/timeline/pm_timeline_run.py b/skills/timeline/pm_timeline_run.py
+index 8677538..3a93867 100644
+--- a/skills/timeline/pm_timeline_run.py
++++ b/skills/timeline/pm_timeline_run.py
+@@ -24,11 +24,12 @@ import subprocess
+ import sys
+ 
+ REPORT = "/tmp/pm_timeline"
+-INTERVAL = 8192            # cycles; phase-resolving default — see --interval
++INTERVAL = 20000           # cycles; GA100 minimum, including explicit overrides
+ BUFFER = 268435456
+ 
+ 
+ def build_cmd(interval: int) -> list:
++    interval = max(INTERVAL, interval)
+     return ["ncu", "--profile-from-start", "off", "--launch-count", "8",
+             "--kill", "yes", "-f", "-o", REPORT,
+             "--section", "PmSampling", "--section", "PmSampling_WarpStates",

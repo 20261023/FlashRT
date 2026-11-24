@@ -1,0 +1,13 @@
+diff --git a/src/forgekernel/taskcard.py b/src/forgekernel/taskcard.py
+index f2e243b..a9f624c 100644
+--- a/src/forgekernel/taskcard.py
++++ b/src/forgekernel/taskcard.py
+@@ -33,7 +33,7 @@ SUITE = "forgekernel"
+ PROBLEM = lbmod.PROBLEM_FILE                     # eval/leaderboard/problem.json
+ LB_DIR = lbmod.LEADERBOARD_DIR
+ KERNEL_FILE = {"cutedsl": "kernel.py", "cuda": "kernel.cu"}
+-CUTE_ARCH = {"sm90": "sm_90a", "sm100": "sm_100a", "sm103": "sm_103a", "sm120": "sm_120a"}
++CUTE_ARCH = {"sm80": "sm_80", "sm90": "sm_90a", "sm100": "sm_100a", "sm103": "sm_103a", "sm120": "sm_120a"}
+ EVAL_FILES = ("leaderboard.py", "timing.py", "precision.py", "closed_ref.py", "ncu_probe.py")
+ NCU_PROBE_MODE = "cmd:ncu --csv --metrics gpu__time_active.sum python3 eval/ncu_probe.py"
+ JOB_TIMEOUT_S = 1800

@@ -1,0 +1,13 @@
+diff --git a/src/forgekernel/card_template/eval/leaderboard.py b/src/forgekernel/card_template/eval/leaderboard.py
+index 35f2f57..fa51995 100644
+--- a/src/forgekernel/card_template/eval/leaderboard.py
++++ b/src/forgekernel/card_template/eval/leaderboard.py
+@@ -417,7 +417,7 @@ def _precision():
+ CUDA_KERNEL_SUFFIXES = (".cu",)
+ CUDA_DEFAULT_CFLAGS = ["-O3", "--use_fast_math"]
+ CUDA_DEFAULT_LDFLAGS = ["-lcuda"]
+-CUDA_GENCODE = "-gencode=arch=compute_100a,code=sm_100a"
++CUDA_GENCODE = "-gencode=arch=compute_80,code=sm_80"
+ CUDA_FLAGS_LINE = re.compile(r"^[ \t]*//[ \t]*fk-cuda-cflags:(.*)$", re.M)
+ # "1" from the loop's stall pricing (recon/stall_price_run.py): the build adds -lineinfo.
+ CUDA_LINEINFO_ENV = "FK_CUDA_LINEINFO"
