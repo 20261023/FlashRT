@@ -86,6 +86,8 @@ def test_stage_tables_are_consistent():
             assert covered and all(stage_id in STAGES for stage_id in covered)
             mapped = {item.stage_id for item in items}
             assert set(covered) <= mapped, (model, key)
+            for item in items:
+                assert (key in item.profiling_keys) == (item.stage_id in covered), (model, key, item.stage_id)
     for info in STAGES.values():
         assert info.kind in stages.STAGE_KINDS
         assert info.playbook and all(row in stages.PLAYBOOK for row in info.playbook)
@@ -105,18 +107,28 @@ def test_stage_tables_are_consistent():
 def test_profile_keys_follow_contract():
     full = ('vision.encode', 'vision.project', 'prefix.prefill', 'denoise.velocity')
     for model in ('pi0', 'pi05'):
-        assert PROFILE_KEYS[model] == {'full': full, 'prefix': full[:3], 'velocity': full[3:]}
+        assert PROFILE_KEYS[model] == {
+            'full': full, 'prefix': full[:3], 'velocity': full[3:],
+            'vision': ('vision.encode',),
+            'prefix_only': ('vision.project', 'prefix.prefill'),
+            'denoise_all': ('denoise.velocity',),
+            'host_input': ('host.input',), 'host_output': ('host.output',)}
     assert PROFILE_KEYS['hyvla'] == {'vision': ('vision.encode', 'vision.project'),
-                                     'prefix': ('prefix.prefill',), 'velocity': ('denoise.velocity',)}
+                                     'prefix': ('prefix.prefill',), 'velocity': ('denoise.velocity',),
+                                     'host_input': ('host.input',), 'host_output': ('host.output',)}
     assert PROFILE_KEYS['fastwam'] == {
         'condition_vae_video_prefill': ('host.input', 'vision.encode', 'prefix.prefill'),
-        'velocity': ('denoise.velocity',)}
+        'velocity': ('denoise.velocity',), 'vision': ('vision.encode',),
+        'prefix': ('prefix.prefill',), 'condition_tokens': ('prefix.prefill',),
+        'condition_context': ('prefix.prefill',), 'condition_mask': ('prefix.prefill',),
+        'condition_text_kv': ('prefix.prefill',),
+        'host_input': ('host.input',), 'host_output': ('host.output',)}
 
 
 def test_fastwam_condition_interval_covers_host_input_and_notes_say_so():
     # _prepare_condition starts with _observation_tensors (validation, H2D, T5 encode_prompt).
     host = next(item for item in stages_for('fastwam') if item.stage_id == 'host.input')
-    assert host.profiling_keys == ('condition_vae_video_prefill',)
+    assert set(host.profiling_keys) == {'condition_vae_video_prefill', 'host_input'}
     text = ' '.join(host.notes)
     assert 'encode_prompt' in text and '_initial_state' in text and 'unattributed_ms' in text
     assert 'Not instrumented' not in text

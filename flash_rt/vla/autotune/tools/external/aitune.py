@@ -73,11 +73,17 @@ SPEC = {
     'lane': 'patch',
     'stages': ('denoise.velocity', 'vision.encode', 'prefix.prefill', 'kernel.gemm',
                'kernel.attention', 'kernel.conv'),
-    'models': ('fastwam', 'hyvla'),
+    'models': ('*',),
+    'model_predicate': {'any': [
+        {'path': 'features.torch_modules', 'equals': True},
+        {'path': 'features.functional_torch', 'equals': True},
+    ]},
+    'frameworks': ('torch',),
     'exactness': 'approximate',
-    'status': 'needs_setup',
+    'status': 'needs_implementation',
     'reason': (
-        'Wraps torch.nn.Module submodules only. FastWAM: the upstream Torch modules '
+        'No FlashRT wrapper/artifact-loader integration exists: implement that source patch '
+        'before environment setup is sufficient. Wraps torch.nn.Module submodules only. FastWAM: the upstream Torch modules '
         '(video_expert, action_expert, mot, vae) can be wrapped once integrated by a patch; '
         'Hy: the frontends use functional Torch ops and fvk kernels on plain tensors, so a '
         'patch must first package a pure-Torch region (ViT blocks) as an nn.Module; '

@@ -293,12 +293,13 @@ def test_capture_calls_keeps_binding_of_non_function_class_attributes(value):
 ])
 def test_specs_match_research_pins(module, pin, notice, skills):
     spec = module.SPEC
-    assert set(spec) == external.SPEC_KEYS
+    assert external.SPEC_KEYS <= set(spec) <= external.SPEC_KEYS | external.SPEC_OPTIONAL_KEYS
     assert set(spec['upstream']) == external.UPSTREAM_KEYS
     assert spec['upstream']['commit'] == pin and spec['upstream']['notice'] is notice
     assert spec['upstream']['license'] == 'Apache-2.0'
     assert list(spec['skills']) == skills
-    assert spec['status'] == 'needs_setup' and spec['reason']
+    expected_status = 'needs_implementation' if module is aitune else 'needs_setup'
+    assert spec['status'] == expected_status and spec['reason']
     assert spec['setup'] and spec['risks']
     assert external.external_specs()[spec['tool_id']] is spec
     tree = ast.parse(Path(module.__file__).read_text())
@@ -316,14 +317,16 @@ def test_spec_specifics():
     assert 'A800' in forgekernel.SPEC['reason'] and 'Claude' in forgekernel.SPEC['reason']
     assert 'first' in kernelagent.SPEC['reason'] and 'A100 SXM4 80GB' in kernelagent.SPEC[
         'reason']
-    assert apxinf.SPEC['models'] == ('pi05',) and apxinf.SPEC['lane'] == 'baseline'
+    assert apxinf.SPEC['models'] == ('*',) and apxinf.SPEC['lane'] == 'baseline'
+    assert apxinf.SPEC['model_predicate'] == {'path': 'tools.supported', 'contains': 'engine.apxinf'}
     assert len(forgekernel.sm80_enablement()) == 5
 
 
 def test_aitune_spec_is_documentation_only_and_grounded():
     spec = aitune.SPEC
     assert spec['tool_id'] == 'compile.aitune' and spec['lane'] == 'patch'
-    assert spec['models'] == ('fastwam', 'hyvla') and spec['exactness'] == 'approximate'
+    assert spec['models'] == ('*',) and spec['exactness'] == 'approximate'
+    assert spec['model_predicate'] and spec['status'] == 'needs_implementation'
     assert spec['stages'][0] == 'denoise.velocity'
     assert {'vision.encode', 'prefix.prefill'} <= set(spec['stages'])
     # No generated script: every documented API comes from source read at the pin.

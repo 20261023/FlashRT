@@ -31,6 +31,10 @@ SPEC_KEYS = frozenset({
     'tool_id', 'title', 'lane', 'stages', 'models', 'exactness', 'status', 'reason',
     'upstream', 'skills', 'setup', 'risks',
 })
+SPEC_OPTIONAL_KEYS = frozenset({
+    'model_predicate', 'status_rules', 'frameworks', 'samplers', 'min_capability',
+    'hardware_only', 'aliases', 'requirements_path',
+})
 UPSTREAM_KEYS = frozenset({'repo', 'commit', 'license', 'notice'})
 FLOAT_DTYPES = ('bfloat16', 'float16', 'float32')
 # Names the generated Python files define or import at module level.

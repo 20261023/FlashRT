@@ -37,7 +37,8 @@ SPEC = {
     'lane': 'baseline',
     'stages': ('host.input', 'vision.encode', 'vision.project', 'prefix.prefill',
                'denoise.velocity', 'denoise.routing', 'host.launch'),
-    'models': ('pi05',),
+    'models': ('*',),
+    'model_predicate': {'path': 'tools.supported', 'contains': 'engine.apxinf'},
     'exactness': 'n/a',
     'status': 'needs_setup',
     'reason': (

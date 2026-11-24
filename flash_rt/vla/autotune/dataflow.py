@@ -1,36 +1,18 @@
-"""Implementation-specific cost ledgers, not profiler-derived HBM measurements."""
+"""Declared source/runtime ledgers; never profiler-derived HBM measurements."""
+
+from importlib import import_module
+
+from ..model_spec import get_spec
 
 
 def describe_dataflow(backend):
     config = getattr(backend, 'config', None)
-    frontend = getattr(backend, 'frontend', None)
-    if getattr(config, 'model', None) != 'pi05' or not hasattr(frontend, 'pipeline'):
+    if config is None or getattr(backend, 'frontend', None) is None:
         return None
-    pipe = frontend.pipeline
-    prefix = int(pipe.encoder_seq_len)
-    actions = int(pipe.chunk_size)
-    layers = 18 if getattr(pipe, 'prefix_export', False) else 17
-    decoder_int8 = getattr(pipe, 'use_int8_decoder', False)
-    mixed_int8 = decoder_int8 or getattr(pipe, 'use_int8_encoder', False)
-    return {
-        'basis': ('actual_runtime_rows_and_source_verified_pi05_w8a8_bf16_geometry'
-                  if mixed_int8 else 'actual_runtime_rows_and_source_verified_pi05_bf16_geometry'),
-        'prefix_rows': prefix, 'action_rows': actions,
-        'vision_tokens_before_pool': int(pipe.vision_seq),
-        'vision_tokens_after_pool': int(pipe.vision_seq_enc),
-        'prefix_ffn': {'layers': layers, 'M': prefix, 'K': 2048, 'N': 16384,
-                       'linear_flops': layers * 6 * prefix * 2048 * 16384},
-        'action_per_evaluation': {
-            'layers': 18, 'M': actions, 'hidden': 1024,
-            'q_width': 2048, 'kv_width': 256, 'ffn_width': 4096,
-            'projection_and_ffn_flops': 18 * (
-                2 * actions * 1024 * 2560 + 2 * actions * 2048 * 1024
-                + 6 * actions * 1024 * 4096),
-            'attention_product_flops': 18 * 4 * actions * (prefix + actions) * 2048,
-            'logical_linear_weight_bytes': 18 * (1 if decoder_int8 else 2) * (
-                1024 * 2560 + 2048 * 1024 + 3 * 1024 * 4096)},
-        'notes': ['FMA=2 FLOPs; norm/activation/softmax omitted',
-                  'Logical expert matrix bytes exclude quantization scales, retained copies and HBM traffic',
-                  'Prefix KV reused across evaluations, not across observations',
-                  'Post-ViT pooling reduces prefix rows, not the completed ViT work'],
-    }
+    spec = get_spec(config.model, spec_dir=getattr(config, 'spec_dir', None))
+    hook = spec.get('adapter', {}).get('hooks', {}).get('dataflow')
+    hook = hook or spec.get('profiling', {}).get('dataflow')
+    if hook is None:
+        return None
+    module, name = hook.split(':', 1)
+    return getattr(import_module(module), name)(backend)

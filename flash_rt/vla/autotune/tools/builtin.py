@@ -13,7 +13,8 @@ import math
 from numbers import Integral, Real
 
 from flash_rt.sampling import ProbeFlowConfig
-from flash_rt.vla.registry import _CAPABILITIES, validate_config
+from flash_rt.vla.model_spec import get_spec
+from flash_rt.vla.registry import validate_config
 
 from ..schema import Candidate, decode_backend, encode_backend
 from ..search import enumerate_candidates
@@ -23,23 +24,6 @@ from .spec import ToolSpec
 
 BUILTIN = 'flash_rt.vla.autotune.tools.builtin'
 
-# Frontend defaults used to decide "identical to the baseline" (evidence):
-# use_cuda_graph: pi0_rtx.py:408 True, pi05_rtx.py:669 True, hyvla_probeflow.py:52
-# True, fastwam.py:64 False. Euler steps: NUM_STEPS_DEFAULT=10
-# (pi0/pipeline_rtx.py:61, pi05/pipeline_rtx.py:100); FastWAM validate_sampler
-# defaults to 20 (models/fastwam/config.py); Hy reads num_steps from the
-# checkpoint config (hyvla_thor.py:125), so its default is unknown here.
-GRAPH_DEFAULT = {'pi0': True, 'pi05': True, 'hyvla': True, 'fastwam': False, 'dm05': True}
-EULER_DEFAULT_STEPS = {'pi0': 10, 'pi05': 10, 'hyvla': None, 'fastwam': 20, 'dm05': 10}
-PROBEFLOW_DEFAULT_MAX = {'pi0': 10, 'pi05': 10, 'hyvla': 10, 'fastwam': 20}
-OPTION_DEFAULTS = {
-    'dm05': {'project_optimization': 'none'},
-    'pi05': {'state_prompt_mode': 'exact', 'vision_pool_factor': 1},
-    'hyvla': {'numerical_profile': 'semantic_bf16'},
-    'fastwam': {'compile_action_infer': False},
-}
-EULER_STEPS = {'pi0': (5, 6, 7, 8, 9), 'pi05': (5, 6, 7, 8, 9), 'hyvla': (5, 6, 7, 8, 9),
-               'fastwam': (10, 12, 13, 14, 16, 18)}
 PROBEFLOW_EPSILONS = (0.002, 0.004, 0.008, 0.016)
 FASTWAM_LINEAR_VARIANTS = ('torch', 'flashrt-cached', 'flashrt-legacy')
 
@@ -57,18 +41,36 @@ SKILLS = {
 
 # --------------------------------------------------------------------------- helpers
 
+def _model_spec(config):
+    return get_spec(config.model, spec_dir=getattr(config, 'spec_dir', None))
+
+
+def _defaults(config):
+    spec = _model_spec(config)
+    defaults = dict(spec['head'].get('defaults', {}))
+    defaults.update(spec.get('tools', {}).get('defaults', {}))
+    options = {}
+    for name, schema in spec['capabilities']['options'].items():
+        if 'default' in schema:
+            options[name] = schema['default']
+        if config.backend in schema.get('default_by_backend', {}):
+            options[name] = schema['default_by_backend'][config.backend]
+    options.update(defaults.get('options', {}))
+    defaults['options'] = options
+    return defaults
+
+
+def _has_option(config, option):
+    return option in _model_spec(config)['capabilities']['options']
+
+
 def effective_backend(config) -> dict:
     """Encoded backend with frontend defaults filled in, for equivalence checks only."""
     record = encode_backend(config)
-    model = record['model']
-    options = dict(record['options'])
-    options.setdefault('use_cuda_graph', GRAPH_DEFAULT[model])
-    for name, value in OPTION_DEFAULTS.get(model, {}).items():
-        options.setdefault(name, value)
-    if model == 'fastwam' and record['backend'] == 'flashrt':
-        options.setdefault('native_linear_backend', 'legacy')
-    if record['sampler'] == 'euler' and record['num_steps'] is None and EULER_DEFAULT_STEPS[model]:
-        record['num_steps'] = EULER_DEFAULT_STEPS[model]
+    defaults = _defaults(config)
+    options = {**defaults['options'], **record['options']}
+    if record['sampler'] == 'euler' and record['num_steps'] is None and defaults.get('num_steps'):
+        record['num_steps'] = defaults['num_steps']
     record['options'] = options
     return record
 
@@ -76,9 +78,11 @@ def effective_backend(config) -> dict:
 def check_baseline(tool, baseline):
     if not isinstance(baseline, Candidate):
         raise TypeError('baseline must be a Candidate')
-    if not tool.applies_to(baseline.backend.model):
+    matches, reason = tool.match_model(baseline.backend.model,
+                                      spec_dir=getattr(baseline.backend, 'spec_dir', None))
+    if not matches:
         raise ValueError(f'{tool.tool_id} does not apply to model {baseline.backend.model!r} '
-                         f'(models: {list(tool.models)})')
+                         f'({reason})')
 
 
 _PRIMARY = object()
@@ -90,7 +94,7 @@ def make_candidate(baseline, tool, short, value, backend_record, change, *, stag
     ``stage`` defaults to the tool's primary stage; pass None for no stage.
     """
     backend = decode_backend(backend_record)  # Detaches nested options.
-    allowed = set(_CAPABILITIES[backend.model]['options'])
+    allowed = set(_model_spec(backend)['capabilities']['options'])
     unknown = set(backend.options) - allowed
     if unknown:
         raise ValueError(f'{tool.tool_id} would emit unsupported {backend.model} options {sorted(unknown)}')
@@ -100,7 +104,9 @@ def make_candidate(baseline, tool, short, value, backend_record, change, *, stag
         workload_id=baseline.workload_id, parent_id=baseline.candidate_id,
         hypothesis=f'{tool.tool_id}: {change}; exactness={tool.exactness}',
         origin='search', patch_ref=baseline.patch_ref, source_ref=baseline.source_ref,
-        tool=tool.tool_id, stage=tool.primary_stage if stage is _PRIMARY else stage)
+        tool=tool.tool_id,
+        stage=(tool.primary_stage_for(backend.model, spec_dir=getattr(backend, 'spec_dir', None))
+               if stage is _PRIMARY else stage))
 
 
 def finalize(baseline, candidates, *, effective=True):
@@ -156,8 +162,14 @@ def _with(baseline, **changes):
 
 def _propose_euler_steps(tool, baseline, *, steps=None):
     check_baseline(tool, baseline)
-    model = baseline.backend.model
-    values = sorted(set(_positive_ints(EULER_STEPS[model] if steps is None else steps, 'steps')))
+    if steps is None:
+        steps = _defaults(baseline.backend).get('euler_steps')
+        if steps is None:
+            count = _defaults(baseline.backend).get('num_steps') or baseline.backend.num_steps
+            if count is None:
+                raise ValueError('Euler step defaults are unknown; pass explicit steps')
+            steps = [max(1, round(count * fraction)) for fraction in (0.5, 0.6, 2 / 3, 0.7, 0.8, 0.9)]
+    values = sorted(set(_positive_ints(steps, 'steps')))
     # Same backend content as search.enumerate_candidates for these values.
     points = enumerate_candidates(baseline, euler_steps=values, epsilons=())
     candidates = [make_candidate(baseline, tool, 'euler', count, encode_backend(point.backend),
@@ -172,7 +184,11 @@ def _default_max_steps(baseline):
         return config.probeflow.max_steps
     if config.num_steps is not None:
         return int(config.num_steps)
-    return PROBEFLOW_DEFAULT_MAX[config.model]
+    defaults = _defaults(config)
+    value = defaults.get('probeflow_max_steps') or defaults.get('num_steps')
+    if value is None:
+        raise ValueError('ProbeFlow max_steps is unknown; pass explicit max_steps')
+    return value
 
 
 def _propose_probeflow(tool, baseline, *, epsilons=PROBEFLOW_EPSILONS, max_steps=None):
@@ -204,15 +220,15 @@ def _propose_probeflow(tool, baseline, *, epsilons=PROBEFLOW_EPSILONS, max_steps
 def _propose_cuda_graph(tool, baseline):
     check_baseline(tool, baseline)
     config = baseline.backend
-    if effective_backend(config)['options']['use_cuda_graph']:
+    if effective_backend(config)['options'].get('use_cuda_graph', False):
         return []
     options = {**config.options, 'use_cuda_graph': True}
     change = 'capture the request in CUDA graphs (use_cuda_graph=True)'
-    if config.model == 'fastwam' and config.backend == 'flashrt':
+    if _has_option(config, 'native_linear_backend') and config.backend == 'flashrt':
         # registry: FastWAM native CUDA graph requires native_linear_backend="cached".
         options['native_linear_backend'] = 'cached'
         change += ' with native_linear_backend=cached (required by the FastWAM native graph)'
-    if config.model == 'fastwam' and options.get('compile_action_infer'):
+    if _has_option(config, 'compile_action_infer') and options.get('compile_action_infer'):
         # registry: compile_action_infer requires use_cuda_graph=False.
         options['compile_action_infer'] = False
         change += '; replaces torch.compile (compile_action_infer=False, mutually exclusive with graphs)'
@@ -249,25 +265,26 @@ def _propose_fastwam_linear(tool, baseline, *, variants=FASTWAM_LINEAR_VARIANTS)
     return finalize(baseline, candidates)
 
 
-def _propose_fastwam_compile(tool, baseline):
+def _propose_inductor(tool, baseline):
+    """Apply only a ModelSpec recipe for an already implemented product option."""
     check_baseline(tool, baseline)
     config = baseline.backend
-    if effective_backend(config)['options']['compile_action_infer']:
-        return []
-    options = {**config.options, 'compile_action_infer': True, 'use_cuda_graph': False}
-    options.pop('native_linear_backend', None)
-    change = ('compile video prefill and raw denoise with torch.compile (compile_action_infer=True; '
-              'backend=torch, use_cuda_graph=False, as the registry requires)')
-    return finalize(baseline, [make_candidate(baseline, tool, 'compile', 'on',
-                                              _with(baseline, backend='torch', options=options), change)])
-
-
-def _propose_dm05_compile(tool, baseline):
-    check_baseline(tool, baseline)
-    options = {**baseline.backend.options, 'project_optimization': 'compiled'}
+    recipe = _model_spec(config).get('tools', {}).get('inductor')
+    if not isinstance(recipe, dict) or not recipe.get('options'):
+        raise ValueError('compile.inductor needs an implemented tools.inductor recipe in ModelSpec')
+    for field in ('frameworks', 'samplers', 'hardware'):
+        value = getattr(config, 'framework' if field == 'frameworks' else
+                        'sampler' if field == 'samplers' else 'hardware')
+        allowed = recipe.get(field, [])
+        if allowed and value not in allowed and not (field == 'hardware' and value == 'auto'):
+            raise ValueError(f'compile.inductor requires {field} in {allowed}, got {value!r}')
+    options = {**config.options, **recipe['options']}
+    for name in recipe.get('remove_options', []):
+        options.pop(name, None)
     return finalize(baseline, [make_candidate(
-        baseline, tool, 'compile', 'on', _with(baseline, backend='torch', options=options),
-        'DM0.5 packed projections and compiled vision/prefix/action layers at fixed BF16 Euler10')])
+        baseline, tool, 'compile', 'on',
+        _with(baseline, backend=recipe.get('backend', config.backend), options=options),
+        recipe.get('reason', 'enable the implemented ModelSpec Inductor recipe'))])
 
 
 def _enabled_option(tool, baseline, option, *, sm80=False):
@@ -287,8 +304,7 @@ def _propose_fastwam_text_kv(tool, baseline):
 
 
 def _propose_pi05_int8(tool, baseline, *, modes=('encoder', 'encoder_decoder')):
-    if baseline.backend.framework != 'torch' or baseline.backend.sampler != 'euler':
-        raise ValueError('quant.int8_pi05 requires a Torch Euler baseline on SM80')
+    check_baseline(tool, baseline)
     modes = _choices(modes, ('encoder', 'encoder_decoder'), 'modes')
     candidates = []
     for mode in modes:
@@ -350,6 +366,7 @@ def _bind(function):
 
 
 def _tool(function=None, **fields):
+    fields.setdefault('models', ('*',))
     if function is None:
         return ToolSpec(**fields)
     holder, propose = _bind(function)
@@ -360,8 +377,28 @@ def _tool(function=None, **fields):
 
 # --------------------------------------------------------------------------- registry
 
-_NO_QUANT = ('registry.load_backend fixes use_fp8=False for pi0/pi05; '
+_NO_QUANT = ('pi-family adapter bindings fix use_fp8=False; '
              'HyVLAFlowFrontend requires its FP8/FP4 flags to be false')
+
+
+def _option(name):
+    return {'path': 'capabilities.options', 'contains': name}
+
+
+def _feature(name):
+    return {'path': f'features.{name}', 'equals': True}
+
+
+def _sampler(name, *, variable=False):
+    conditions = [{'path': 'head.type', 'equals': 'flow_matching'},
+                  {'path': 'capabilities.samplers', 'contains': name}]
+    if variable:
+        conditions.append(_feature('variable_steps'))
+    return {'all': conditions}
+
+
+_ATTENTION = {'all': [{'path': 'attention', 'exists': True},
+                      {'not': {'path': 'attention', 'equals': []}}]}
 
 
 def builtin_tools() -> tuple:
@@ -369,110 +406,139 @@ def builtin_tools() -> tuple:
     config_skills = (SKILLS['config'],)
     return (
         _tool(_propose_euler_steps, tool_id='sampler.euler_steps', title='Fixed Euler step count',
-              lane='config', stages=('denoise.schedule',), models=tuple(EULER_STEPS), exactness='approximate',
+              lane='config', stages=('denoise.schedule',), model_predicate=_sampler('euler', variable=True),
+              exactness='approximate',
               status='ready', skills=config_skills,
-              parameters={'steps': {model: list(values) for model, values in EULER_STEPS.items()}}),
+              parameters={'steps': None}),
         _tool(_propose_probeflow, tool_id='sampler.probeflow', title='ProbeFlow adaptive schedule',
-              lane='config', stages=('denoise.schedule', 'denoise.routing'), models=tuple(EULER_STEPS),
+              lane='config', stages=('denoise.schedule', 'denoise.routing'),
+              model_predicate=_sampler('probeflow'),
               exactness='approximate', status='ready', skills=config_skills,
               parameters={'epsilons': list(PROBEFLOW_EPSILONS), 'max_steps': None}),
         _tool(_propose_cuda_graph, tool_id='launch.cuda_graph', title='CUDA graph capture',
-              lane='config', stages=('host.launch', 'denoise.velocity'), models=('*',), exactness='exact',
+              lane='config', stages=('host.launch', 'denoise.velocity'),
+              model_predicate=_option('use_cuda_graph'), exactness='exact',
               status='ready', skills=config_skills, parameters={},
               reason='No candidate when the effective baseline already captures graphs '
-                     '(default True for pi0/pi05/hyvla/dm05, False for FastWAM).'),
-        _tool(_propose_dm05_compile, tool_id='compile.dm05_inductor',
-              title='DM0.5 packed projections and compiled layers', lane='config',
-              stages=('vision.encode', 'prefix.prefill', 'denoise.velocity', 'kernel.gemm'),
-              models=('dm05',), hardware_only=('cuda_sm80',),
+                     '(frontend defaults are declared in ModelSpec).'),
+        _tool(_propose_inductor, tool_id='compile.inductor',
+              title='Inductor through an implemented model-spec compiler recipe', lane='config',
+              stages=('host.launch', 'denoise.velocity', 'prefix.prefill', 'vision.encode', 'kernel.gemm'),
+              model_predicate={'all': [{'path': 'tools.inductor.options', 'exists': True},
+                                       {'not': {'path': 'tools.inductor.options', 'equals': {}}},
+                                       {'path': 'tools.inductor.stages', 'exists': True},
+                                       {'not': {'path': 'tools.inductor.stages', 'equals': []}}]},
+              frameworks=('torch',), requirements_path='tools.inductor',
               exactness='approximate', status='ready', skills=config_skills,
-              reason='Project Torch backend, BF16 Euler10 on SM80. Preserves the graph setting.'),
+              aliases=('compile.fastwam_inductor', 'compile.dm05_inductor'),
+              reason='Only applies a declared, already implemented BackendConfig recipe; never wraps '
+                     'or compiles model code in the measurement harness. Record cold compilation and '
+                     'break-even calls; the model-level quality gate covers changed rounding.'),
         _tool(_propose_fastwam_linear, tool_id='gemm.fastwam_linear_backend',
               title='FastWAM linear backend (torch / native cached / native legacy)',
-              lane='config', stages=('kernel.gemm', 'host.launch', 'denoise.velocity'), models=('fastwam',),
+              lane='config', stages=('kernel.gemm', 'host.launch', 'denoise.velocity'),
+              model_predicate=_option('native_linear_backend'), frameworks=('torch',),
               exactness='exact', status='ready', skills=config_skills,
               parameters={'variants': list(FASTWAM_LINEAR_VARIANTS)}),
-        _tool(_propose_fastwam_compile, tool_id='compile.fastwam_inductor',
-              title='FastWAM torch.compile of video prefill + raw denoise (author recipe)',
-              lane='config', stages=('host.launch', 'denoise.velocity', 'prefix.prefill'),
-              models=('fastwam',), exactness='approximate', status='ready', skills=config_skills,
-              parameters={},
-              reason='Opt-in compile_action_infer (frontends/torch/fastwam.py, models/fastwam/pipeline.py): '
-                     'torch.compile(mode="reduce-overhead", fullgraph=True) of mot.prefill_video_cache_tensor '
-                     'and _denoise_action_with_video_cache. Requires backend="torch" and use_cuda_graph=False '
-                     '(registry.validate_config). Cold compile is outside steady-state latency: record it and '
-                     'the break-even call count. Inductor fusions change BF16 rounding, so the quality gate '
-                     'applies.'),
         _tool(_propose_vision_pool, tool_id='prefix.vision_pool', title='pi0.5 vision token pooling',
-              lane='config', stages=('prefix.prefill', 'vision.project'), models=('pi05',),
+              lane='config', stages=('prefix.prefill', 'vision.project'),
+              model_predicate=_option('vision_pool_factor'), frameworks=('torch',),
               exactness='approximate', status='ready', skills=config_skills,
               parameters={'factors': [2, 4]}),
         _tool(_propose_state_prompt_mode, tool_id='prefix.state_prompt_mode',
               title='pi0.5 fixed-shape state prompt', lane='config',
-              stages=('host.launch', 'prefix.prefill'), models=('pi05',), exactness='exact',
+              stages=('host.launch', 'prefix.prefill'), model_predicate=_option('state_prompt_mode'),
+              frameworks=('torch',), exactness='exact',
               status='ready', skills=config_skills, parameters={'modes': ['fixed']}),
         _tool(_propose_hy_profile, tool_id='precision.hy_numerical_profile',
               title='Hy numerical profile (alignment, not speed)', lane='config',
-              stages=('precision.weights',), models=('hyvla',), exactness='n/a', status='ready',
+              stages=('precision.weights',), model_predicate=_option('numerical_profile'),
+              frameworks=('torch',), exactness='n/a', status='ready',
               skills=config_skills, parameters={'profiles': ['official_local_fp32']}),
         _tool(tool_id='quant.fp8', title='FP8 weights/activations', lane='patch',
-              stages=('precision.weights',), models=('pi0', 'pi05', 'hyvla'),
+              stages=('precision.weights',), model_predicate=_feature('fp8_weights'),
               exactness='approximate', status='blocked', min_capability=(8, 9),
               skills=(SKILLS['patch'], SKILLS['gate']),
-              reason='Needs SM>=89 FP8 tensor cores (A800/sm_80 has none: pi05_rtx.py:665,816-819 '
+              reason='Needs SM>=89 FP8 tensor cores (A800/sm_80 has none; the RTX frontend '
                      'falls back to BF16) and the unified backend forbids quantized precision: '
                      + _NO_QUANT + '.'),
         _tool(tool_id='quant.nvfp4', title='NVFP4 / W4A8 weights', lane='patch',
-              stages=('precision.weights',), models=('pi05', 'hyvla'), exactness='approximate',
+              stages=('precision.weights',), model_predicate=_feature('nvfp4_weights'), exactness='approximate',
               status='blocked', min_capability=(12, 0), skills=(SKILLS['patch'], SKILLS['gate']),
-              reason='NVFP4 kernels are built only for sm_120a/121a (CMakeLists.txt:58-64); pi05 '
-                     'nvfp4 prefix/decoder selectors (pi05_rtx.py:694-717) are pinned to fp8 labels '
-                     'by registry.load_backend and FLASHRT_PI05_*_PRECISION env values are rejected '
-                     'by registry.validate_config; Hy use_fp4 must be False (hyvla_probeflow.py:75-83).'),
+              reason='NVFP4 kernels are built only for sm_120a/121a (CMakeLists.txt); pi-family '
+                     'adapter bindings pin internal prefix/decoder selector labels to fp8 while '
+                     'use_fp8=False, and validation rejects conflicting FLASHRT_PI05_*_PRECISION '
+                     'overrides. Hy use_fp4 must be False (hyvla_probeflow.py).'),
         _tool(_propose_pi05_int8, tool_id='quant.int8_pi05', title='pi0.5 INT8 CUTLASS GEMMs', lane='config',
-              stages=('precision.weights', 'kernel.gemm'), models=('pi05',), exactness='approximate',
+              stages=('precision.weights', 'kernel.gemm'),
+              model_predicate={'all': [_option('int8_mode'), _sampler('euler')]},
+              frameworks=('torch',), samplers=('euler',), exactness='approximate',
               status='needs_setup', hardware_only=('cuda_sm80',), skills=config_skills,
               parameters={'modes': ['encoder', 'encoder_decoder']},
               reason='Build flash_rt_kernels with -DGPU_ARCH=80 -DENABLE_SM80_INT8_CUTLASS=ON. '
                      'Torch Euler, dynamic per-row activation scales. Unset ambient precision overrides.'),
         _tool(_propose_hy_kv, tool_id='fusion.hy_rope_qknorm_kvwrite', title='Hy fused RoPE + QK-norm + KV-write',
               lane='config', stages=('kernel.norm_elementwise', 'prefix.prefill', 'denoise.velocity'),
-              models=('hyvla',), exactness='approximate', status='needs_setup',
+              model_predicate=_option('fused_rope_qknorm_kvwrite'), frameworks=('torch',),
+              exactness='approximate', status='needs_setup',
               hardware_only=('cuda_sm80',), skills=config_skills,
               reason='Build flash_rt_hyvla_sm80 with -DGPU_ARCH=80 -DFLASHRT_ENABLE_HYVLA=ON. '
                      'One launch computes RoPE, QK norm and the layer KV window per prefix/expert call.'),
         _tool(_propose_fastwam_text_kv, tool_id='cache.fastwam_text_crossattn_kv',
               title='FastWAM per-request text cross-attention K/V', lane='config',
-              stages=('denoise.velocity',), models=('fastwam',), exactness='exact', status='ready',
+              stages=('denoise.velocity',), model_predicate=_option('cache_text_crossattn_kv'),
+              frameworks=('torch',), exactness='exact', status='ready',
               skills=config_skills,
               reason='Prepare text embedding and action cross-attention K/V once after appending the '
                      'current proprio. Each request refreshes the cache, including captured graph inputs.'),
         _tool(tool_id='cache.pi05_cross_frame_kv', title='pi0.5 cross-frame prefix KV reuse',
-              lane='port', stages=('prefix.prefill', 'vision.encode'), models=('pi05',),
+              lane='port', stages=('prefix.prefill', 'vision.encode'),
+              model_predicate=_feature('cross_frame_kv'),
               exactness='approximate', status='blocked', skills=(SKILLS['map'], SKILLS['port']),
               reason='Semantic change, not a speed knob: cache_frames>1 reuses stale encoder K/V '
                      '(pi05_rtx.py:759-765,2279-2303); it is not a registry option, ProbeFlow refuses '
                      'it (pi05_rtx.py:538-541) and it needs a multi-frame workload.'),
         _tool(tool_id='throughput.pi05_batch', title='pi0.5 batched inference', lane='port',
-              stages=('prefix.prefill', 'denoise.velocity'), models=('pi05',), exactness='approximate',
+              stages=('prefix.prefill', 'denoise.velocity'), model_predicate=_feature('batched_inference'),
+              exactness='approximate',
               status='blocked', skills=(SKILLS['map'], SKILLS['port']),
               reason='Throughput, not single-request latency: set_batched_mode/infer_batch '
-                     '(pi05_rtx.py:2413,2663) are unreachable from the single-observation '
-                     'VLABackend.infer (backend.py:141) and the worker API measures one request.'),
+                      '(pi05_rtx.py:2413,2663) are unreachable from the single-observation '
+                      'VLABackend.infer (backend.py:141) and the worker API measures one request.'),
+        _tool(tool_id='attention.sdpa_backend', title='Explicit SDPA backend selection',
+              lane='port', stages=('kernel.attention', 'vision.encode', 'prefix.prefill', 'denoise.velocity'),
+              model_predicate={'all': [_ATTENTION, {'any': [_feature('functional_torch'),
+                                                           _feature('torch_modules')]}]},
+              frameworks=('torch',), exactness='approximate', status='needs_implementation',
+              skills=(SKILLS['map'], SKILLS['port'], SKILLS['gate']),
+              reason='No validated BackendConfig selector exists. First identify the active attention '
+                     'entry, mask, dtype, head_dim and GQA contract; implement selection in the product '
+                     'path and validate eager, capture/replay and changed-input behavior before a campaign.'),
+        _tool(tool_id='attention.flash_attention', title='FlashAttention operator integration',
+              lane='port', stages=('kernel.attention', 'vision.encode', 'prefix.prefill', 'denoise.velocity'),
+              model_predicate=_ATTENTION, min_capability=(8, 0), frameworks=('torch',),
+              exactness='approximate', status='needs_implementation',
+              skills=(SKILLS['map'], SKILLS['port'], SKILLS['gate']),
+              reason='Existing FA2 calls do not establish a selectable replacement for every attention '
+                     'entry. Check device, BF16/FP16, head_dim, Q/KV head divisibility, mask and layout '
+                     'against the exact call site. No unverified attention port is ready.'),
         _tool(tool_id='profile.stage_intervals', title='Stage interval profiling + attribution',
               lane='analysis', stages=('host.input', 'vision.encode', 'vision.project', 'prefix.prefill',
                                        'denoise.velocity', 'denoise.routing', 'host.output'),
               models=('*',), exactness='n/a', status='ready', skills=(SKILLS['profile'],),
               adapter='flash_rt.vla.autotune.stages',
-              reason='No candidates: the worker records stage_metrics by default (profiling.py; '
-                     '--no-profile disables); attribute with `python -m flash_rt.vla.autotune.stages '
-                     'attribute RESULT_JSON --rank`. No intervals without use_cuda_graph (pi0/pi05/hyvla).'),
-        _tool(tool_id='profile.pi05_dataflow', title='pi0.5 implementation dataflow ledger',
-              lane='analysis', stages=('prefix.prefill', 'denoise.velocity'), models=('pi05',),
+              reason='No candidates: a separate diagnostic request records stage_metrics '
+                     '(--no-profile disables); attribute with `python -m flash_rt.vla.autotune.stages '
+                     'attribute RESULT_JSON --rank`. Coverage follows ModelSpec profiling strategy; '
+                     'missing intervals remain unknown and are never formal latency samples.'),
+        _tool(tool_id='profile.pi05_dataflow', title='Declared model dataflow ledger',
+              lane='analysis', stages=('prefix.prefill', 'denoise.velocity'),
+              model_predicate={'path': 'profiling.dataflow', 'exists': True},
               exactness='n/a', status='ready', skills=(SKILLS['profile'],),
               adapter='flash_rt.vla.autotune.dataflow',
-              reason='No candidates: every pi05 worker result carries record["dataflow"] (prefix/action '
-                     'rows, FFN FLOPs, weight bytes); a cost ledger, not profiler-measured HBM traffic.'),
+              reason='No candidates: call the declared profiling.dataflow adapter. It may emit geometry '
+                     'or an implemented FLOP/weight-byte cost ledger; missing quantities stay unknown. '
+                     'This is not profiler-measured HBM traffic.'),
         _tool(tool_id='profile.ncu_kernel', title='Nsight Compute kernel counters', lane='analysis',
               stages=('kernel.gemm', 'kernel.attention', 'kernel.norm_elementwise', 'kernel.conv',
                       'vision.encode'),
@@ -491,23 +557,8 @@ def builtin_tools() -> tuple:
               models=('*',), exactness='n/a', status='ready', skills=(SKILLS['map'],),
               adapter='flash_rt.vla.autotune.author',
               reason='controller init --author-baseline author.json: run the author on the same GPU or '
-                     'bind saved author outputs. Every candidate has separate internal and author quality records.',
-              model_status={
-                  'pi0': ('ready', 'examples/vla_autotune/official_native_latency.py --model pi0: author OpenPI '
-                                   'JAX (module_jit) on the GPU, with --source/--source-revision/--checkpoint/'
-                                   '--workload/--output/--repeats; allocation only.'),
-                  'pi05': ('ready', 'examples/vla_autotune/official_native_latency.py --model pi05: author OpenPI '
-                                    'PyTorch (default max-autotune compile); the resident LeRobot checkpoint uses '
-                                    'shared-weight-aware safetensors loading.'),
-                  'fastwam': ('ready', 'examples/vla_autotune/official_native_latency.py --model fastwam: author '
-                                       'FastWAM.infer_action with the author compile_action_infer=True and cached '
-                                       'T5 inputs (cold compile reported separately). Also '
-                                       'examples/vla_autotune/validate_fastwam.py --reference (direct pinned '
-                                       'upstream infer_action, Euler only).'),
-                   'hyvla': ('ready', 'examples/vla_autotune/official_hyvla_latency.py: unmodified author HyVLA '
-                                      'prepare_images/state/language + policy.model.sample_actions with fixed noise '
-                                      '(--official-source/--checkpoint/--fixtures/--source-revision/--output).'),
-                   'dm05': ('ready', 'examples/vla_autotune/official_dm05_latency.py: OpenDM base, '
-                                     'three current RGB views, fixed Euler10, absolute public14 actions.'),
-              }),
+                     'bind saved author outputs. The unified producer calls the selected ModelSpec '
+                     'author.adapter load(spec, torch); supported options come from author.options. '
+                     'Every candidate has separate internal and author quality records.',
+              model_predicate={'path': 'author.adapter', 'exists': True}),
     )

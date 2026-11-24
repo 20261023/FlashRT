@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import argparse
 import ast
+from collections.abc import Mapping
 from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
 import sys
+
+from ..model_spec import get_spec, list_models
 
 
 # --------------------------------------------------------------------------
@@ -131,11 +134,10 @@ REFERENCED_TOOL_IDS = frozenset({
     'kernel.forgekernel', 'kernel.kernelagent', 'engine.apxinf',
     'profile.stage_intervals', 'profile.pi05_dataflow', 'profile.ncu_kernel',
     'analysis.lever_pricing', 'baseline.official_impl', 'compile.aitune',
-    'compile.fastwam_inductor', 'compile.dm05_inductor',
+    'compile.inductor',
 })
 
 STAGE_KINDS = ('compute', 'host', 'count', 'kernel', 'precision')
-MODELS = ('pi0', 'pi05', 'hyvla', 'fastwam', 'dm05')
 UNATTRIBUTED = 'unattributed'
 
 
@@ -177,6 +179,8 @@ class ModelStage:
     seams: tuple = ()
     profiling_keys: tuple = ()
     notes: tuple = ()
+    kind: str | None = None
+    title: str | None = None
 
     def to_dict(self):
         return {'stage_id': self.stage_id, 'seams': list(self.seams),
@@ -206,13 +210,13 @@ _STAGE_LIST = (
               ('TTFT 很高、生成后较快', '图片/帧数增加导致很慢', 'step 少了但端到端几乎没变'),
               ('prefix.vision_pool', 'prefix.state_prompt_mode', 'fusion.hy_rope_qknorm_kvwrite',
                'profile.pi05_dataflow', 'engine.apxinf', 'kernel.forgekernel', 'compile.aitune',
-                'compile.fastwam_inductor', 'compile.dm05_inductor')),
+                 'compile.inductor')),
     StageInfo('denoise.velocity', 'Action-expert evaluation', 'compute',
               'ONE action-expert (velocity field) evaluation; total cost is per-call time x NFE.',
               ('VLA expert 很小却不快', 'denoising 总耗时高'),
               ('launch.cuda_graph', 'gemm.fastwam_linear_backend', 'cache.fastwam_text_crossattn_kv',
                'fusion.hy_rope_qknorm_kvwrite', 'profile.pi05_dataflow', 'kernel.forgekernel',
-                'kernel.kernelagent', 'compile.aitune', 'compile.fastwam_inductor', 'compile.dm05_inductor')),
+                 'kernel.kernelagent', 'compile.aitune', 'compile.inductor')),
     StageInfo('denoise.schedule', 'Denoising schedule (NFE)', 'count',
               'Number of action-expert calls chosen by the sampler (Euler N steps or ProbeFlow '
               'probe + adaptive schedule). A count, not a time interval.',
@@ -229,7 +233,7 @@ _STAGE_LIST = (
               ('GPU 时间线存在长空洞', 'VLA expert 很小却不快', '小 tensor 的 .cpu/.item/NumPy 很贵',
                'warmup 后偶发大尖峰', '§1 launch/依赖延迟'),
               ('launch.cuda_graph', 'gemm.fastwam_linear_backend', 'prefix.state_prompt_mode',
-               'compile.fastwam_inductor')),
+                'compile.inductor')),
     StageInfo('host.output', 'Host output', 'host',
               'Device-to-host copy of the action chunk and CPU action decoding '
               '(unnormalize, slicing, checkpoint action processor).',
@@ -267,282 +271,61 @@ STAGE_IDS = tuple(STAGES)
 # --------------------------------------------------------------------------
 # Interval key -> stages covered, per model (keys from profiling.profile_request).
 
-PROFILE_KEYS = {
-    'dm05': {'vision': ('vision.encode', 'vision.project'),
-             'prefix': ('prefix.prefill',), 'velocity': ('denoise.velocity',)},
-    'pi0': {'full': ('vision.encode', 'vision.project', 'prefix.prefill', 'denoise.velocity'),
-            'prefix': ('vision.encode', 'vision.project', 'prefix.prefill'),
-            'velocity': ('denoise.velocity',)},
-    'pi05': {'full': ('vision.encode', 'vision.project', 'prefix.prefill', 'denoise.velocity'),
-             'prefix': ('vision.encode', 'vision.project', 'prefix.prefill'),
-             'velocity': ('denoise.velocity',)},
-    'hyvla': {'vision': ('vision.encode', 'vision.project'),
-              'prefix': ('prefix.prefill',),
-              'velocity': ('denoise.velocity',)},
-    # _prepare_condition starts with _observation_tensors (host validation, H2D
-    # copies, upstream T5 encode_prompt when obs has a prompt), so the interval
-    # covers that host.input work too.
-    'fastwam': {'condition_vae_video_prefill': ('host.input', 'vision.encode', 'prefix.prefill'),
-                'velocity': ('denoise.velocity',)},
-}
+def profile_keys_for(model, *, spec_dir=None):
+    return {key: tuple(covered)
+            for key, covered in get_spec(model, spec_dir=spec_dir)['profiling']['keys'].items()}
 
-# Keys a CUDA-graph (or FastWAM) profiling pass is expected to produce.
-_EXPECTED_KEYS = {
-    ('dm05', 'euler'): ('vision', 'prefix', 'velocity'),
-    ('pi0', 'euler'): ('full',), ('pi0', 'probeflow'): ('prefix', 'velocity'),
-    ('pi05', 'euler'): ('full',), ('pi05', 'probeflow'): ('prefix', 'velocity'),
-    # Records written before the ViT+merger graph was timed lack 'vision'; they
-    # are still accepted and reported partial with a missing-key note.
-    ('hyvla', 'euler'): ('vision', 'prefix', 'velocity'),
-    ('hyvla', 'probeflow'): ('vision', 'prefix', 'velocity'),
-    ('fastwam', 'euler'): ('condition_vae_video_prefill', 'velocity'),
-    ('fastwam', 'probeflow'): ('condition_vae_video_prefill', 'velocity'),
-}
+
+class _DeclaredTable(Mapping):
+    def __init__(self, value):
+        self.value = value
+
+    def __getitem__(self, model):
+        try:
+            return self.value(model)
+        except ValueError as error:
+            raise KeyError(model) from error
+
+    def __iter__(self):
+        return iter(list_models())
+
+    def __len__(self):
+        return len(list_models())
+
+
+MODEL_STAGES = _DeclaredTable(lambda model: stages_for(model))
+PROFILE_KEYS = _DeclaredTable(profile_keys_for)
+MODELS = list_models()
 
 
 # --------------------------------------------------------------------------
 # Model stage maps. Seams are 'relative/path.py:function' or ':Class.method'.
-
-_PI0_RTX = 'flash_rt/models/pi0/pipeline_rtx.py'
-_PI0_PF = 'flash_rt/models/pi0/pipeline_rtx_probeflow.py'
-_PI0_FE = 'flash_rt/frontends/torch/pi0_rtx.py'
-_PI05_RTX = 'flash_rt/models/pi05/pipeline_rtx.py'
-_PI05_PF = 'flash_rt/models/pi05/pipeline_rtx_probeflow.py'
-_PI05_FE = 'flash_rt/frontends/torch/pi05_rtx.py'
-_HY_THOR = 'flash_rt/frontends/torch/hyvla_thor.py'
-_HY_PF = 'flash_rt/frontends/torch/hyvla_probeflow.py'
-_HY_PIPE = 'flash_rt/models/hyvla/pipeline_thor.py'
-_FW_PIPE = 'flash_rt/models/fastwam/pipeline.py'
-_FW_GRAPH = 'flash_rt/models/fastwam/velocity_graph.py'
-_FW_LINEAR = 'flash_rt/models/fastwam/native_linear.py'
-_DM_PIPE = 'flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80'
-_DM_COMP = 'flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80'
-_DM_FE = 'flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80'
-_DM_GRAPH = 'flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05ProfileSm80'
-_SAMPLER = 'flash_rt/sampling/torch_probeflow.py'
-_BACKEND = 'flash_rt/vla/backend.py'
-_REGISTRY = 'flash_rt/vla/registry.py'
-
-_HOST_RESIDUAL = 'Not instrumented by profile_request: time lands in unattributed_ms.'
-_EAGER_NO_INTERVALS = ('With use_cuda_graph=False profile_request records no intervals '
-                       '(no graph to wrap): coverage is none.')
-
-
-def _pi_family(model, rtx, probeflow, frontend, frontend_cls, pipe_cls, pf_cls):
-    pipeline = f'{rtx}:{pipe_cls}'
-    host_input = [f'{frontend}:{frontend_cls}._fill_img_buf',
-                  f'{frontend}:{frontend_cls}.set_prompt']
-    if model == 'pi0':
-        host_input += [f'{frontend}:{frontend_cls}._fill_state_buf',
-                       f'{frontend}:{frontend_cls}._fill_noise_buf']
-        pool_note = ()
-        prompt_note = ('Prompt embedding is computed in set_prompt on prompt change.',)
-    else:
-        host_input += [f'{frontend}:{frontend_cls}._embed_prompt_cached',
-                       f'{frontend}:{frontend_cls}._fill_noise']
-        pool_note = ('Optional vision_pool_factor (2/4) average-pools vision tokens at the end '
-                     'of vision_encoder: fewer prefix rows, the full ViT work stays.',)
-        prompt_note = ('State is tokenized into the prompt; state_prompt_mode exact keeps one '
-                       'pipeline per token length, fixed keeps one max-length pipeline.',)
-    return (
-        ModelStage('host.input', tuple(host_input), (),
-                   ('CPU float32 /127.5-1 image normalization, staging and H2D/D2D copies.',)
-                   + prompt_note + (_HOST_RESIDUAL,)),
-        ModelStage('vision.encode', (f'{pipeline}.vision_encoder',), ('full', 'prefix'),
-                   ('27-layer SigLIP (patch im2col + GEMM).',) + pool_note),
-        ModelStage('vision.project', (f'{pipeline}.transformer_encoder', f'{pipeline}.vision_encoder'),
-                   ('full', 'prefix'),
-                   ('Multi-modal projector (final LayerNorm + 1152->2048 GEMM) runs at the start '
-                    'of transformer_encoder; it is not separable from prefill in intervals.',)),
-        ModelStage('prefix.prefill', (f'{pipeline}.transformer_encoder',), ('full', 'prefix'),
-                   ('Prefix recomputed every call; prefix KV reused across evaluations, '
-                    'not across observations.',)),
-        ModelStage('denoise.velocity', (f'{pipeline}.transformer_decoder', f'{probeflow}:{pf_cls}._evaluate'),
-                   ('full', 'velocity'),
-                   ('Euler + CUDA graph: one "full" interval covers vision, prefix and all steps, '
-                    'so per-call velocity time is not separable.',
-                    'ProbeFlow: one velocity graph per reachable timestep, each replay is one '
-                    '"velocity" interval.', _EAGER_NO_INTERVALS)),
-        ModelStage('denoise.schedule', (f'{frontend}:_resolve_{model}_sampler', f'{probeflow}:{pf_cls}._sample'),
-                   (), ('Euler NFE = num_steps; ProbeFlow NFE = 2 when N=2, N+1 when N>2.',)),
-        ModelStage('denoise.routing', (f'{_SAMPLER}:sample_probeflow_torch_', f'{probeflow}:{pf_cls}._sample'),
-                   (), ('Euler integration is baked into the decoder output projection (-1/num_steps); '
-                        'ProbeFlow routing (cosine .item(), finite checks, x update) runs on the host '
-                        'between velocity graphs.', _HOST_RESIDUAL)),
-        ModelStage('host.launch', (f'{pipeline}.record_infer_graph', f'{probeflow}:{pf_cls}.record_infer_graph'),
-                   (), ('use_cuda_graph removes per-kernel launches; eager execution pays them.',)),
-        ModelStage('host.output', (f'{frontend}:{frontend_cls}.infer', f'{_BACKEND}:VLABackend.infer'),
-                   (), ('D2D -> stream sync -> float -> .cpu().numpy() -> unnormalize; the optional '
-                        'checkpoint action processor runs in VLABackend.infer.', _HOST_RESIDUAL)),
-        ModelStage('kernel.gemm', (f'{pipeline}.autotune_gemms', f'{pipeline}._encoder_layer',
-                                   f'{pipeline}._decoder_layer'), (),
-                   ('autotune_gemms already runs during prepare (BF16 included); not a new knob.',)),
-        ModelStage('kernel.attention', (f'{pipeline}._vision_layer', f'{pipeline}._encoder_layer',
-                                        f'{pipeline}._decoder_layer'), (), ()),
-        ModelStage('precision.weights', (f'{frontend}:{frontend_cls}._quantize_all_fp8',
-                                         f'{_REGISTRY}:load_backend'), (),
-                    ('The unified backend disables FP8. Query the active frontend precision in '
-                     'backend_metadata; quantization tools describe their hardware requirements.',)
-                    + (('SM80 Torch Euler can opt into mixed W8A8 projections via int8_mode '
-                        'with -DENABLE_SM80_INT8_CUTLASS=ON.',)
-                      if model == 'pi05' else ())),
-    )
-
-
-MODEL_STAGES = {
-    'dm05': (
-        ModelStage('host.input', (f'{_DM_FE}._host_input', f'{_DM_FE}._update_profile'), (), (_HOST_RESIDUAL,)),
-        ModelStage('vision.encode', (f'{_DM_PIPE}.vision', f'{_DM_COMP}.vision'), ('vision',),
-                   ('Three current RGB views, 27 SigLIP layers.',)),
-        ModelStage('vision.project', (f'{_DM_PIPE}.vision', f'{_DM_COMP}.vision'), ('vision',),
-                   ('Pooling and projection to 768 tokens share the vision interval.',)),
-        ModelStage('prefix.prefill', (f'{_DM_PIPE}.prefill', f'{_DM_COMP}.prefill'), ('prefix',),
-                   ('34 layers write prefix KV. Timing starts after vision returns.',)),
-        ModelStage('denoise.velocity', (f'{_DM_PIPE}.velocity', f'{_DM_COMP}.velocity'), ('velocity',),
-                   ('One event pair per action expert call for the fixed 50-position chunk.',)),
-        ModelStage('denoise.schedule', (f'{_DM_PIPE}.forward',), (), ('Fixed Euler10.',)),
-        ModelStage('denoise.routing', (f'{_DM_PIPE}.forward',), (), (_HOST_RESIDUAL,)),
-        ModelStage('host.launch', (f'{_DM_GRAPH}.capture', f'{_DM_GRAPH}.run'), (),
-                   ('Whole-model graphs are keyed by exact prefix length.',)),
-        ModelStage('host.output', (f'{_DM_FE}.infer',), (),
-                   ('D2H and DOS W1 absolute FP32 action reconstruction.', _HOST_RESIDUAL)),
-        ModelStage('kernel.gemm', (f'{_DM_PIPE}.linear', f'{_DM_COMP}.velocity')),
-        ModelStage('kernel.attention', ('flash_rt/models/dm05/attention_cuda_sm80.py:Dm05AttentionSm80.attend',)),
-        ModelStage('kernel.norm_elementwise', ('flash_rt/models/dm05/pipeline_cuda_sm80.py:adaptive_rms',)),
-    ),
-    'pi0': _pi_family('pi0', _PI0_RTX, _PI0_PF, _PI0_FE, 'Pi0TorchFrontendRtx',
-                      'Pi0Pipeline', 'Pi0ProbeFlowPipeline'),
-    'pi05': _pi_family('pi05', _PI05_RTX, _PI05_PF, _PI05_FE, 'Pi05TorchFrontendRtx',
-                       'Pi05Pipeline', 'Pi05ProbeFlowPipeline'),
-    'hyvla': (
-        ModelStage('host.input', (f'{_HY_THOR}:HyVLATorchFrontendThor._preprocess_images',
-                                  f'{_HY_THOR}:HyVLATorchFrontendThor._tokenize',
-                                  f'{_HY_THOR}:HyVLATorchFrontendThor._assemble_prefix',
-                                  f'{_HY_THOR}:HyVLATorchFrontendThor.predict_actions'), (),
-                   ('Per-camera resize/pad + [-1,1], state H2D, prefix assembly, masks, RoPE '
-                    'tables and the n_vis .item() run eagerly before the prefix graph.',
-                    _HOST_RESIDUAL)),
-        ModelStage('vision.encode', (f'{_HY_PIPE}:HyVLAThorBF16Pipeline.vit_forward',
-                                     f'{_HY_THOR}:HyVLATorchFrontendThor._vit_merge'), ('vision',),
-                   ('27-layer MEM ViT. profile_request times each _vit_graph_cache graph replay '
-                    "as 'vision' (ViT + merger in one graph, so vision.encode and vision.project "
-                    'are not separable). Older records without a vision interval are accepted '
-                    'but partial: their ViT time lands in unattributed_ms. No interval without '
-                    'use_cuda_graph.',)),
-        ModelStage('vision.project', (f'{_HY_PIPE}:HyVLAThorBF16Pipeline.merger_forward',), ('vision',),
-                   ("Merger PROJ1/pool/PROJ2 runs inside the same ViT graph: shares the 'vision' "
-                    'interval with vision.encode (residual in older records without it).',)),
-        ModelStage('prefix.prefill', (f'{_HY_PIPE}:HyVLAThorBF16Pipeline.prefill',
-                                      f'{_HY_PF}:HyVLAFlowFrontend._prefix_body'), ('prefix',),
-                   ('32-layer VLM writes fixed prefix KV; the prefix graph also runs embed_state.',)),
-        ModelStage('denoise.velocity', (f'{_HY_PIPE}:HyVLAThorBF16Pipeline.evaluate_velocity',
-                                        f'{_HY_PF}:HyVLAFlowFrontend._velocity_body'), ('velocity',),
-                   ('32-layer expert over the 1 state + H action suffix; suffix KV overwritten in '
-                    'place, one graph per model time.', _EAGER_NO_INTERVALS)),
-        ModelStage('denoise.schedule', (f'{_HY_PF}:HyVLAFlowFrontend._sample_latent',), (),
-                   ('Euler NFE = num_steps (t: 1->0); ProbeFlow adaptive.',)),
-        ModelStage('denoise.routing', (f'{_HY_PF}:HyVLAFlowFrontend._sample_latent',
-                                       f'{_SAMPLER}:sample_probeflow_torch_'), (),
-                   ('Host routing and x += dt * v integration stay outside CUDA capture.',
-                    _HOST_RESIDUAL)),
-        ModelStage('host.launch', (f'{_HY_PF}:HyVLAFlowFrontend._graph_forward',
-                                   f'{_HY_PF}:HyVLAFlowFrontend._build_graph',
-                                   f'{_HY_THOR}:HyVLATorchFrontendThor._build_vit_graph'), (),
-                   ('use_cuda_graph covers ViT, prefix and velocity graphs.',)),
-        ModelStage('host.output', (f'{_HY_THOR}:HyVLATorchFrontendThor.predict_actions',
-                                   f'{_HY_PF}:HyVLAFlowFrontend.infer', f'{_BACKEND}:VLABackend.infer'), (),
-                   ('x_t.float().cpu().numpy() then denormalization/pose handling.', _HOST_RESIDUAL)),
-        ModelStage('kernel.attention', (f'{_HY_PIPE}:HyVLAThorBF16Pipeline._attn',), (), ()),
-        ModelStage('kernel.norm_elementwise', (f'{_HY_PIPE}:HyVLAThorBF16Pipeline._block',
-                                               f'{_HY_PIPE}:HyVLAThorBF16Pipeline._rms_norm',
-                                               'flash_rt/models/hyvla/pipeline_sm80.py:HyVLASM80BF16Pipeline._prepare_qkv'), (),
-                   ('SM80 fused_rope_qknorm_kvwrite selects flash_rt_hyvla_sm80 in both '
-                    'prefix and velocity, with the numerical_profile fixed at construction.',)),
-        ModelStage('precision.weights', (f'{_HY_PF}:HyVLAFlowFrontend._operation_dtypes',
-                                         f'{_HY_PF}:HyVLAFlowFrontend.__init__'), (),
-                   ('numerical_profile semantic_bf16 vs official_local_fp32 is an alignment choice, '
-                    'not a speed knob; FP8/FP4 flags must stay False.',)),
-    ),
-    'fastwam': (
-        ModelStage('host.input', (f'{_FW_PIPE}:FastWAMActionPipeline._observation_tensors',
-                                  f'{_FW_PIPE}:FastWAMActionPipeline._initial_state'),
-                   ('condition_vae_video_prefill',),
-                   ('Image/context/proprio/noise validation and device copies.',
-                    'Timed inside condition_vae_video_prefill (_observation_tensors: validation '
-                    '.item() syncs, H2D copies, and upstream T5 encode_prompt when obs has a '
-                    'prompt); _initial_state (noise) lands in unattributed_ms.')),
-        ModelStage('vision.encode', (f'{_FW_PIPE}:FastWAMActionPipeline._prepare_condition',), (
-            'condition_vae_video_prefill',),
-                   ('First-frame VAE encode (upstream model._encode_input_image_latents_tensor).',)),
-        ModelStage('prefix.prefill', (f'{_FW_PIPE}:FastWAMActionPipeline._prepare_condition',
-                                      f'{_FW_PIPE}:FastWAMActionPipeline.prepare_condition'),
-                   ('condition_vae_video_prefill',),
-                   ('30-layer video-expert prefill at t=0 builds the first-frame video KV once per call.',
-                    'profile_request times _prepare_condition (infer calls it directly). Records '
-                    'from before that fix may lack the condition interval: partial coverage.')),
-        ModelStage('denoise.velocity', (f'{_FW_PIPE}:FastWAMActionPipeline._evaluate_at_timestep',
-                                        f'{_FW_PIPE}:FastWAMActionPipeline._evaluate_clock_velocity',
-                                        f'{_FW_GRAPH}:FastWAMVelocityGraph.__call__'), ('velocity',),
-                   ('30-layer ActionDiT over action tokens reading the cached video K/V.',
-                    'Text context + proprio enter through cross-attention and are re-projected every '
-                    'denoising step (ActionDiT text_embedding(context) + per-layer cross-attention K/V '
-                    'in model._denoise_action_with_video_cache); only the first-frame video KV is '
-                    'cached once. Known opportunity: cache.fastwam_text_crossattn_kv '
-                     'pre-projects them once per request when enabled.',
-                    'Works with and without the velocity CUDA graph.')),
-        ModelStage('denoise.schedule', (f'{_FW_PIPE}:FastWAMActionPipeline._euler',
-                                        f'{_FW_PIPE}:FastWAMActionPipeline._build_time_bank'), (),
-                   ('Shifted sigma grid; ProbeFlow uses the u-space clock with time_map.',)),
-        ModelStage('denoise.routing', (f'{_FW_PIPE}:FastWAMActionPipeline._euler',
-                                       f'{_SAMPLER}:sample_probeflow_torch_'), (),
-                   ('scheduler.step multiply-then-add and ProbeFlow host routing.', _HOST_RESIDUAL)),
-        ModelStage('host.launch', (f'{_FW_GRAPH}:FastWAMVelocityGraph.__call__',
-                                   f'{_FW_PIPE}:FastWAMActionPipeline.__init__'), (),
-                   ('use_cuda_graph works with backend=torch; with backend=flashrt (native Linear) '
-                    'it requires native_linear_backend=cached.',)),
-        ModelStage('host.output', (f'{_FW_PIPE}:FastWAMActionPipeline.infer', f'{_BACKEND}:VLABackend.infer'), (),
-                   ('Final isfinite .item() and FP32 D2H; unnormalization is outside FlashRT.',
-                    _HOST_RESIDUAL)),
-        ModelStage('kernel.gemm', (f'{_FW_LINEAR}:FlashRTLinear.forward', f'{_FW_LINEAR}:install_native_linears'),
-                   (), ('backend torch vs flashrt; native_linear_backend legacy vs cached.',)),
-        ModelStage('kernel.conv', (f'{_FW_PIPE}:FastWAMActionPipeline._prepare_condition',), (),
-                   ('VAE encoder convolutions live in the upstream Wan VAE (source_dir).',)),
-    ),
-}
-
-
-def _check_tables():
-    for model, items in MODEL_STAGES.items():
-        seen = set()
-        for item in items:
-            if item.stage_id not in STAGES:
-                raise ValueError(f'MODEL_STAGES[{model!r}] references unknown stage {item.stage_id!r}')
-            if item.stage_id in seen:
-                raise ValueError(f'MODEL_STAGES[{model!r}] repeats stage {item.stage_id!r}')
-            seen.add(item.stage_id)
-            for key in item.profiling_keys:
-                if item.stage_id not in PROFILE_KEYS[model].get(key, ()):
-                    raise ValueError(f'{model}/{item.stage_id}: interval key {key!r} does not cover it')
-    for model, mapping in PROFILE_KEYS.items():
-        for key, covered in mapping.items():
-            unknown = [stage_id for stage_id in covered if stage_id not in STAGES]
-            if unknown:
-                raise ValueError(f'PROFILE_KEYS[{model!r}][{key!r}] references unknown stages {unknown}')
-
-
-_check_tables()
-
-
 def stage(stage_id):
     if stage_id not in STAGES:
         raise ValueError(f'Unknown stage id {stage_id!r}; known: {list(STAGE_IDS)}')
     return STAGES[stage_id]
 
 
-def stages_for(model):
-    if model not in MODEL_STAGES:
-        raise ValueError(f'Unknown model {model!r}; known: {list(MODELS)}')
-    return MODEL_STAGES[model]
+def stages_for(model, *, spec_dir=None):
+    try:
+        spec = get_spec(model, spec_dir=spec_dir)
+    except ValueError as error:
+        raise ValueError(f'Unknown model {model!r}: {error}') from error
+    items = []
+    for item in spec['stages']:
+        known = STAGES.get(item['stage_id'])
+        kind = item.get('kind', known.kind if known else None)
+        if kind not in STAGE_KINDS:
+            raise ValueError(f'Model {model!r} has unknown stage {item["stage_id"]!r}; '
+                             f'declare kind from {STAGE_KINDS}')
+        if known and kind != known.kind:
+            raise ValueError(f'Stage {item["stage_id"]!r} kind contradicts the shared stage definition')
+        keys = tuple(key for key, covered in spec['profiling']['keys'].items()
+                     if item['stage_id'] in covered)
+        items.append(ModelStage(
+            item['stage_id'], tuple(item['seams']), keys, tuple(item['notes']),
+            kind=kind, title=item.get('title', known.title if known else item['stage_id'])))
+    return tuple(items)
 
 
 # --------------------------------------------------------------------------
@@ -581,12 +364,13 @@ def seam_defined(seam, root=None):
                for node in owner.body)
 
 
-def all_seams():
-    return sorted({seam for items in MODEL_STAGES.values() for item in items for seam in item.seams})
+def all_seams(*, spec_dir=None):
+    return sorted({seam for model in list_models(spec_dir=spec_dir)
+                   for item in stages_for(model, spec_dir=spec_dir) for seam in item.seams})
 
 
-def missing_seams(root=None):
-    return [seam for seam in all_seams() if not seam_defined(seam, root)]
+def missing_seams(root=None, *, spec_dir=None):
+    return [seam for seam in all_seams(spec_dir=spec_dir) if not seam_defined(seam, root)]
 
 
 # --------------------------------------------------------------------------
@@ -600,7 +384,7 @@ def _finite_number(value, name, *, positive=False):
     return float(value)
 
 
-def _record_model(record, model):
+def _record_model(record, model, *, spec_dir=None):
     candidate = record.get('candidate')
     found = None
     if candidate is not None:
@@ -613,9 +397,10 @@ def _record_model(record, model):
     model = model or found
     if model is None:
         raise ValueError('Model unknown: record has no candidate.backend.model and none was given')
-    if model not in PROFILE_KEYS:
-        raise ValueError(f'No stage map for model {model!r}; known: {list(MODELS)}')
-    return model
+    try:
+        return get_spec(model, spec_dir=spec_dir)['model']
+    except ValueError as error:
+        raise ValueError(f'No stage map for model {model!r}: {error}') from error
 
 
 def _record_sampler(record, metadata):
@@ -631,10 +416,13 @@ def _record_sampler(record, metadata):
 
 def _empty(model, notes, wall_ms=None, nfe=None):
     return {'model': model, 'wall_ms': wall_ms, 'groups': [], 'per_call_ms': {}, 'nfe': nfe,
-            'unattributed_ms': None, 'coverage': 'none', 'residual_stages': [], 'notes': notes}
+            'unattributed_ms': None, 'coverage': 'none', 'residual_stages': [], 'notes': notes,
+            'operator_probes': [], 'coverage_scope': 'declared_compute_stages',
+            'attributed_fraction': None, 'nonadditive_diagnostics': [],
+            'coverage_evidence': None}
 
 
-def attribute(record, *, model=None):
+def attribute(record, *, model=None, spec_dir=None):
     """Attribute the profiled request's wall time to stage groups.
 
     ``record`` is a worker result dict (``record['stage_metrics']`` as written
@@ -643,7 +431,15 @@ def attribute(record, *, model=None):
     """
     if not isinstance(record, dict):
         raise ValueError('record must be a worker result dict')
-    model = _record_model(record, model)
+    candidate = record.get('candidate')
+    if spec_dir is None and isinstance(candidate, dict):
+        backend = candidate.get('backend')
+        if isinstance(backend, dict):
+            spec_dir = backend.get('spec_dir')
+    model = _record_model(record, model, spec_dir=spec_dir)
+    spec = get_spec(model, spec_dir=spec_dir)
+    model_stages = stages_for(model, spec_dir=spec_dir)
+    declared_stage_ids = {item.stage_id for item in model_stages}
     notes = []
     if 'profiling_failure' in record:
         return _empty(model, [f'profiling failed: {record["profiling_failure"]}'])
@@ -654,6 +450,13 @@ def attribute(record, *, model=None):
         raise ValueError('stage_metrics must be a dict')
     if metrics.get('measurement_kind') != 'diagnostic_cuda_event_intervals':
         raise ValueError('stage_metrics.measurement_kind must be diagnostic_cuda_event_intervals')
+    if metrics.get('separate_from_latency_samples') is False:
+        raise ValueError('stage_metrics must be separate_from_latency_samples')
+    if 'notes' in metrics:
+        if not isinstance(metrics['notes'], list) or not all(
+                isinstance(note, str) for note in metrics['notes']):
+            raise ValueError('stage_metrics.notes must be a list of strings')
+        notes.extend(metrics['notes'])
     wall_ms = _finite_number(metrics.get('wall_ms'), 'stage_metrics.wall_ms', positive=True)
     intervals = metrics.get('interval_ms')
     if not isinstance(intervals, dict):
@@ -670,19 +473,49 @@ def attribute(record, *, model=None):
         raise ValueError('stage_metrics.sampler_metadata must be a dict or null')
     else:
         nfe = sampler_metadata.get('nfe')
-        if isinstance(nfe, bool) or not isinstance(nfe, int) or nfe < 1:
+        if nfe is None and spec['head']['type'] != 'flow_matching':
+            notes.append('Non-flow head: velocity NFE is not applicable')
+        elif isinstance(nfe, bool) or not isinstance(nfe, int) or nfe < 1:
             raise ValueError('stage_metrics.sampler_metadata.nfe must be a positive integer')
     sampler = _record_sampler(record, sampler_metadata)
 
-    mapping = PROFILE_KEYS[model]
-    unknown = sorted(set(intervals) - set(mapping))
+    mapping = profile_keys_for(model, spec_dir=spec_dir)
+    provenance = metrics.get('interval_provenance', {})
+    if not isinstance(provenance, dict) or (provenance and set(provenance) != set(intervals)):
+        raise ValueError('stage_metrics.interval_provenance keys must equal interval_ms keys')
+    probe_keys, diagnostic_keys = set(), set()
+    for key, detail in provenance.items():
+        if not isinstance(detail, dict):
+            raise ValueError(f'interval_provenance[{key!r}] must be an object')
+        covered = detail.get('stages')
+        if not isinstance(covered, list) or not covered or any(
+                stage_id not in STAGES and stage_id not in declared_stage_ids for stage_id in covered):
+            raise ValueError(f'interval_provenance[{key!r}] has an unknown stage or empty stages')
+        if detail.get('device') not in ('cpu', 'cuda') or detail.get('clock') not in (
+                'cuda_event', 'perf_counter_ns'):
+            raise ValueError(f'interval_provenance[{key!r}] requires a known device and clock')
+        if (detail['device'] == 'cpu') != (detail['clock'] == 'perf_counter_ns'):
+            raise ValueError(f'interval_provenance[{key!r}] device and clock disagree')
+        if 'additive' in detail and type(detail['additive']) is not bool:
+            raise ValueError(f'interval_provenance[{key!r}].additive must be bool')
+        if detail.get('scope') == 'operator_probe':
+            if detail.get('additive') is not False:
+                raise ValueError('Operator probes must be explicitly non-additive')
+            probe_keys.add(key)
+        if key in mapping and tuple(covered) != mapping[key]:
+            raise ValueError(f'interval_provenance[{key!r}] stages differ from the model declaration')
+        if detail.get('additive') is False and key not in probe_keys:
+            diagnostic_keys.add(key)
+    unknown = sorted(set(intervals) - set(mapping) - probe_keys)
     if unknown:
         raise ValueError(f'Interval keys {unknown} have no stage mapping for model {model!r}; '
                          f'known: {list(mapping)}')
-    groups = []
-    for key in mapping:
-        if key not in intervals:
-            continue
+    groups, probes, diagnostics = [], [], []
+    excluded = probe_keys | diagnostic_keys
+    ordered = ([key for key in intervals if key in mapping] if provenance else
+               [key for key in mapping if key in intervals])
+    ordered += [key for key in intervals if key not in mapping]
+    for key in ordered:
         values = intervals[key]
         if not isinstance(values, list) or not values:
             raise ValueError(f'stage_metrics.interval_ms[{key!r}] must be a nonempty list')
@@ -692,12 +525,61 @@ def attribute(record, *, model=None):
             stored = _finite_number(sums[key], f'stage_metrics.interval_sum_ms[{key!r}]')
             if abs(stored - total) > 1e-6 * max(1.0, abs(total)):
                 raise ValueError(f'interval_sum_ms[{key!r}]={stored} differs from sum(interval_ms)={total}')
-        groups.append({'stages': list(mapping[key]), 'interval_key': key, 'ms': total,
-                       'calls': len(values)})
+        group = {'stages': list(provenance[key]['stages'] if key in probe_keys else mapping[key]),
+                 'interval_key': key, 'ms': total, 'calls': len(values)}
+        if key in provenance:
+            group['provenance'] = dict(provenance[key])
+        if key in probe_keys:
+            probes.append(group)
+        elif key in diagnostic_keys:
+            diagnostics.append(group)
+        else:
+            groups.append(group)
+
+    # A legacy parent and its split children cannot both be additive. Equal
+    # stage sets may describe sequential subregions (e.g. condition preparation
+    # and prefill), so only strict containment is rejected here.
+    for index, parent in enumerate(groups):
+        for child in groups[index + 1:]:
+            left, right = set(parent['stages']), set(child['stages'])
+            if left < right or right < left:
+                raise ValueError(f'Overlapping parent/child intervals would double-count: '
+                                 f'{parent["interval_key"]!r}, {child["interval_key"]!r}')
+
+    spans = metrics.get('interval_spans_ms')
+    if spans is not None:
+        if not isinstance(spans, dict) or set(spans) != set(intervals) or not provenance:
+            raise ValueError('interval_spans_ms requires provenance and all interval_ms keys')
+        by_clock = {}
+        for key, ranges in spans.items():
+            if not isinstance(ranges, list) or len(ranges) != len(intervals[key]):
+                raise ValueError(f'interval_spans_ms[{key!r}] must match its interval count')
+            for index, pair in enumerate(ranges):
+                if not isinstance(pair, list) or len(pair) != 2:
+                    raise ValueError(f'interval_spans_ms[{key!r}] must contain [start, stop] pairs')
+                start, stop = [_finite_number(value, f'interval_spans_ms[{key!r}]') for value in pair]
+                duration = stop - start
+                # CUDA elapsed_time returns float32 milliseconds; differences
+                # of epoch-relative timestamps need microsecond tolerance.
+                tolerance = max(0.002, 1e-6 * max(start, stop, 1.0))
+                if duration < 0 or abs(duration - intervals[key][index]) > tolerance:
+                    raise ValueError(f'interval_spans_ms[{key!r}] differs from its interval duration')
+                if key not in excluded and duration:
+                    by_clock.setdefault(provenance[key]['clock'], []).append((start, stop, key))
+        for ranges in by_clock.values():
+            ordered_ranges = sorted(ranges)
+            for left, right in zip(ordered_ranges, ordered_ranges[1:]):
+                tolerance = max(0.002, 1e-6 * max(left[1], right[1], 1.0))
+                if right[0] < left[1] - tolerance:
+                    raise ValueError(f'Overlapping request intervals would double-count: '
+                                     f'{left[2]!r}, {right[2]!r}')
 
     if not groups:
-        notes.append('no intervals recorded (e.g. use_cuda_graph=False for pi0/pi05/hyvla)')
-        return _empty(model, notes, wall_ms=wall_ms, nfe=nfe)
+        notes.append('no additive request intervals recorded; non-additive diagnostics/probes do not establish coverage')
+        empty = _empty(model, notes, wall_ms=wall_ms, nfe=nfe)
+        empty['operator_probes'] = probes
+        empty['nonadditive_diagnostics'] = diagnostics
+        return empty
 
     per_call = {}
     by_key = {group['interval_key']: group for group in groups}
@@ -713,8 +595,12 @@ def attribute(record, *, model=None):
         if key in by_key and by_key[key]['calls'] != 1:
             notes.append(f'interval {key!r} recorded {by_key[key]["calls"]} calls, expected 1 per request')
 
-    expected = _EXPECTED_KEYS.get((model, sampler))
-    missing = [key for key in expected or () if key not in by_key]
+    expected = metrics.get('expected_interval_keys', spec['profiling']['expected_keys'].get(sampler))
+    if expected is not None and (
+            not isinstance(expected, (list, tuple))
+            or any(not isinstance(key, str) or key not in mapping for key in expected)):
+        raise ValueError('expected_interval_keys must contain declared interval keys')
+    missing = [key for key in expected or () if key not in intervals]
     if expected is None:
         notes.append(f'sampler {sampler!r} unknown: expected interval keys not checked')
     elif missing:
@@ -727,15 +613,32 @@ def attribute(record, *, model=None):
                      f'{-residual:.6g} ms; reported unclamped (event intervals can include '
                      'stream-idle or overlapping time)')
     covered = {stage_id for group in groups for stage_id in group['stages']}
-    model_stage_ids = [item.stage_id for item in MODEL_STAGES[model]]
-    compute = [stage_id for stage_id in model_stage_ids if STAGES[stage_id].kind == 'compute']
-    residual_stages = [stage_id for stage_id in model_stage_ids
-                       if stage_id not in covered and STAGES[stage_id].kind in ('compute', 'host')]
+    compute = [item.stage_id for item in model_stages if item.kind == 'compute']
+    residual_stages = [item.stage_id for item in model_stages
+                       if item.stage_id not in covered and item.kind in ('compute', 'host')]
     coverage = 'full' if all(stage_id in covered for stage_id in compute) and not missing else 'partial'
+    if metrics.get('diagnostic_graph_recapture') and (
+            metrics.get('capture_parity') or {}).get('status') != 'bit_exact':
+        coverage = 'partial'
+        notes.append('Diagnostic recapture lacks bit-exact public output parity evidence')
+    notes.append('coverage describes declared compute stages; CPU IO and residual time are reported separately')
+    if excluded:
+        notes.append(f'non-additive diagnostics/probes excluded from wall coverage: {sorted(excluded)}')
     notes.append(f'unattributed_ms contains: {residual_stages}')
     return {'model': model, 'wall_ms': wall_ms, 'groups': groups, 'per_call_ms': per_call,
             'nfe': nfe, 'unattributed_ms': residual, 'coverage': coverage,
-            'residual_stages': residual_stages, 'notes': notes}
+            'residual_stages': residual_stages, 'notes': notes, 'operator_probes': probes,
+             'coverage_scope': 'declared_compute_stages',
+            'attributed_fraction': attributed / wall_ms, 'nonadditive_diagnostics': diagnostics,
+            'coverage_evidence': {
+                'additive_keys': [group['interval_key'] for group in groups],
+                'excluded_keys': sorted(excluded), 'expected_keys': expected,
+                'missing_keys': missing, 'attributed_ms': attributed, 'wall_ms': wall_ms,
+                'residual_ms': residual, 'fraction': attributed / wall_ms,
+                'within_wall': residual >= 0,
+                'span_validation': 'same_clock_nonoverlap_checked' if spans is not None else 'unavailable_legacy_record',
+                'clock_domains': sorted({detail['clock'] for detail in provenance.values()}),
+            }}
 
 
 def amdahl_ceiling(share, local_speedup):
@@ -776,25 +679,28 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     listing = commands.add_parser('list', help='List stage ids, or one model stage map')
     listing.add_argument('--model')
+    listing.add_argument('--spec-dir')
     show = commands.add_parser('show', help='Show one stage with its playbook rows')
     show.add_argument('stage_id')
     attribution = commands.add_parser('attribute', help='Attribute a worker result.json')
     attribution.add_argument('result_json')
     attribution.add_argument('--model', help='Required only when the record has no candidate')
+    attribution.add_argument('--spec-dir', help='Explicit extra model declaration directory')
     attribution.add_argument('--rank', action='store_true', help='Also print the ranked groups')
-    commands.add_parser('check-seams', help='Verify every seam exists in this tree')
+    seams = commands.add_parser('check-seams', help='Verify every seam exists in this tree')
+    seams.add_argument('--spec-dir')
     args = parser.parse_args(argv)
     try:
         if args.command == 'list':
             if args.model is None:
                 output = {'stages': [item.to_dict() for item in _STAGE_LIST]}
             else:
+                items = stages_for(args.model, spec_dir=args.spec_dir)
                 output = {'model': args.model,
-                          'profile_keys': {key: list(value) for key, value in PROFILE_KEYS[args.model].items()}
-                          if args.model in PROFILE_KEYS else None,
-                          'stages': [{**item.to_dict(), 'title': STAGES[item.stage_id].title,
-                                      'kind': STAGES[item.stage_id].kind}
-                                     for item in stages_for(args.model)]}
+                          'profile_keys': {key: list(value) for key, value in
+                                           profile_keys_for(args.model, spec_dir=args.spec_dir).items()},
+                          'stages': [{**item.to_dict(), 'title': item.title, 'kind': item.kind}
+                                     for item in items]}
         elif args.command == 'show':
             output = stage(args.stage_id).to_dict(rows=True)
         elif args.command == 'attribute':
@@ -802,12 +708,12 @@ def main(argv=None):
                 record = json.loads(Path(args.result_json).read_text())
             except (OSError, json.JSONDecodeError) as error:
                 raise ValueError(f'Cannot read result JSON {args.result_json}: {error}') from error
-            output = attribute(record, model=args.model)
+            output = attribute(record, model=args.model, spec_dir=args.spec_dir)
             if args.rank:
                 output = {'attribution': output, 'rank': rank(output)}
         else:
-            missing = missing_seams()
-            output = {'seams': len(all_seams()), 'missing': missing}
+            missing = missing_seams(spec_dir=args.spec_dir)
+            output = {'seams': len(all_seams(spec_dir=args.spec_dir)), 'missing': missing}
             if missing:
                 print(json.dumps(output, indent=2, ensure_ascii=False))
                 print(f'error: {len(missing)} seam(s) missing', file=sys.stderr)

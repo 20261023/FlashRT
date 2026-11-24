@@ -39,21 +39,21 @@
     "notes": "Absolute public14 CPU actions after DOS W1 reconstruction. Raw normalized32 channels are a different comparison domain."
   },
   "stages": [
-    {"stage_id": "host.input", "seams": ["flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80._host_input", "flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80._update_profile"], "profiling_keys": [], "notes": ["Pinned author CPU transforms; exact prefix profile refreshed for each request."]},
-    {"stage_id": "vision.encode", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.vision", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.vision"], "profiling_keys": ["vision"], "notes": ["Three current RGB views; 27 SigLIP layers."]},
-    {"stage_id": "vision.project", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.vision", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.vision"], "profiling_keys": ["vision"], "notes": ["Pooling/projection shares vision interval."]},
-    {"stage_id": "prefix.prefill", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.prefill", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.prefill"], "profiling_keys": ["prefix"], "notes": ["34 layers; interval starts after vision."]},
-    {"stage_id": "denoise.velocity", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.velocity", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.velocity"], "profiling_keys": ["velocity"], "notes": ["One interval per expert call over fixed horizon50."]},
+    {"stage_id": "host.input", "seams": ["flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80._host_input", "flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80._update_profile"], "profiling_keys": ["host_input"], "notes": ["Pinned author CPU transforms; exact prefix profile refreshed for each request."]},
+    {"stage_id": "vision.encode", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.vision", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.vision"], "profiling_keys": ["vision", "full"], "notes": ["Three current RGB views; 27 SigLIP layers."]},
+    {"stage_id": "vision.project", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.vision", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.vision"], "profiling_keys": ["vision", "full"], "notes": ["Pooling/projection shares vision interval."]},
+    {"stage_id": "prefix.prefill", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.prefill", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.prefill"], "profiling_keys": ["prefix", "full"], "notes": ["34 layers; prefix interval starts after vision."]},
+    {"stage_id": "denoise.velocity", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.velocity", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.velocity"], "profiling_keys": ["velocity", "full"], "notes": ["One interval per expert call over fixed horizon50 when split instrumentation is available. Without explicit noise the fallback preserves one full-program interval, not per-call velocity evidence."]},
     {"stage_id": "denoise.schedule", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.forward"], "profiling_keys": [], "notes": ["Fixed Euler10; no reduced-step or ProbeFlow profile."]},
     {"stage_id": "denoise.routing", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.forward"], "profiling_keys": [], "notes": ["Euler integration is outside disjoint stage intervals."]},
     {"stage_id": "host.launch", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05ProfileSm80.capture", "flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05ProfileSm80.run"], "profiling_keys": [], "notes": ["Bounded exact-prefix whole-model graph profiles."]},
-    {"stage_id": "host.output", "seams": ["flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80.infer"], "profiling_keys": [], "notes": ["D2H and absolute14 action reconstruction."]},
+    {"stage_id": "host.output", "seams": ["flash_rt/frontends/torch/dm05_cuda_sm80.py:Dm05TorchFrontendCudaSm80.infer"], "profiling_keys": ["host_output"], "notes": ["D2H and absolute14 action reconstruction."]},
     {"stage_id": "kernel.gemm", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:Dm05PipelineSm80.linear", "flash_rt/models/dm05/compiled_cuda_sm80.py:Dm05CompiledPipelineSm80.velocity"], "profiling_keys": [], "notes": []},
     {"stage_id": "kernel.attention", "seams": ["flash_rt/models/dm05/attention_cuda_sm80.py:Dm05AttentionSm80.attend"], "profiling_keys": [], "notes": []},
     {"stage_id": "kernel.norm_elementwise", "seams": ["flash_rt/models/dm05/pipeline_cuda_sm80.py:adaptive_rms"], "profiling_keys": [], "notes": []}
   ],
   "profiling": {
-    "keys": {"vision": ["vision.encode", "vision.project"], "prefix": ["prefix.prefill"], "velocity": ["denoise.velocity"], "host_input": ["host.input"], "host_output": ["host.output"]},
+    "keys": {"vision": ["vision.encode", "vision.project"], "prefix": ["prefix.prefill"], "velocity": ["denoise.velocity"], "full": ["vision.encode", "vision.project", "prefix.prefill", "denoise.velocity"], "host_input": ["host.input"], "host_output": ["host.output"]},
     "expected_keys": {"euler": ["vision", "prefix", "velocity"]},
     "strategy": {"kind": "adapter", "hook": "flash_rt.vla.autotune.profilers.dm:install", "notes": "A diagnostic graph is recaptured to place external event nodes inside the fixed warmed program; production timing remains separate."}
   },

@@ -1,6 +1,7 @@
 """Tool registry (DESIGN F): specs, config tools, lever pricing, patches and the CLI."""
 
 import json
+import importlib
 import os
 from pathlib import Path
 import shutil
@@ -9,6 +10,7 @@ import pytest
 
 from flash_rt.sampling import ProbeFlowConfig
 from flash_rt.vla import BackendConfig
+from flash_rt.vla.model_spec import get_spec, list_models
 from flash_rt.vla.autotune import snapshots as snap
 from flash_rt.vla.autotune import tools
 from flash_rt.vla.autotune.controller import initialize_campaign, main as controller_main
@@ -22,6 +24,7 @@ from flash_rt.vla.autotune.tools.artifacts import PatchProposal
 from flash_rt.vla.autotune.tools.builtin import effective_backend
 from flash_rt.vla.autotune.tools.external import ADAPTERS, adapter_module, external_specs
 from flash_rt.vla.autotune.tools.spec import HARDWARE_CAPABILITY, ToolSpec, Upstream, hardware_capability
+from flash_rt.vla.autotune.tools.spec import match_predicate
 from flash_rt.vla.registry import _CAPABILITIES, _CUDA_TARGETS, validate_config
 
 from test_vla_campaign_snapshot import git, head, make_repo
@@ -84,7 +87,8 @@ def test_every_stage_default_tool_is_registered_and_stages_exist():
     assert REFERENCED_TOOL_IDS <= ids
     for info in STAGES.values():
         for tool_id in info.default_tools:
-            assert tools.get_tool(tool_id).tool_id == tool_id
+            tool = tools.get_tool(tool_id)
+            assert tool.tool_id == tool_id or tool_id in tool.aliases
     for tool in tools.all_tools():
         assert tool.stages and set(tool.stages) <= set(STAGE_IDS), tool.tool_id
         assert tool.skills and all(isinstance(skill, str) and skill.strip() for skill in tool.skills)
@@ -143,9 +147,9 @@ def test_external_specs_match_adapters_and_pinned_commits():
         assert tool.propose is None
 
 
-def test_aitune_is_a_listed_patch_tool_for_torch_module_models_only():
+def test_aitune_is_a_listed_unimplemented_patch_for_module_or_functional_torch_regions():
     tool = tools.get_tool('compile.aitune')
-    assert tool.lane == 'patch' and tool.status == 'needs_setup' and tool.propose is None
+    assert tool.lane == 'patch' and tool.status == 'needs_implementation' and tool.propose is None
     assert tool.adapter == 'flash_rt.vla.autotune.tools.external.aitune'
     listed = {item.tool_id for item in tools.list_tools(model='fastwam', hardware='cuda_sm80',
                                                          stage='denoise.velocity',
@@ -193,9 +197,10 @@ def test_list_filters_by_model_stage_lane_and_readiness():
     assert not {'gemm.fastwam_linear_backend', 'precision.hy_numerical_profile'} & pi05
     # The author latency scripts make the official baseline ready for every model.
     assert 'baseline.official_impl' in pi05
-    assert 'compile.fastwam_inductor' not in pi05
+    assert 'compile.inductor' not in pi05
     fastwam = {tool.tool_id for tool in tools.list_tools(model='fastwam')}
-    assert {'gemm.fastwam_linear_backend', 'baseline.official_impl', 'compile.fastwam_inductor'} <= fastwam
+    assert {'gemm.fastwam_linear_backend', 'baseline.official_impl', 'compile.inductor'} <= fastwam
+    assert not {'compile.fastwam_inductor', 'compile.dm05_inductor'} & fastwam
     assert 'prefix.vision_pool' not in fastwam
     hy = {tool.tool_id for tool in tools.list_tools(model='hyvla')}
     assert 'precision.hy_numerical_profile' in hy and 'gemm.fastwam_linear_backend' not in hy
@@ -205,20 +210,15 @@ def test_list_filters_by_model_stage_lane_and_readiness():
     assert all(tool.lane == 'patch' for tool in tools.list_tools(lane='patch', include_unavailable=True))
 
 
-def test_official_impl_is_ready_per_model_from_the_author_latency_scripts():
+def test_official_impl_uses_declared_author_adapter_and_supported_options():
     tool = tools.get_tool('baseline.official_impl')
-    assert all(tool.status_for(model) == 'ready' for model in ('pi0', 'pi05', 'hyvla', 'fastwam'))
-    native = Path('examples/vla_autotune/official_native_latency.py').read_text()
-    assert "choices=('pi0','pi05','fastwam')" in native
-    assert 'author FastWAM.infer_action' in native
-    hy = Path('examples/vla_autotune/official_hyvla_latency.py').read_text()
-    assert 'policy.model.sample_actions' in hy
-    for model in ('pi0', 'pi05', 'fastwam'):
-        assert f'official_native_latency.py --model {model}' in tool.reason_for(model)
-    assert 'official_hyvla_latency.py' in tool.reason_for('hyvla')
-    fastwam = Path('examples/vla_autotune/validate_fastwam.py').read_text()
-    assert 'direct_pinned_upstream_infer_action' in fastwam
-    assert 'validate_fastwam.py --reference' in tool.reason_for('fastwam')
+    for model in list_models():
+        spec = get_spec(model)
+        assert tool.status_for(model) == 'ready'
+        assert callable(importlib.import_module(spec['author']['adapter']).load)
+        assert isinstance(spec['author']['options'], list)
+        assert all(isinstance(name, str) and name for name in spec['author']['options'])
+    assert 'author.adapter' in tool.reason and 'author.options' in tool.reason
 
 
 def _fastwam_baseline(**options):
@@ -230,15 +230,50 @@ def _fastwam_baseline(**options):
 
 
 def test_fastwam_compile_tool_emits_a_registry_valid_compiled_candidate():
-    out = tools.propose('compile.fastwam_inductor', _fastwam_baseline(use_cuda_graph=True))
+    out = tools.propose('compile.inductor', _fastwam_baseline(use_cuda_graph=True))
     assert len(out) == 1
     backend = out[0].backend
     assert backend.backend == 'torch'
     assert backend.options['compile_action_infer'] is True and backend.options['use_cuda_graph'] is False
     assert 'native_linear_backend' not in backend.options
     validate_config(backend)
-    assert out[0].tool == 'compile.fastwam_inductor' and out[0].stage == 'host.launch'
-    assert tools.propose('compile.fastwam_inductor', _fastwam_baseline(compile_action_infer=True)) == []
+    assert out[0].tool == 'compile.inductor' and out[0].stage == 'host.launch'
+    assert tools.propose('compile.inductor', _fastwam_baseline(compile_action_infer=True)) == []
+
+
+def test_compiler_historical_ids_resolve_to_one_canonical_recipe_tool():
+    canonical = tools.get_tool('compile.inductor')
+    for alias in ('compile.fastwam_inductor', 'compile.dm05_inductor'):
+        assert tools.get_tool(alias) is canonical
+    for model in ('dm05', 'fastwam'):
+        baseline = baselines()[model][0]
+        alias = f'compile.{model}_inductor'
+        assert tools.propose(alias, baseline) == tools.propose('compile.inductor', baseline)
+        assert all(item.tool == 'compile.inductor' for item in tools.propose(alias, baseline))
+
+
+def test_compiler_routes_only_to_stages_declared_by_each_existing_product_recipe():
+    tool = tools.get_tool('compile.inductor')
+    for model in ('dm05', 'fastwam'):
+        recipe = get_spec(model)['tools']['inductor']
+        assert tool.stages_for(model) == tuple(recipe['stages'])
+    fastwam_vision = {item.tool_id for item in tools.list_tools(
+        model='fastwam', hardware='cuda_sm80', stage='vision.encode')}
+    assert 'compile.inductor' not in fastwam_vision
+    dm05_vision = {item.tool_id for item in tools.list_tools(
+        model='dm05', hardware='cuda_sm80', stage='vision.encode')}
+    assert 'compile.inductor' in dm05_vision
+
+
+def test_effective_backend_uses_declared_backend_specific_option_defaults(tmp_path):
+    spec, path = external_spec(tmp_path)
+    spec['capabilities']['options']['native_linear_backend'] = {
+        'type': 'string', 'enum': ['legacy', 'cached'], 'default_by_backend': {'flashrt': 'cached'}}
+    path.write_text(json.dumps(spec))
+    native = BackendConfig(model='test_flow', checkpoint='/w', spec_dir=str(tmp_path))
+    assert effective_backend(native)['options']['native_linear_backend'] == 'cached'
+    torch = BackendConfig(model='test_flow', checkpoint='/w', backend='torch', spec_dir=str(tmp_path))
+    assert 'native_linear_backend' not in effective_backend(torch)['options']
 
 
 def test_graph_and_native_linear_tools_turn_compile_off_on_a_compiled_baseline():
@@ -259,7 +294,8 @@ def test_tool_models_follow_registry_options():
                     'gemm.fastwam_linear_backend': 'native_linear_backend'}
     for tool_id, option in option_tools.items():
         accepting = tuple(model for model, spec in _CAPABILITIES.items() if option in spec['options'])
-        assert tools.get_tool(tool_id).models == accepting, tool_id
+        assert set(tools.get_tool(tool_id).matching_models()) == set(accepting), tool_id
+        assert tools.get_tool(tool_id).models == ('*',), tool_id
 
 
 def test_toolspec_validation():
@@ -276,6 +312,157 @@ def test_toolspec_validation():
         ToolSpec('bad.tool', status='ready', propose=lambda baseline: [], **{**common, 'lane': 'patch'})
     with pytest.raises(ValueError, match='commit'):
         Upstream('https://example.invalid/repo', 'abc', 'MIT')
+    for predicate in ({'path': 'features.variable_steps'}, {'any': []},
+                      {'all': [], 'path': 'head.type'}, {'path': 'head.type', 'execute': 'os.system'}):
+        with pytest.raises(ValueError, match='model_predicate'):
+            ToolSpec('bad.selector', status='ready', model_predicate=predicate, **common)
+
+
+def external_spec(tmp_path, *, model='test_flow', head='flow_matching', samplers=None, features=None):
+    """A separate declaration; no model adapter is imported by the routing tests."""
+    spec = get_spec('pi05')
+    spec['model'], spec['name'], spec['aliases'] = model, f'Test {model}', []
+    spec['adapter']['hooks'] = {}
+    spec['head'] = {'type': head, 'defaults': {'sampler': 'euler', 'num_steps': 10}}
+    spec['features'] = {'variable_steps': True, **(features or {})}
+    spec['tools'] = {'tags': [], 'supported': [], 'unsupported': [],
+                     'defaults': {'num_steps': 10, 'options': {'use_cuda_graph': False}}}
+    if head == 'other':
+        spec['head']['kind'] = 'regression'
+        spec['head']['defaults'] = {'sampler': 'none'}
+    elif head == 'autoregressive_tokens':
+        spec['head'].update(vocab_size=256, max_tokens=32)
+        spec['head']['defaults'] = {'sampler': 'autoregressive'}
+    spec['capabilities']['samplers'] = samplers or [spec['head']['defaults']['sampler']]
+    spec['capabilities']['options'] = {'use_cuda_graph': {'type': 'bool', 'default': False}}
+    spec['capabilities']['backends'] = {'flashrt': ['torch'], 'torch': ['torch']}
+    spec['capabilities']['frameworks'] = ['torch']
+    spec['capabilities']['hardware'] = ['cuda_sm80', 'rtx_sm89']
+    spec['profiling']['expected_keys'] = {name: [] for name in spec['capabilities']['samplers']}
+    path = tmp_path / f'{model}.json'
+    path.write_text(json.dumps(spec))
+    return spec, path
+
+
+def test_feature_routing_extends_to_explicit_spec_dir_without_model_lists(tmp_path):
+    _, _ = external_spec(tmp_path, samplers=['euler', 'probeflow'],
+                         features={'torch_modules': True})
+    listed = {tool.tool_id for tool in tools.list_tools(model='test_flow', hardware='cuda_sm80',
+                                                       spec_dir=tmp_path, include_unavailable=True)}
+    assert {'sampler.euler_steps', 'sampler.probeflow', 'launch.cuda_graph', 'compile.aitune'} <= listed
+    assert not {'compile.inductor', 'prefix.vision_pool', 'precision.hy_numerical_profile',
+                'engine.apxinf'} & listed
+    baseline = Candidate('new', BackendConfig(model='test_flow', checkpoint='/w', num_steps=10,
+                                             spec_dir=str(tmp_path)), 'frames')
+    points = tools.propose('sampler.euler_steps', baseline, steps=[4, 10])
+    assert len(points) == 1 and points[0].backend.num_steps == 4
+    assert points[0].backend.spec_dir == str(tmp_path)
+    assert Candidate.from_dict(points[0].to_dict()) == points[0]
+
+
+@pytest.mark.parametrize('head', ['other', 'autoregressive_tokens'])
+def test_non_flow_heads_never_receive_flow_sampler_routes(tmp_path, head):
+    external_spec(tmp_path, head=head)
+    listed = {tool.tool_id for tool in tools.list_tools(model='test_flow', spec_dir=tmp_path,
+                                                       include_unavailable=True)}
+    assert not {'sampler.euler_steps', 'sampler.probeflow'} & listed
+    schedule = next(row for row in tools.stage_coverage('test_flow', 'cuda_sm80', spec_dir=tmp_path)
+                    if row['stage'] == 'denoise.schedule')
+    sampler_entries = [entry for entry in schedule['tools'] if entry['lane'] == 'config']
+    assert sampler_entries and all(entry['status'] == 'blocked' for entry in sampler_entries)
+    assert all('head.type' in entry['reason'] for entry in sampler_entries)
+
+
+def test_unknown_feature_is_unverified_and_explicit_unsupported_wins(tmp_path):
+    spec, path = external_spec(tmp_path, features={
+        'variable_steps': {'status': 'unknown', 'value': None, 'sources': ['test fixture']}})
+    assert 'sampler.euler_steps' not in {tool.tool_id for tool in tools.list_tools(
+        model='test_flow', spec_dir=tmp_path)}
+    assert not match_predicate({'path': 'features.variable_steps', 'equals': True},
+                               {'features': {'variable_steps': 1}})[0]
+    spec['features']['variable_steps'] = True
+    spec['tools']['unsupported'] = ['sampler.euler_steps']
+    path.write_text(json.dumps(spec))
+    matches, reason = tools.get_tool('sampler.euler_steps').match_model('test_flow', spec_dir=tmp_path)
+    assert not matches and 'tools.unsupported' in reason
+
+
+def test_external_baseline_requires_declared_compatibility_in_the_selected_spec(tmp_path):
+    spec, path = external_spec(tmp_path)
+    apxinf = tools.get_tool('engine.apxinf')
+    assert not apxinf.applies_to('test_flow', spec_dir=tmp_path)
+    spec['tools']['supported'] = ['engine.apxinf']
+    path.write_text(json.dumps(spec))
+    assert apxinf.applies_to('test_flow', spec_dir=tmp_path)
+    assert apxinf.status_for('test_flow', spec_dir=tmp_path) == 'needs_setup'
+    assert 'engine.apxinf' not in {tool.tool_id for tool in tools.list_tools(
+        model='test_flow', spec_dir=tmp_path)}
+
+
+def test_torch_tool_predicate_rejects_a_declaration_with_only_jax_execution(tmp_path):
+    spec, path = external_spec(tmp_path, features={'torch_modules': True})
+    spec['capabilities']['frameworks'] = ['jax']
+    spec['capabilities']['backends'] = {'flashrt': ['jax']}
+    path.write_text(json.dumps(spec))
+    tool = tools.get_tool('compile.aitune')
+    assert not tool.applies_to('test_flow', spec_dir=tmp_path)
+    assert tool.status_for('test_flow', spec_dir=tmp_path) == 'blocked'
+    assert 'frameworks' in tool.reason_for('test_flow', spec_dir=tmp_path)
+
+
+def test_compiler_uses_declared_recipe_and_respects_sampler_framework_and_hardware(tmp_path):
+    spec, path = external_spec(tmp_path, samplers=['euler', 'probeflow'])
+    spec['capabilities']['options']['compile_region'] = {'type': 'bool', 'default': False}
+    spec['capabilities']['options']['legacy_region'] = {'type': 'bool'}
+    spec['tools']['inductor'] = {
+        'backend': 'torch', 'options': {'compile_region': True, 'use_cuda_graph': False},
+        'remove_options': ['legacy_region'], 'frameworks': ['torch'], 'samplers': ['euler'],
+        'hardware': ['cuda_sm80'], 'stages': ['denoise.velocity'],
+        'reason': 'Fixture implemented compiler option', 'sources': ['tests/test_vla_autotune_tools.py'],
+    }
+    path.write_text(json.dumps(spec))
+    baseline = Candidate('new', BackendConfig(
+        model='test_flow', checkpoint='/w', hardware='cuda_sm80', num_steps=10,
+        options={'use_cuda_graph': True, 'legacy_region': True}, spec_dir=str(tmp_path)), 'frames')
+    compiled = tools.propose('compile.inductor', baseline)
+    assert len(compiled) == 1
+    assert compiled[0].backend.backend == 'torch'
+    assert compiled[0].backend.options == {'use_cuda_graph': False, 'compile_region': True}
+    assert compiled[0].stage == 'denoise.velocity'
+    assert tools.propose('compile.inductor', compiled[0]) == []
+    assert 'compile.inductor' not in {tool.tool_id for tool in tools.list_tools(
+        model='test_flow', hardware='rtx_sm89', spec_dir=tmp_path)}
+    assert 'compile.inductor' not in {tool.tool_id for tool in tools.list_tools(
+        model='test_flow', hardware='cuda_sm80', stage='vision.encode', spec_dir=tmp_path)}
+    adaptive = Candidate('pf', BackendConfig(
+        model='test_flow', checkpoint='/w', hardware='cuda_sm80', sampler='probeflow',
+        spec_dir=str(tmp_path)), 'frames')
+    with pytest.raises(ValueError, match='samplers'):
+        tools.propose('compile.inductor', adaptive)
+
+
+def test_int8_selector_refuses_incompatible_sampler_and_framework():
+    adaptive = baselines()['pi05'][1]
+    with pytest.raises(ValueError, match='sampler'):
+        tools.propose('quant.int8_pi05', adaptive)
+    jax = candidate('jax', 'pi05', framework='jax')
+    with pytest.raises(ValueError, match='framework'):
+        tools.propose('quant.int8_pi05', jax)
+
+
+def test_attention_ports_remain_unimplemented_and_coverage_explains_hardware():
+    for tool_id in ('attention.sdpa_backend', 'attention.flash_attention'):
+        tool = tools.get_tool(tool_id)
+        assert tool.lane == 'port' and tool.status == 'needs_implementation'
+        assert tool.propose is None and 'vla-operator-gate' in tool.skills
+    coverage = tools.stage_coverage('pi05', 'cuda_sm80')
+    assert {row['stage'] for row in coverage} == set(STAGE_IDS)
+    precision = next(row for row in coverage if row['stage'] == 'precision.weights')
+    fp8 = next(entry for entry in precision['tools'] if entry['tool_id'] == 'quant.fp8')
+    assert fp8['status'] == 'blocked' and fp8['reason']
+    attention = next(row for row in coverage if row['stage'] == 'kernel.attention')
+    fa = next(entry for entry in attention['tools'] if entry['tool_id'] == 'attention.flash_attention')
+    assert fa['status'] == 'needs_implementation' and 'mask' in fa['reason']
 
 
 # --------------------------------------------------------------------------- config tools
@@ -294,7 +481,8 @@ def test_every_ready_config_tool_produces_registry_valid_candidates_for_every_mo
                     assert validate_config(item.backend) is _CAPABILITIES[model]
                     assert set(item.backend.options) <= set(_CAPABILITIES[model]['options'])
                     assert item.origin == 'search' and item.tool == tool.tool_id
-                    assert item.stage == tool.primary_stage and item.parent_id == baseline.candidate_id
+                    assert item.stage == tool.primary_stage_for(model)
+                    assert item.parent_id == baseline.candidate_id
                     assert item.candidate_id.startswith(f'{baseline.candidate_id}-')
                     assert item.hypothesis.startswith(f'{tool.tool_id}: ')
                     assert item.hypothesis.endswith(f'; exactness={tool.exactness}')
@@ -405,7 +593,7 @@ def test_propose_refuses_non_generating_tools_with_reason_and_adapter():
     assert 'SM>=89' in str(error.value)
     with pytest.raises(ValueError, match='tools.external.forgekernel'):
         tools.propose('kernel.forgekernel', pi05)
-    with pytest.raises(ValueError, match='validate_fastwam.py'):
+    with pytest.raises(ValueError, match='author.adapter'):
         tools.propose('baseline.official_impl', baselines()['fastwam'][0])
     with pytest.raises(ValueError, match='stages attribute'):
         tools.propose('profile.stage_intervals', pi05)
@@ -486,6 +674,32 @@ def test_cli_list_show_and_errors(capsys):
     assert shown['upstream']['commit'] == PINNED['kernel.forgekernel'] and shown['setup'] and shown['risks']
     assert tools_main(['show', 'nope']) == 2
     assert 'Unknown tool' in capsys.readouterr().err
+
+
+def test_cli_coverage_shows_all_stages_and_unavailable_reasons(capsys):
+    assert tools_main(['coverage', '--model', 'pi05', '--hardware', 'cuda_sm80',
+                       '--markdown']) == 0
+    table = capsys.readouterr().out
+    assert table.startswith('| stage | ready | unavailable / prerequisites |')
+    assert len(table.strip().splitlines()) == len(STAGE_IDS) + 2
+    assert 'quant.fp8 (patch): blocked:' in table
+    assert 'attention.flash_attention (port): needs_implementation:' in table
+    assert tools_main(['show', 'compile.fastwam_inductor', '--model', 'fastwam']) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown['tool_id'] == 'compile.inductor' and shown['requested_alias'] == 'compile.fastwam_inductor'
+    assert shown['selected_model']['recipe'] == get_spec('fastwam')['tools']['inductor']
+
+
+def test_cli_external_spec_dir_is_carried_through_listing_and_coverage(tmp_path, capsys):
+    external_spec(tmp_path)
+    assert tools_main(['list', '--model', 'test_flow', '--spec-dir', str(tmp_path)]) == 0
+    listed = json.loads(capsys.readouterr().out)
+    sampler = next(record for record in listed if record['tool_id'] == 'sampler.euler_steps')
+    assert 'test_flow' in sampler['matching_models'] and sampler['model_predicate']
+    assert tools_main(['coverage', '--model', 'test_flow', '--hardware', 'cuda_sm80',
+                       '--spec-dir', str(tmp_path)]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert {row['stage'] for row in rows} == set(STAGE_IDS)
 
 
 def test_cli_propose_feeds_controller_init_proposals(tmp_path, capsys):
