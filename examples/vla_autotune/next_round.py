@@ -500,6 +500,18 @@ def _action(action, reason, rationale, **fields):
     return {'action': action, 'reason_code': reason, 'rationale': rationale, **fields}
 
 
+def _grouped_ceiling(profile):
+    """Upper-bound each unresolved stage by giving it every overlapping group."""
+    ceiling_ms = defaultdict(float)
+    unresolved = set()
+    for group in profile['groups']:
+        for stage in group['stages']:
+            ceiling_ms[stage] += group['ms']
+        if len(group['stages']) > 1 and group['ms'] > 0:
+            unresolved.update(group['stages'])
+    return max((ceiling_ms[stage] for stage in unresolved), default=0) / profile['wall_ms']
+
+
 def recommend(summary_path, history_path, *, profile_path=None, operator_profile_path=None,
               method_budget_gpuh=6, spec_dir=None):
     """Return a reproducible recommendation; only ``main`` persists its decision."""
@@ -524,7 +536,7 @@ def recommend(summary_path, history_path, *, profile_path=None, operator_profile
     profile, gap = _profile(record, current, profile_path)
     regions = (_operator_regions(operator_profile_path, record, profile, baseline['model'],
                                  baseline['hardware'], spec_dir)
-               if gap is None else {})
+               if gap in (None, 'unsplit_profile_groups') else {})
     table = _table(current, profile, regions, rounds, hours, exhausted, budget, spec_dir)
     eligible = [row for row in table if row['exclusion'] is None]
     # Largest MEASURED region first, then ready/exact over unimplemented/approximate.
@@ -532,7 +544,12 @@ def recommend(summary_path, history_path, *, profile_path=None, operator_profile
     eligible.sort(key=lambda row: (-row['share'],
                                    {'ready': 0, 'needs_setup': 1, 'needs_implementation': 2}
                                    .get(row['status'], 3),
-                                   row['exactness'] != 'exact', row['tool_id']))
+                                    row['exactness'] != 'exact', row['tool_id']))
+    if gap == 'unsplit_profile_groups':
+        ceiling = _grouped_ceiling(profile)
+        profile['unresolved_stage_share_ceiling'] = ceiling
+        if eligible and eligible[0]['share'] > ceiling:
+            gap = None
     if pending or current['summary'].get('complete') is not True:
         chosen = _action('wait', 'job_not_terminal',
                          'Wait for the same job to end naturally; do not resubmit or add a deadline.')

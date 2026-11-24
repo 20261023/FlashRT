@@ -46,6 +46,8 @@ python examples/vla_autotune/next_round.py \
 已怀疑穷尽的方法用 `exhausted_tools` 提交 `tool`、`reason` 和 `evidence_ref`。
 推荐依赖当前 winner 的 profile。若 `summary.json` 中只有旧诊断，传入同一次测量的
 完整 worker 记录 `--profile` 并核对输入、运行身份和计时边界。
+合并区间必须保留。已独立测得的最大可选游如果超过每个未拆分游的占比上限，选择器可以
+继续。上限按该未拆分游可能占用的所有区间计算，不分摊合并耗时。
 
 算子迁移候选使用 `--operator-profile` 读同一次诊断请求的关键路径区间。输入对象含
 `schema_version: 1`、`profile_sha256` 和 `regions`。哈希对象是完整 worker 结果

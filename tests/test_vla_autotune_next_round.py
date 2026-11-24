@@ -173,6 +173,19 @@ def test_no_profile_is_unknown_not_zero_and_baseline_only_does_not_count_as_no_g
     assert result['measured_round']['latency_reduction_ratio'] is None
 
 
+def test_small_grouped_region_does_not_hide_a_larger_measured_stage(tmp_path):
+    summary = _campaign(tmp_path, intervals={
+        'condition_vae_video_prefill': [22], 'velocity': [7.1] * 10,
+        'host_output': [2],
+    })
+    result = _module().recommend(summary, _history(tmp_path, [summary]))
+    assert result['chosen_action']['action'] == 'select_tool'
+    assert result['chosen_action']['stage'] == 'denoise.velocity'
+    assert result['chosen_action']['share'] == pytest.approx(.71)
+    assert not any(row['stage'] in {'vision.encode', 'prefix.prefill'}
+                   for row in result['eligible_directions'])
+
+
 def test_sub_five_percent_stage_is_skipped_without_renormalizing_residual(tmp_path):
     summary = _campaign(
         tmp_path, intervals={'vision': [4], 'prefix': [1], 'velocity': [8.7] * 10,
