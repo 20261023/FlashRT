@@ -24,7 +24,17 @@ def external_spec(head='other'):
     spec['capabilities']['samplers'] = [sampler]
     spec['capabilities']['options'] = {}
     spec['adapter'] = {'hooks': {}, 'runtime': {}}
-    spec['profiling']['expected_keys'] = {sampler: []}
+    stage = 'action.regression' if head == 'other' else 'token.decode'
+    spec['stages'] = [{'stage_id': stage, 'kind': 'compute', 'title': 'Synthetic action head',
+                       'seams': [], 'profiling_keys': [], 'notes': []}]
+    spec['profiling'] = {'keys': {}, 'expected_keys': {sampler: []}, 'strategy': {}}
+    spec['attention'] = []
+    spec['features'] = {}
+    spec['tools'] = {'tags': [head], 'supported': [], 'unsupported': []}
+    for name in ('source', 'weights', 'license'):
+        spec['identity'][name] = {
+            'status': 'unknown', 'value': None, 'sources': ['Synthetic test declaration, not a model asset.']}
+    spec['identity']['source'].update(repository='synthetic-test-source', revision=None)
     spec['author']['adapter'] = 'external_author_adapter'
     spec['fixture']['head_type'] = head
     return spec
@@ -131,8 +141,11 @@ def test_external_adapter_loads_through_registry_without_model_name_branches(tmp
     (lambda s: s['attention'][1].update(query_heads=7, kv_heads=2), 'heads'),
     (lambda s: s['attention'][1].update(head_dim=True), 'head_dim'),
     (lambda s: s['attention'][1].update(gqa=False), 'gqa'),
+    (lambda s: s['attention'][1].update(precision=True), 'precision'),
+    (lambda s: s['attention'][1]['shapes'].update(q=[1, True, 8, 256]), 'shapes'),
     (lambda s: s['profiling']['keys'].update(broken=['missing.stage']), 'stage'),
     (lambda s: s['stages'][1].update(profiling_keys=['missing_interval']), 'profiling'),
+    (lambda s: s['stages'][0].update(profiling_keys=[]), 'profiling'),
     (lambda s: s['stages'][1].update(seams=['../outside.py:run']), 'seam'),
     (lambda s: s['adapter']['hooks'].update(binding='unsafe()'), 'hook'),
     (lambda s: s['quality'].update(thresholds={'max_relative_l2': -1}), 'threshold'),
@@ -150,6 +163,21 @@ def test_autoregressive_heads_need_token_geometry():
     spec = external_spec('autoregressive_tokens')
     spec['head'].pop('vocab_size')
     with pytest.raises(ValueError, match='vocab_size'):
+        api().validate_spec(spec)
+
+
+@pytest.mark.parametrize('field,value', [('vocab_size', 0), ('vocab_size', True), ('max_tokens', -1)])
+def test_autoregressive_token_geometry_rejects_invalid_sizes(field, value):
+    spec = external_spec('autoregressive_tokens')
+    spec['head'][field] = value
+    with pytest.raises(ValueError, match=field):
+        api().validate_spec(spec)
+
+
+def test_autoregressive_tokens_do_not_accept_denoising_defaults():
+    spec = external_spec('autoregressive_tokens')
+    spec['head']['defaults']['num_steps'] = 10
+    with pytest.raises(ValueError, match='num_steps'):
         api().validate_spec(spec)
 
 
@@ -212,3 +240,27 @@ def test_legacy_backend_codec_does_not_change_existing_candidate_identity():
     }
     assert encode_backend(decode_backend(legacy)) == legacy
     assert 'spec_dir' not in Candidate('legacy', BackendConfig('pi05', '/weights'), 'w').to_dict()['backend']
+
+
+def test_compiler_recipe_requires_declared_stage_scope():
+    spec = api().get_spec('fastwam')
+    spec['tools']['inductor']['stages'] = ['not.a.model.stage']
+    with pytest.raises(ValueError, match='inductor.stages'):
+        api().validate_spec(spec)
+
+
+def test_external_compiler_recipe_can_use_parent_provenance_without_new_source_claim():
+    spec = api().get_spec('fastwam')
+    spec['tools']['inductor'].pop('sources')
+    assert api().validate_spec(spec)['tools']['inductor']['options']['compile_action_infer'] is True
+
+
+def test_backend_description_cannot_mutate_later_capability_identity():
+    from flash_rt.vla import BackendConfig, describe_backend
+    config = BackendConfig('pi05', '/absent')
+    first = describe_backend(config)
+    first['identity']['source']['revision'] = 'bad'
+    first['action_channels'].append(31)
+    second = describe_backend(config)
+    assert second['identity']['source']['revision'] == 'dd5c5ca93ce229017477a75fdda9f16654ab91ef'
+    assert second['action_channels'] == [0, 1, 2, 3, 4, 5, 6]

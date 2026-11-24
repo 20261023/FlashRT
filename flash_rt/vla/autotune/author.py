@@ -350,9 +350,26 @@ def _read_author_result(path, *, outputs_path=None, planned=None):
             or source.get('source_url') != declaration['identity']['source']['repository']
             or not isinstance(source.get('python_files'), dict)
             or source.get('python_files', {}).get(relative_model) != identity['author_model'].get('sha256')
-            or record.get('nfe') != spec['num_steps']
             or record.get('sampler') != declaration['head']['defaults']['sampler']):
         raise AuthorReferenceError('Saved author source/model/sampling proof is inconsistent')
+    if declaration['head']['type'] == 'autoregressive_tokens':
+        # num_steps describes a flow budget and is not the decoder's NFE.
+        metadata = record.get('metadata', {})
+        counts = metadata.get('forward_counts', [metadata])
+        if not isinstance(counts, list) or len(counts) not in (1, record.get('repeats')):
+            raise AuthorReferenceError('Missing author decoder forward counts')
+        for row in counts:
+            if not isinstance(row, dict):
+                raise AuthorReferenceError('Invalid author decoder count')
+            calls = [row.get('prefill_forward_calls'), row.get('decoder_forward_calls')]
+            if (any(type(n) is not int or n < 0 for n in calls)
+                    or row.get('nfe_provenance') != 'observed_forward_calls'
+                    or type(row.get('generated_tokens')) is not int
+                    or not 1 <= row['generated_tokens'] <= declaration['head']['max_tokens']
+                    or sum(calls) != row.get('nfe', record.get('nfe'))):
+                raise AuthorReferenceError('Invalid observed author decoder NFE')
+    elif record.get('nfe') != spec['num_steps']:
+        raise AuthorReferenceError('Saved author forward count differs from the configured budget')
     command = record.get('producer_command')
     if not isinstance(command, list) or not command or not all(isinstance(item, str) for item in command):
         raise AuthorReferenceError('Saved author reference must retain its actual producer argv')

@@ -72,6 +72,16 @@ def _dimension(value, name):
         _positive(value, name)
 
 
+def _shape(value, name):
+    if not isinstance(value, list):
+        raise ValueError(f'{name} must be a dimension list')
+    for dim in value:
+        if isinstance(dim, str):
+            _text(dim, name)
+        else:
+            _dimension(dim, name)
+
+
 def _finite_json(value, name='spec'):
     if value is None or type(value) in (str, int, bool):
         return value
@@ -106,7 +116,8 @@ def _identity(value, name):
         _text(value.get('repository'), f'{name}.repository')
         if status == 'pinned' and revision is None:
             raise ValueError(f'{name} requires a pinned revision')
-    if 'sha256' in value and not re.fullmatch('[0-9a-f]{64}', value['sha256']):
+    if 'sha256' in value and (not isinstance(value['sha256'], str)
+                              or not re.fullmatch('[0-9a-f]{64}', value['sha256'])):
         raise ValueError(f'{name}.sha256 must be a lowercase SHA256')
 
 
@@ -190,14 +201,7 @@ def validate_spec(mapping, *, source='<memory>'):
         raise ValueError('inputs must declare at least one field')
     for name, field in inputs.items():
         _object(field, f'inputs.{name}')
-        shape = field.get('shape')
-        if not isinstance(shape, list):
-            raise ValueError(f'inputs.{name}.shape must be a dimension list')
-        for dim in shape:
-            if isinstance(dim, str):
-                _text(dim, f'inputs.{name}.shape')
-            else:
-                _dimension(dim, f'inputs.{name}.shape')
+        _shape(field.get('shape'), f'inputs.{name}.shape')
         _text(field.get('dtype'), f'inputs.{name}.dtype')
 
     head = _object(spec['head'], 'head')
@@ -208,6 +212,8 @@ def validate_spec(mapping, *, source='<memory>'):
     if head['type'] == 'autoregressive_tokens':
         for key in ('vocab_size', 'max_tokens'):
             _dimension(head.get(key), f'head.{key}')
+    if head['type'] not in ('flow_matching', 'diffusion') and defaults.get('num_steps') is not None:
+        raise ValueError('head.defaults.num_steps only applies to flow_matching/diffusion heads')
     actions = _object(spec['actions'], 'actions')
     for key in ('model_dim', 'effective_dim', 'horizon'):
         _dimension(actions.get(key), f'actions.{key}')
@@ -256,6 +262,10 @@ def validate_spec(mapping, *, source='<memory>'):
         for key in item['profiling_keys']:
             if item['stage_id'] not in keys.get(key, []):
                 raise ValueError(f'{item["stage_id"]} profiling key {key!r} does not cover the stage')
+        missing = [key for key, covered in keys.items()
+                   if item['stage_id'] in covered and key not in item['profiling_keys']]
+        if missing:
+            raise ValueError(f'{item["stage_id"]} profiling_keys omits covering intervals {missing}')
     expected = _object(profiling.get('expected_keys'), 'profiling.expected_keys')
     for sampler, intervals in expected.items():
         _texts(intervals, f'profiling.expected_keys.{sampler}')
@@ -292,6 +302,13 @@ def validate_spec(mapping, *, source='<memory>'):
             if type(gqa) is bool and gqa != (qh != kh):
                 raise ValueError(f'attention.{site_id}.gqa contradicts query/kv heads')
         _texts(site.get('sources'), f'attention.{site_id}.sources', nonempty=True)
+        if 'precision' in site:
+            if isinstance(site['precision'], dict):
+                _unknown(site['precision'], f'attention.{site_id}.precision')
+            else:
+                _text(site['precision'], f'attention.{site_id}.precision')
+        for name, shape in _object(site.get('shapes', {}), f'attention.{site_id}.shapes').items():
+            _shape(shape, f'attention.{site_id}.shapes.{name}')
 
     caps = _object(spec['capabilities'], 'capabilities')
     for key in ('frameworks', 'hardware', 'samplers'):
@@ -370,6 +387,9 @@ def validate_spec(mapping, *, source='<memory>'):
             values = _texts(recipe.get(key, []), f'tools.inductor.{key}')
             if set(values) - set(caps[key]):
                 raise ValueError(f'tools.inductor.{key} refers to unavailable capabilities')
+        scoped_stages = _texts(recipe.get('stages'), 'tools.inductor.stages', nonempty=True)
+        if set(scoped_stages) - set(stage_ids):
+            raise ValueError('tools.inductor.stages refers to unknown model stages')
         values = _object(recipe.get('options'), 'tools.inductor.options')
         if not values:
             raise ValueError('tools.inductor.options must declare an implemented option')
@@ -377,7 +397,8 @@ def validate_spec(mapping, *, source='<memory>'):
         removed = _texts(recipe.get('remove_options', []), 'tools.inductor.remove_options')
         if set(removed) - set(options):
             raise ValueError('tools.inductor.remove_options refers to unknown options')
-        _texts(recipe.get('sources'), 'tools.inductor.sources', nonempty=True)
+        if 'sources' in recipe:
+            _texts(recipe['sources'], 'tools.inductor.sources', nonempty=True)
     adapter = _object(spec['adapter'], 'adapter')
     for name, hook in _object(adapter.get('hooks'), 'adapter.hooks').items():
         if not isinstance(hook, str) or not _HOOK.fullmatch(hook):

@@ -511,37 +511,37 @@ def collect_codex(paths):
                 timestamp = utc_time(event['timestamp'])
                 if cumulative is not None:
                     current = _codex_counters(cumulative, includes)
-                    if any(value is None for value in current.values()):
-                        # A partial cumulative snapshot cannot establish a
-                        # baseline. Keep actual last-call fields, with nulls,
-                        # and leave any resumed prefix explicitly unlocated.
-                        counts = _codex_counters(last or {}, includes)
-                        previous = None
-                    elif previous is None and last is None:
-                        counts = current
-                        timestamp = None
-                        previous = current
+                    last_counts = _codex_counters(last or {}, includes)
+                    if previous == current:
+                        continue
+                    if previous is None:
+                        if last is None:
+                            counts = current
+                            timestamp = None
+                        else:
+                            carry = _vector({
+                                key: current[key] - last_counts[key]
+                                if current[key] is not None and last_counts[key] is not None else None
+                                for key in COUNTERS})
+                            if any(value for value in carry.values()):
+                                rows.append(dict(
+                                    schema=SCHEMA, source='codex', session_id=sid,
+                                    message_id='carry-' + _fingerprint(
+                                        json.dumps(carry, sort_keys=True)),
+                                    timestamp=None, kind='cumulative_carry_in',
+                                    counters=carry, request_fingerprint=None))
+                            counts = last_counts
                     else:
-                        if previous is None:
-                            last_counts = _codex_counters(last, includes)
-                            if all(value is not None for value in last_counts.values()):
-                                carry = _difference(current, last_counts)
-                                if any(carry.values()):
-                                    rows.append(dict(
-                                        schema=SCHEMA, source='codex', session_id=sid,
-                                        message_id='carry-' + _fingerprint(
-                                            json.dumps(carry, sort_keys=True)),
-                                        timestamp=None, kind='cumulative_carry_in',
-                                        counters=carry, request_fingerprint=None))
-                                previous = carry
-                            else:
-                                # We cannot place cumulative history in this
-                                # last request when last-call usage is partial.
-                                previous = current
-                                counts = last_counts
-                        if previous is not current:
-                            counts = _difference(current, previous or _zero())
-                        previous = current
+                        difference = {key: current[key] - previous[key]
+                                      if current[key] is not None and previous[key] is not None
+                                      else last_counts[key] for key in COUNTERS}
+                        if any(value is not None and value < 0 for value in difference.values()):
+                            raise ValueError('Codex cumulative usage counters decreased')
+                        counts = _vector(difference)
+                    # Preserve each known component across partial snapshots.
+                    # Resetting the whole baseline would count the resumed
+                    # cumulative prefix twice when that snapshot recovers.
+                    previous = current
                     if not any(value for value in counts.values()):
                         if all(value is not None for value in counts.values()):
                             continue

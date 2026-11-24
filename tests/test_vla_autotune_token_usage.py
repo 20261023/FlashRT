@@ -250,6 +250,28 @@ def test_codex_missing_usage_and_resumed_prefix_are_explicitly_unknown(tmp_path)
     assert report['current_run']['passes_unattributed_gate'] is False
 
 
+def test_codex_partial_snapshot_recovery_never_counts_the_cumulative_prefix_twice(tmp_path):
+    path = tmp_path / 'partial-recovered.jsonl'
+    middle = _codex_event(2000, 180, 90, 32, 8)
+    middle['payload']['info']['total_token_usage']['cache_write_input_tokens'] = None
+    middle['payload']['info']['last_token_usage'] = {
+        'input_tokens': 80, 'cached_input_tokens': 50, 'cache_write_input_tokens': None,
+        'output_tokens': 12, 'reasoning_output_tokens': 3, 'total_tokens': 92}
+    final = _codex_event(3000, 200, 100, 36, 9)
+    final['payload']['info']['last_token_usage'] = {
+        'input_tokens': 20, 'cached_input_tokens': 10, 'cache_write_input_tokens': 0,
+        'output_tokens': 4, 'reasoning_output_tokens': 1, 'total_tokens': 24}
+    path.write_text('\n'.join(json.dumps(row) for row in [
+        {'type': 'session_meta', 'payload': {'id': 'codex1'}},
+        _codex_event(1000, 100, 40, 20, 5), middle, final]) + '\n')
+    rows = usage.collect_codex([path])
+    assert sum(row['counters']['cache_read'] or 0 for row in rows) == 100
+    assert sum(row['counters']['output'] or 0 for row in rows) == 27
+    assert sum(row['counters']['reasoning'] or 0 for row in rows) == 9
+    assert len(rows) == 3
+    assert rows[1]['counters']['cache_write'] is None
+
+
 def test_submillisecond_start_does_not_absorb_an_earlier_message():
     segments = _segment(start=1000, end=2000)
     segments[0]['time'] = '1970-01-01T00:00:01.000270+00:00'
