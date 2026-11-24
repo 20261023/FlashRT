@@ -81,6 +81,7 @@ def test_autoregressive_template_has_no_flow_tools_and_scaffold_tests_run_cpu_on
 
 def test_scaffold_project_adapter_fails_closed_until_implemented(tmp_path, monkeypatch):
     import importlib
+    import inspect
     from flash_rt.vla.onboard import init_onboarding
     from flash_rt.vla import BackendConfig
 
@@ -93,6 +94,9 @@ def test_scaffold_project_adapter_fails_closed_until_implemented(tmp_path, monke
                            backend='torch', hardware='cuda_sm80', spec_dir=str(root / 'specs'))
     with pytest.raises(NotImplementedError):
         adapter.binding(config, 'cuda_sm80')
+    frontend = importlib.import_module('onboard_skeleton_onboarding.project_backend').OnboardingFrontend
+    # registry.load_backend supplies checkpoint positionally and binding kwargs.
+    inspect.signature(frontend).bind(config.checkpoint, config=config)
     assert ('torch' in sys.modules) == torch_loaded
 
 
@@ -387,6 +391,20 @@ def test_verify_cli_publishes_receipt_after_authoritative_flow_evidence(evidence
     assert main(argv) == 0
     assert json.loads(capsys.readouterr().out)['status'] == 'verified'
     assert read_json(evidence['root'] / 'verification.json')['model'] == 'onboard_toy'
+
+
+def test_verified_onboarding_receipt_is_never_overwritten_or_logged_twice(evidence):
+    from flash_rt.vla.onboard import verify_onboarding
+
+    verify_onboarding(evidence['root'], **verify_args(evidence))
+    receipt = (evidence['root'] / 'verification.json').read_bytes()
+    decisions = evidence['decisions'].read_bytes()
+    segments = evidence['segments'].read_bytes()
+    with pytest.raises(ValueError, match='already has a verification receipt'):
+        verify_onboarding(evidence['root'], **verify_args(evidence))
+    assert (evidence['root'] / 'verification.json').read_bytes() == receipt
+    assert evidence['decisions'].read_bytes() == decisions
+    assert evidence['segments'].read_bytes() == segments
 
 
 @pytest.mark.parametrize('evidence', [{'head': 'autoregressive_tokens'}], indirect=True)

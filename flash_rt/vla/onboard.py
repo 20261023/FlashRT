@@ -296,9 +296,10 @@ ONBOARDING_IMPLEMENTED = False
 
 
 class OnboardingFrontend:
-    def __init__(self, *, config):
+    def __init__(self, checkpoint, *, config):
         if not ONBOARDING_IMPLEMENTED:
             raise NotImplementedError("Implement loading, exact input and action-domain contracts")
+        self.checkpoint = checkpoint
         self.config = config
 
     def infer(self, observation, noise=None):
@@ -764,6 +765,7 @@ def _verify_evidence(root, *, campaign, results, graph_result, eager_result,
         def __init__(self, path):
             self._db = sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True)
             self._db.row_factory = sqlite3.Row
+            self._db.execute('BEGIN')  # One consistent authoritative read snapshot.
 
     with ReadOnlyLedger(campaign / 'ledger.sqlite') as ledger:
         if plan.get('campaign_instance_id') != ledger.instance_id:
@@ -893,7 +895,15 @@ def verify_onboarding(root, *, campaign, results, graph_result, eager_result,
             stream.flush()
             os.fsync(stream.fileno())
             temporary = Path(stream.name)
-        temporary.replace(root / 'verification.json')
+        # Hard-link publication is atomic and cannot overwrite a receipt created
+        # by a competing verifier after our preflight. Both paths share a disk.
+        os.link(temporary, root / 'verification.json')
+        temporary.unlink()
+        directory = os.open(root, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
         return report
     except (OSError, KeyError, TypeError, sqlite3.Error) as error:
         raise ValueError(f'Onboarding evidence/completion failed: {error}') from error

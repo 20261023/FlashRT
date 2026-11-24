@@ -264,3 +264,26 @@ def test_backend_description_cannot_mutate_later_capability_identity():
     second = describe_backend(config)
     assert second['identity']['source']['revision'] == 'dd5c5ca93ce229017477a75fdda9f16654ab91ef'
     assert second['action_channels'] == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_backend_description_does_not_import_external_precision_hook(tmp_path):
+    from flash_rt.vla import BackendConfig, describe_backend
+    spec = external_spec()
+    spec['adapter']['hooks']['precision'] = 'uninstalled_runtime_adapter:precision'
+    write_spec(tmp_path, spec)
+    description = describe_backend(BackendConfig('external-test', '/absent', spec_dir=tmp_path))
+    assert description['precision_resolution'] == 'adapter_on_load'
+    assert description['runtime_verified'] is False
+    assert 'uninstalled_runtime_adapter' not in sys.modules
+
+
+def test_pi05_conditional_precision_is_described_from_spec_without_imports(monkeypatch):
+    from flash_rt.vla import BackendConfig, describe_backend
+    from flash_rt.vla import registry
+    def forbidden(*args):
+        raise AssertionError('description must not import adapter hooks')
+    monkeypatch.setattr(registry, 'get_hook', forbidden)
+    description = describe_backend(BackendConfig(
+        'pi05', '/absent', options={'int8_mode': 'encoder'}))
+    assert description['precision'] == 'mixed_int8_bf16'
+    assert description['precision_resolution'] == 'declaration'

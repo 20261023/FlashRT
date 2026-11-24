@@ -5,11 +5,6 @@ import os
 from . import frontend_kwargs
 
 
-def precision(config):
-    return ('mixed_int8_bf16' if config.options.get('int8_mode', 'none') in (
-        'encoder', 'encoder_decoder') else 'bf16')
-
-
 def validate(config):
     from flash_rt.models.pi05.int8 import validate_int8_mode
     mode = config.options.get('int8_mode', 'none')

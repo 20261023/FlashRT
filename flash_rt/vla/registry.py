@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from copy import deepcopy
 from importlib import import_module
 
 from .adapters import get_hook
@@ -34,9 +35,18 @@ def _spec_for(config):
     return _capability_view(get_spec(config.model, spec_dir=config.spec_dir))
 
 
-def _execution_precision(config, spec):
-    hook = get_hook(spec, 'precision')
-    return hook(config) if hook is not None else spec['capabilities']['precision']
+def _execution_precision(config, spec, *, runtime=True):
+    if runtime:
+        hook = get_hook(spec, 'precision')
+        if hook is not None:
+            return hook(config)
+    caps = spec['capabilities']
+    for option, schema in caps['options'].items():
+        selected = config.options.get(option, schema.get('default'))
+        for value, precision in schema.get('precision_by_value', {}).items():
+            if selected == value:
+                return precision
+    return caps['precision']
 
 
 def describe_backend(config: BackendConfig) -> dict:
@@ -46,7 +56,9 @@ def describe_backend(config: BackendConfig) -> dict:
     result = {
         'model': config.model, 'name': spec['name'], 'backend': config.backend,
         'sampler': config.sampler, 'framework': config.framework, 'hardware': config.hardware,
-        'precision': _execution_precision(config, spec) if config.precision == 'auto' else config.precision,
+        'precision': _execution_precision(config, spec, runtime=False) if config.precision == 'auto' else config.precision,
+        'precision_resolution': ('adapter_on_load' if config.precision == 'auto'
+                                 and 'precision' in spec['adapter']['hooks'] else 'declaration'),
         'num_steps': config.num_steps,
         'probeflow': None if config.probeflow is None else asdict(config.probeflow),
         'frameworks': list(caps['frameworks']), 'hardware_paths': list(caps['hardware']),
@@ -56,6 +68,7 @@ def describe_backend(config: BackendConfig) -> dict:
         'head_type': spec['head']['type'], 'model_spec_version': spec['schema_version'],
         'worker_action_domain': actions['worker_domain'],
         'effective_action_dim': actions['effective_dim'], 'action_channels': actions['channels'],
+        'action_dimension_resolution': actions.get('effective_dim_resolution', 'declared_profile'),
         'identity': spec['identity'], 'runtime_verified': False,
     }
     coverage = caps['execution_coverage'].get(config.backend)
@@ -65,7 +78,7 @@ def describe_backend(config: BackendConfig) -> dict:
         result['blocker'] = caps['blocker']
     if config.spec_dir is not None:
         result['spec_dir'] = config.spec_dir
-    return result
+    return deepcopy(result)
 
 
 # CUDA capability -> hardware label, also read by CPU tool filtering.

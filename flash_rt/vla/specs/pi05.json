@@ -78,7 +78,7 @@
       "use_cuda_graph": {"type": "bool", "default": true},
       "state_prompt_mode": {"type": "string", "enum": ["exact", "fixed"], "default": "exact"},
       "vision_pool_factor": {"type": "integer", "enum": [1, 2, 4], "default": 1},
-      "int8_mode": {"type": "string", "enum": ["none", "encoder", "encoder_decoder"], "default": "none"}
+      "int8_mode": {"type": "string", "enum": ["none", "encoder", "encoder_decoder"], "default": "none", "precision_by_value": {"encoder": "mixed_int8_bf16", "encoder_decoder": "mixed_int8_bf16"}}
     },
     "action_domain_resolution": "checkpoint", "execution_coverage": {}
   },
@@ -91,7 +91,7 @@
     "notes": "Tool availability is conditional on hardware, sampler and declared options; no measured success is implied."
   },
   "adapter": {
-    "hooks": {"binding": "flash_rt.vla.adapters.pi05:binding", "validate": "flash_rt.vla.adapters.pi05:validate", "precision": "flash_rt.vla.adapters.pi05:precision", "decoder": "flash_rt.vla.adapters.pi_family:decoder", "release": "flash_rt.vla.adapters.pi_family:release", "profile": "flash_rt.vla.autotune.profilers.pi:install", "dataflow": "flash_rt.vla.autotune.profilers.pi:describe_pi05_dataflow"},
+    "hooks": {"binding": "flash_rt.vla.adapters.pi05:binding", "validate": "flash_rt.vla.adapters.pi05:validate", "decoder": "flash_rt.vla.adapters.pi_family:decoder", "release": "flash_rt.vla.adapters.pi_family:release", "profile": "flash_rt.vla.autotune.profilers.pi:install", "dataflow": "flash_rt.vla.autotune.profilers.pi:describe_pi05_dataflow"},
     "runtime": {"retire_replaced_pipeline": false, "prompt_state_dependent": true, "prepared_context": false}
   },
   "author": {

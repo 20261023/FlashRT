@@ -158,7 +158,7 @@ decoder 调用证据，不能对 token 头沿用 `nfe == Euler num_steps` 假设
 python -m flash_rt.vla.onboard check --root devlocal/myvla-onboarding
 ```
 
-退出码 0、`status="ready_for_measurement"` 表示声明、fixture、原作者配置和显式确认齐备。模板或缺证据返回退出码 1 和 `issues`。解析/调用错误返回 2。静态检查不导入运行时或原作者适配器，不声称模型已经在 GPU 上运行。
+退出码 0、`status="ready_for_measurement"` 表示声明、fixture、原作者配置和显式确认齐备。check 中模板未完成、解析失败或缺证据返回退出码 1 和 `issues`；init/verify 的调用或证据错误返回 2。静态检查不导入运行时或原作者适配器，不声称模型已经在 GPU 上运行。
 
 ## 5. 运行有权威记录的 campaign
 

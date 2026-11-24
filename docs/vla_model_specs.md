@@ -85,6 +85,14 @@ compiler recipes. It checks declaration consistency; actual asset identity,
 runtime numerical quality and hardware support require their normal execution
 gates.
 
+Stage `profiling_keys` are the exact inverse of `profiling.keys`; adding an
+interval requires updating both references. Implemented compiler recipes
+declare their nonempty model-stage scope. Option schemas may declare
+`precision_by_value` for conditional execution precision (for example Pi0.5
+INT8 modes). Backend description reads these rules without importing a
+precision hook; an external runtime-only precision hook is labeled
+`precision_resolution="adapter_on_load"` and is not executed by description.
+
 π0 and π0.5 declare the OpenPI author measurement commit
 `dd5c5ca93ce229017477a75fdda9f16654ab91ef`. Their frontend constructor defaults
 use two views and horizon10, whereas `profiles.measured_libero_h50` records the

@@ -354,6 +354,11 @@ def validate_spec(mapping, *, source='<memory>'):
                 _option_value(value, schema, f'{name}.default_by_backend.{backend}')
             except (TypeError, ValueError) as error:
                 raise ValueError(str(error)) from error
+        for value, precision in _object(schema.get('precision_by_value', {}), f'{name}.precision_by_value').items():
+            if schema['type'] != 'string':
+                raise ValueError(f'{name}.precision_by_value requires a string option')
+            _option_value(value, schema, f'{name}.precision_by_value')
+            _text(precision, f'{name}.precision_by_value.{value}')
     if caps.get('action_domain_resolution') not in ('static', 'checkpoint'):
         raise ValueError('capabilities.action_domain_resolution must be static or checkpoint')
     _object(caps.get('execution_coverage'), 'capabilities.execution_coverage')
