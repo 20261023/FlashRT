@@ -151,6 +151,15 @@ def test_fixture_generation_rejects_unknown_shapes_and_unsafe_dtypes(tmp_path):
     assert not (tmp_path / 'bad-dtype').exists()
 
 
+def test_verify_cli_help_displays_coverage_threshold(capsys):
+    from flash_rt.vla.onboard import main
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(['verify', '--help'])
+    assert exit_info.value.code == 0
+    assert '90%' in capsys.readouterr().out
+
+
 def test_cli_check_reports_actionable_incomplete_status(tmp_path):
     from flash_rt.vla.onboard import main
 

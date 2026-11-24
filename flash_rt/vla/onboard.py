@@ -923,7 +923,7 @@ def main(argv=None):
         verify.add_argument('--' + name, required=True)
     verify.add_argument('--session-id', default=os.environ.get('OPENCODE_SESSION_ID'))
     verify.add_argument('--actor', choices=('human', 'agent', 'human+agent', 'search'), default='agent')
-    verify.add_argument('--residual-explanation', help='Bound measured diagnosis when profile coverage is below 90%')
+    verify.add_argument('--residual-explanation', help='Bound measured diagnosis when profile coverage is below 90%%')
     args = parser.parse_args(argv)
     try:
         if args.command == 'init':
