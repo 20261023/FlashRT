@@ -77,12 +77,7 @@ python -m flash_rt.vla.autotune.decisions add --log $AT/decisions.jsonl --kind n
 
 ### 1. 建 baseline（两个）
 
-1. **同一硬件上的官方实现**：先看 `python -m flash_rt.vla.autotune.tools show baseline.official_impl`，五个模型都有作者实现的计时脚本：
-   - π0 / π0.5 / FastWAM：`examples/vla_autotune/official_native_latency.py --model <m>`；
-   - Hy：`examples/vla_autotune/official_hyvla_latency.py`；
-   - DM0.5：`examples/vla_autotune/official_dm05_latency.py`。
-
-   用 `controller init --author-baseline /abs/author.json` 绑定作者参考。`produce` 在分配内运行作者原实现，`saved` 读取绑定过同一输入和权重的结果。读取 `quality` 和 `author_quality` 两组数值，并根据 `summary.author_baseline.latency_comparisons` 查看延迟可比性。配置格式见 `examples/vla_autotune/author_baseline.md`。
+1. **同一硬件上的官方实现**：使用 `controller init --author-baseline author.json`。`examples/vla_autotune/author_baseline.py` 根据 ModelSpec 的 `author.adapter` 加载固定版本的原作者实现。`produce` 在分配内生成基线；`saved` 核对输入、噪声、权重及动作域后复用保存的输出。比较时同时读取 `quality`、`author_quality` 和计时口径。新模型从 `vla-onboard-model` 开始，GPU 验收通过后再进入循环。
 2. **当前 FlashRT 配置**：建一个只有 baseline 的 campaign。不传候选时，`controller init` 会只生成 reference + bookend，用来测噪声底线（两次测量的漂移），同时拿到带 profile 的结果。
 
 ### 2. 测 profile，归因到 stage
