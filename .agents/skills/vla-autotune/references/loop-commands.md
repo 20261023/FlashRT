@@ -60,8 +60,7 @@ AT = os.environ['AT']; REPO = os.environ['REPO']
 print(render_sbatch(
     job_name='at-r0', workdir=REPO, output=f'{AT}/campaigns/r0/slurm-%j.log',
     argv=['python', '-B', '-m', 'flash_rt.vla.autotune.batch', '--plan', f'{AT}/campaigns/r0/plan.json'],
-    resources=SlurmResources(partition='gpu_a800', gpus=1, cpus=8, time_limit='00:40:00'),
-    env={'PYTHONPATH': REPO}), end='')
+    resources=SlurmResources(partition='gpu_a800', gpus=1)), end='')
 EOF
 ```
 
@@ -69,7 +68,7 @@ EOF
 
 ```bash
 python -m flash_rt.vla.autotune.controller submit --root $AT/campaigns/r0 --script $AT/campaigns/r0/run.sbatch --ssh-host $GPU_LOGIN
-python -m flash_rt.vla.autotune.controller wait   --root $AT/campaigns/r0 --ssh-host $GPU_LOGIN --interval 30 --timeout 7200
+python -m flash_rt.vla.autotune.controller wait   --root $AT/campaigns/r0 --ssh-host $GPU_LOGIN --interval 30
 python -m flash_rt.vla.autotune.controller ingest --root $AT/campaigns/r0 --results $AT/results/r0 --job-finished
 ```
 

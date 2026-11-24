@@ -150,7 +150,7 @@ py -m flash_rt.vla.autotune.snapshots build-script --store $STORE --snapshot-id 
 py -c "
 from flash_rt.vla.autotune.slurm import render_sbatch, SlurmResources
 print(render_sbatch(job_name='build-<id>', workdir='$STORE/snapshots/<id>', output='/abs/build-<id>.log',
-      argv=['bash', '/abs/build-<id>.sh'], resources=SlurmResources(time_limit='01:00:00')))" > /abs/build-<id>.sbatch
+      argv=['bash', '/abs/build-<id>.sh'], resources=SlurmResources()))" > /abs/build-<id>.sbatch
 # submit with your site's sbatch (not a controller campaign); the script ends with
 # python -m flash_rt.vla.autotune.snapshots record-built --store ... --snapshot-id <id> --fingerprint ...
 ```

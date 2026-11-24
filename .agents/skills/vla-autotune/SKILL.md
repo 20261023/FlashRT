@@ -89,6 +89,7 @@ python -m flash_rt.vla.autotune.stages attribute $AT/results/<id>/<attempt>/resu
 ```
 
 - 看 `coverage` 和 `notes`。π0/π0.5 在 Euler + CUDA Graph 下只有一个不可拆的 `full` 区间，需要另做诊断才能拆开。
+- 用可相加的非重叠区间覆盖至少 90% 的请求耗时，覆盖不足时提供实测残差分解。不可拆的 `full` 不足以选出一个游。
 - 用 `amdahl_ceiling(share, local_speedup)` 算每个 stage 的理论上限。
 - 证据不够时，先补一次最便宜、又能区分不同假设的观测，不要直接宣布瓶颈在哪。
 
@@ -194,10 +195,11 @@ python -m flash_rt.vla.autotune.decisions add --log $AT/decisions.jsonl --kind e
   4. 对它 `materialize` 并使其就绪，下一个 patch 的 worktree 也从这个 commit 开。
   合入主线仍然是单独的 H4 步骤。
 - 当前 stage 占比降下来以后，回到第 2 步找下一游，不要在同一个方法上一直加搜索次数。
-- 停止规则见 [references/budgets-stop-rules.md](references/budgets-stop-rules.md)。主要几条：
-  - 连续 2 轮提升都低于噪声底线；
-  - 预算用完；
-  - 剩下的 stage 都没有可用工具，且需要人决定是否投入实现。
+- 运行 [next_round.py](../../../examples/vla_autotune/next_round.py) 核对当前候选、分游 profile、
+  历史 campaign 和调度账单，并写入下一步决策。输入格式和停止阈值见
+  [references/budgets-stop-rules.md](references/budgets-stop-rules.md)。
+- 量化候选进入模型级 GPU campaign 前，先抓取可重复的中间结果并定位第一个显著偏离；
+  编译基线先在独立空缓存中验证，分别记录冷编译和稳态。
 
 ### 9. 晋升和汇报（H4）
 

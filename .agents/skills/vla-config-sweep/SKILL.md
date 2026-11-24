@@ -149,7 +149,7 @@ py -c "
 from flash_rt.vla.autotune.slurm import render_sbatch, SlurmResources
 print(render_sbatch(job_name='at-<cid>', workdir='/abs/flashrt', output='/abs/results/<cid>/slurm-%j.out',
       argv=['python', '-B', '-m', 'flash_rt.vla.autotune.batch', '--plan', '/abs/<campaign root>/plan.json'],
-      resources=SlurmResources(partition='gpu_a800', gpus=1, time_limit='01:00:00')))
+      resources=SlurmResources(partition='gpu_a800', gpus=1)))
 " > /abs/round.sbatch
 ```
 
@@ -158,7 +158,7 @@ controller root is local). Then:
 
 ```bash
 py -m flash_rt.vla.autotune.controller submit --root <campaign root> --script /abs/round.sbatch --ssh-host <host>
-py -m flash_rt.vla.autotune.controller wait --root <campaign root> --ssh-host <host> --interval 30 --timeout 14400
+py -m flash_rt.vla.autotune.controller wait --root <campaign root> --ssh-host <host> --interval 30
 # fetch /abs/results/<cid> to a local directory, then:
 py -m flash_rt.vla.autotune.controller ingest --root <campaign root> --results <fetched dir> --job-finished
 ```
@@ -225,7 +225,5 @@ in the log and the baseline you carry forward.
 
 ## Stop rules
 
-Stop the config lane for a stage (decision `stop`, with the actor) when the remaining
-grid cannot beat the Amdahl ceiling, two consecutive campaigns end in `keep`, or the
-human budget is spent. Then return to `vla-stage-profile` for the next stage or move to
-`vla-patch-candidate` if the knob you need does not exist.
+Use the [shared budget and stop rules](../vla-autotune/references/budgets-stop-rules.md).
+Return to `vla-stage-profile` for the next stage after recording a direction stop.
