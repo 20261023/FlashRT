@@ -9,6 +9,7 @@ unbound reports are evidence only and produce an actionable refusal.
 from __future__ import annotations
 
 import hashlib
+from importlib import import_module
 import json
 import math
 import os
@@ -25,32 +26,17 @@ from .quality import compare_outputs, output_domain, quality_contract, validate_
 from .workloads import NPZWorkload
 
 
-AUTHOR_SOURCES = {
-    'pi0': ('https://github.com/Physical-Intelligence/openpi', 'src/openpi'),
-    'pi05': ('https://github.com/Physical-Intelligence/openpi', 'src/openpi'),
-    'hyvla': ('https://github.com/Tencent-Hunyuan/Hy-Embodied-0.5-VLA', 'hy_vla'),
-    'fastwam': ('https://github.com/yuantianyuan01/FastWAM', 'src/fastwam'),
-    'dm05': ('https://github.com/dexmal/opendm', 'opendm'),
-}
 BOUNDARY = 'prepared-host-observation-and-noise_to_completed-CPU-actions'
 _ENTRYPOINT = Path(__file__).resolve().parents[3] / 'examples/vla_autotune/author_baseline.py'
-_OPTIONS = {
-    'pi0': {'action_horizon', 'max_token_len'},
-    'pi05': {'action_horizon', 'max_token_len'},
-    'hyvla': set(),
-    'fastwam': {'backbone_dir', 'model_config', 'sigma_shift', 'action_horizon',
-                'compile_action_infer', 'noise_seeds'},
-    'dm05': {'noise_seeds'},
-}
-_DM_SOURCE_REVISION = '03f799120d425ead51d9482bb1da950b6dabade9'
-_DM_WEIGHT_REVISION = '5cd18734814abb075a9ccfd9ad6d16777b5cf10e'
-_DM_WEIGHT_SHA256 = 'b7da77f516ebd0c0c68faed2f0cfe1c68985b7b874e49dda4292d8d286de20dd'
-_DM_PYTHON_SHA256 = '28617ae3b6db5a887d6291e32bfac0406666f79188ec759dad5e22e1404dd462'
-_PINNED_REVISIONS = {
-    'dm05': _DM_SOURCE_REVISION,
-    'hyvla': 'af57e7507ec5964b52fdf6296741e553cbcd3288',
-    'fastwam': '7faa71108368fbb3b6885649f112af607427a2d4',
-}
+
+
+def _declared(spec):
+    from flash_rt.vla.model_spec import get_spec
+    return get_spec(spec['model'], spec_dir=spec.get('spec_dir'))
+
+
+def _adapter(spec):
+    return import_module(_declared(spec)['author']['adapter'])
 
 
 class AuthorReferenceError(ValueError):
@@ -74,6 +60,18 @@ def file_sha256(path):
         for block in iter(lambda: stream.read(8 * 1024 * 1024), b''):
             digest.update(block)
     return digest.hexdigest()
+
+
+def publish_outputs(directory, record, *, actions, request_ids, latency_ms):
+    """Publish the completion JSON only after the entire author action bundle."""
+    if not request_ids or not len(actions) == len(request_ids) == len(latency_ms):
+        raise ValueError('Author output coverage differs from timed samples')
+    outputs = Path(directory).resolve() / 'outputs.npz'
+    np.savez_compressed(outputs, actions=np.stack(actions), request_ids=np.asarray(request_ids),
+                        latency_ms=np.asarray(latency_ms, dtype=np.float64),
+                        output_domain=np.asarray(record['identity']['output_domain']))
+    _write_json(outputs.with_name('result.json'),
+                {**record, 'outputs_path': str(outputs), 'outputs_sha256': file_sha256(outputs)})
 
 
 def content_identity(path):
@@ -131,24 +129,28 @@ def _absolute(value, name):
     return str(Path(value).resolve())
 
 
-def _validate_spec(spec):
-    if not isinstance(spec, dict) or set(spec) != {
+def _validate_spec(spec, *, declaration=None, execution=False):
+    if not isinstance(spec, dict) or set(spec) - {'spec_dir'} != {
             'model', 'source', 'source_revision', 'checkpoint', 'num_steps', 'options'}:
         raise ValueError('Author producer spec requires model/source/source_revision/checkpoint/num_steps/options')
     model = spec['model']
-    if model not in AUTHOR_SOURCES:
-        raise ValueError('Author baseline supports pi0, pi05, hyvla, fastwam and dm05')
+    if declaration is None:
+        declaration = _declared(spec)
+    if declaration['model'] != model:
+        raise ValueError('Producer model differs from the planned declaration')
+    contract = declaration['author']
     for name in ('source', 'checkpoint'):
         _absolute_text(spec[name], name)
     if not isinstance(spec['source_revision'], str) or not re.fullmatch('[0-9a-f]{40}', spec['source_revision']):
         raise ValueError('Author source_revision must be a full lowercase Git commit')
-    if model in _PINNED_REVISIONS and spec['source_revision'] != _PINNED_REVISIONS[model]:
-        raise ValueError(f'This author {model} entrypoint requires source revision {_PINNED_REVISIONS[model]}')
+    revision = declaration['identity']['source']['revision']
+    if revision is None or spec['source_revision'] != revision:
+        raise ValueError(f'Author source revision differs from the declared pin for {model}')
     steps = spec['num_steps']
-    if type(steps) is not int or steps < 1 or (model in ('hyvla', 'dm05') and steps != 10):
-        raise ValueError('Author steps must be positive; Hy/DM currently require the original Euler10')
+    if type(steps) is not int or steps < 1 or contract.get('fixed_steps') not in (None, steps):
+        raise ValueError('Author step budget conflicts with its declared schedule')
     options = spec['options']
-    if not isinstance(options, dict) or set(options) - _OPTIONS[model]:
+    if not isinstance(options, dict) or set(options) - set(contract['options']):
         raise ValueError(f'Unsupported author {model} options')
     for name in ('backbone_dir', 'model_config'):
         if name in options:
@@ -161,14 +163,16 @@ def _validate_spec(spec):
     if 'sigma_shift' in options and (type(options['sigma_shift']) not in (int, float)
                                     or not math.isfinite(options['sigma_shift']) or options['sigma_shift'] <= 0):
         raise ValueError('Author sigma_shift must be positive finite')
-    if model == 'fastwam' and 'backbone_dir' not in options:
-        raise ValueError('Author FastWAM requires a local backbone_dir')
-    if model in ('fastwam', 'dm05'):
+    if execution:
+        adapter = _adapter(spec)
+        if hasattr(adapter, 'validate_options'):
+            adapter.validate_options(options)
+    if contract['requires_noise_seeds']:
         seeds = options.get('noise_seeds')
         if not isinstance(seeds, dict) or not seeds or any(
                 not isinstance(key, str) or type(seed) is not int or not 0 <= seed < 2**63
                 for key, seed in seeds.items()):
-            raise ValueError('Author FastWAM/DM require options.noise_seeds mapping every request ID to a seed')
+            raise ValueError('Author adapter requires options.noise_seeds mapping every request ID to a seed')
     _canonical(spec)
     return spec
 
@@ -194,14 +198,18 @@ def prepare_plan(config, *, baseline, workload_path, output_root, warmup, repeat
     if mode not in ('produce', 'saved'):
         raise ValueError('author_baseline.mode must be produce or saved')
     model = baseline.backend.model
+    spec_dir = getattr(baseline.backend, 'spec_dir', None)
+    declaration = _declared({'model': model, 'spec_dir': spec_dir})
     spec = _validate_spec({
         'model': model, 'source': _absolute(config.get('source'), 'source'),
         'source_revision': config.get('source_revision'),
         'checkpoint': _absolute(baseline.backend.checkpoint, 'checkpoint'),
-        'num_steps': config.get('num_steps', 10), 'options': config.get('options', {}),
-    })
+        'num_steps': config.get('num_steps', declaration['author']['default_steps']),
+        'options': config.get('options', {}),
+        **({'spec_dir': spec_dir} if spec_dir else {}),
+    }, declaration=declaration, execution=True)
     workload_path, output_root = _absolute(str(workload_path), 'workload'), _absolute(str(output_root), 'output_root')
-    workload = NPZWorkload.from_file(workload_path)
+    workload = NPZWorkload.from_file(workload_path, spec_dir=spec.get('spec_dir'))
     if workload.model != model or workload.workload_id != baseline.workload_id:
         raise ValueError('Author baseline workload differs from the internal baseline')
     seeds = spec['options'].get('noise_seeds')
@@ -223,9 +231,9 @@ def prepare_plan(config, *, baseline, workload_path, output_root, warmup, repeat
     command = producer_command(spec, workload_path=workload_path, output=target, warmup=warmup,
                                repeats=repeats, comparison_id=comparison_id,
                                campaign_instance_id=campaign_instance_id, python=python)
-    record = {'schema_version': 1, 'mode': mode, 'spec': spec,
+    record = {'schema_version': 1, 'mode': mode, 'spec': spec, 'declaration': declaration,
               'comparison_id': comparison_id, 'campaign_instance_id': campaign_instance_id,
-              'workload_identity': workload_identity(workload), 'output_domain': output_domain(model),
+              'workload_identity': workload_identity(workload), 'output_domain': _declared(spec)['actions']['worker_domain'],
               'producer_command': command, 'output': target,
               'result_path': str(Path(target) / 'result.json')}
     if extras:
@@ -234,17 +242,17 @@ def prepare_plan(config, *, baseline, workload_path, output_root, warmup, repeat
         record['result_path'] = _absolute(config.get('result_path'), 'result_path')
         try:
             saved = json.loads(Path(record['result_path']).read_text())
-            if model == 'dm05' and saved.get('origin') == 'author' and 'identity' not in saved:
-                inputs = _legacy_dm_inputs(record['result_path'], spec)
+            if hasattr(_adapter(spec), 'legacy_inputs') and saved.get('origin') == 'author' and 'identity' not in saved:
+                inputs = _adapter(spec).legacy_inputs(record['result_path'], spec)
                 target = str(Path(output_root) / 'author-bound-saved')
                 binding = producer_command(spec, workload_path=workload_path, output=target, warmup=warmup,
                                            repeats=repeats, comparison_id=comparison_id,
                                            campaign_instance_id=campaign_instance_id, python=python)
                 record.update(
                     saved_inputs=inputs, output=target, result_path=str(Path(target) / 'result.json'),
-                    binding_command=[*binding, '--bind-dm05-saved', inputs['result_path']])
+                    binding_command=[*binding, '--bind-saved', inputs['result_path']])
                 return record
-            result = _read_author_result(record['result_path'])
+            result = _read_author_result(record['result_path'], planned=record)
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise AuthorReferenceError(f'Saved author reference is unavailable or unbound: {error}. '
                                        f'Regenerate with argv: {_canonical(command)}') from error
@@ -261,8 +269,8 @@ def prepare_plan(config, *, baseline, workload_path, output_root, warmup, repeat
 def source_identity(spec):
     """Admit a clean author checkout or explicitly marked exported author files."""
     root = Path(spec['source']).resolve(strict=True)
-    _, package = AUTHOR_SOURCES[spec['model']]
-    package = root / package
+    declaration = _declared(spec)
+    package = root / declaration['author']['source_package']
     if not package.is_dir() or (root / 'flash_rt').exists():
         raise AuthorReferenceError(f'Expected author package is missing, or source is FlashRT: {package}')
     head = subprocess.run(['git', '-C', str(root), 'rev-parse', '--show-toplevel', 'HEAD'],
@@ -284,176 +292,24 @@ def source_identity(spec):
             manifest = json.loads(source_manifest.read_text())
             marker_ok |= (manifest.get('commit') == spec['source_revision']
                           and manifest.get('source_subdirectory') == root.name)
-        if spec['model'] == 'dm05' and spec['source_revision'] == _DM_SOURCE_REVISION:
-            pinned = _dm_python_digest(root) == _DM_PYTHON_SHA256
-            marker_ok |= pinned
-            if pinned:
-                proof = 'independently-pinned-author-Python-bytes'
+        verify_export = getattr(_adapter(spec), 'verified_export', None)
+        if verify_export and verify_export(root):
+            proof = 'independently-pinned-author-Python-bytes'
+            marker_ok = True
         if not marker_ok:
             raise AuthorReferenceError('Exported author source needs its exact AUTHOR_GIT_COMMIT/GIT_COMMIT or SOURCE.json')
     files = {path.relative_to(root).as_posix(): file_sha256(path) for path in sorted(package.rglob('*.py'))}
     if not files:
         raise AuthorReferenceError('Author source contains no Python implementation')
     return {'path': str(root), 'revision': spec['source_revision'],
-            'source_url': AUTHOR_SOURCES[spec['model']][0], 'proof': proof, 'python_files': files}
-
-
-def _dm_python_digest(root):
-    package, digest = Path(root) / 'opendm', hashlib.sha256()
-    for path in sorted(package.rglob('*.py')):
-        digest.update(path.relative_to(package).as_posix().encode() + b'\0' + path.read_bytes() + b'\0')
-    return digest.hexdigest()
-
-
-def _legacy_dm_inputs(path, spec):
-    """Pin the actual legacy author bundle, without importing Torch on init."""
-    path = Path(path).resolve()
-    record = json.loads(path.read_text())
-    script = _ENTRYPOINT.with_name('official_dm05_latency.py')
-    required = {'model': 'dm05', 'origin': 'author', 'source_revision': _DM_SOURCE_REVISION,
-                'checkpoint_revision': _DM_WEIGHT_REVISION, 'steps': 10, 'nfe': 10,
-                'output_action_dim': 14, 'internal_action_dim': 32, 'chunk': 50}
-    if (any(record.get(key) != value for key, value in required.items())
-            or spec['source_revision'] != _DM_SOURCE_REVISION or spec['num_steps'] != 10
-            or record.get('script_sha256') != file_sha256(script)):
-        raise AuthorReferenceError('Legacy DM reference does not match the pinned original author producer/profile')
-    cases = record.get('cases')
-    if not isinstance(cases, list) or len(cases) != 4 or len({case['id'] for case in cases}) != 4:
-        raise AuthorReferenceError('Legacy DM reference requires all four original cases')
-    files = {str(path): file_sha256(path)}
-    for case in cases:
-        if not isinstance(case['id'], str) or Path(case['id']).name != case['id'] or case['id'] in ('.', '..'):
-            raise AuthorReferenceError('Invalid legacy DM case directory')
-        for filename in ('actions.npy', 'samples_ms.npy', 'initial_noise.pt', 'prepared.pt'):
-            artifact = path.parent / case['id'] / filename
-            files[str(artifact)] = file_sha256(artifact)
-    return {'result_path': str(path), 'files': files}
-
-
-def bind_dm05_saved(spec, workload, saved_path, output):
-    """CPU-only binding of original DM four-case outputs, never new inference.
-
-    Exact current CPU transforms must reproduce the saved prepared tensors.
-    This is needed because the old report did not record raw input digests.
-    """
-    import importlib
-    os.environ.update(HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1')
-    import torch
-    from PIL import Image
-    spec = _validate_spec(spec)
-    inputs = _legacy_dm_inputs(saved_path, spec)
-    raw = json.loads(Path(saved_path).read_text())
-    if _dm_python_digest(spec['source']) != _DM_PYTHON_SHA256:
-        raise AuthorReferenceError('Legacy DM binding requires the pinned original author CPU source bytes')
-    if file_sha256(Path(spec['checkpoint']) / 'model.safetensors') != _DM_WEIGHT_SHA256:
-        raise AuthorReferenceError('Legacy DM binding requires the independently pinned base weight bytes')
-    cases = {case['id']: case for case in raw['cases']}
-    if set(cases) != {case['request_id'] for case in workload.specs} or workload.model != 'dm05':
-        raise AuthorReferenceError('Legacy DM workload must retain all four original author case IDs')
-    if {key: case['seed'] for key, case in cases.items()} != spec['options']['noise_seeds']:
-        raise AuthorReferenceError('Legacy DM author seeds differ from the reference plan')
-    source = source_identity(spec)
-    sys.path.insert(0, spec['source'])
-    module = importlib.import_module('opendm.exp.dm05_exp')
-    if Path(module.__file__).resolve() != Path(spec['source']) / 'opendm/exp/dm05_exp.py':
-        raise AuthorReferenceError('Another OpenDM package is already imported')
-    exp = module.DM05Exp(task='inference', logger_level='WARNING')
-    exp.model_config.model_name_or_path = spec['checkpoint']
-    exp.model_config.chunk_size = 50
-    exp.data_config.is_history = False
-    exp.inference_config.backend = 'default'
-    exp.inference_config.diffusion_steps = 10
-    exp.inference_config.enable_vlm_chat = False
-    exp.initialize_inference_preprocessing(device='cpu')
-    policy = exp.inference_config
-    model_proof = prove_author_model(exp, spec)
-    actions, ids, latency = [], [], []
-    output = Path(output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
-    for index in range(len(workload)):
-        request = workload.request(index)
-        case = cases[request.request_id]
-        state = np.asarray(request.observation['state'], dtype=np.float32)
-        prompt = request.prompt if request.prompt is not None else request.observation.get('prompt')
-        if hasattr(prompt, 'item'):
-            prompt = prompt.item()
-        if prompt != case['prompt'] or not np.array_equal(state, np.asarray(case['state'], dtype=np.float32)):
-            raise AuthorReferenceError('Legacy DM prompt/state differs from the actual author case')
-        images = request.observation.get('images')
-        if not isinstance(images, (list, tuple)) or len(images) != 3:
-            raise AuthorReferenceError('Legacy DM binding requires the three workload camera arrays in author order')
-        author_images = [Image.open(Path(spec['source']) / 'assets/demo/images/episode0' / name / '0.jpg').convert('RGB')
-                         for name in ('cam_high', 'cam_left_wrist', 'cam_right_wrist')]
-        if any(not np.array_equal(np.asarray(actual), np.asarray(expected))
-               for actual, expected in zip(images, author_images)):
-            raise AuthorReferenceError('Legacy DM workload images differ from the original author assets')
-        directory = Path(saved_path).parent / case['id']
-        noise = torch.load(directory / 'initial_noise.pt', map_location='cpu', weights_only=True)
-        observed = torch.as_tensor(request.noise)
-        if (tuple(observed.shape) not in ((50, 32), (1, 50, 32))
-                or tuple(noise.shape) != (1, 50, 32)
-                or not torch.equal(observed.reshape(noise.shape).float(), noise.float())):
-            raise AuthorReferenceError('Legacy DM workload noise differs from the actual saved author draw')
-        saved_prepared = torch.load(directory / 'prepared.pt', map_location='cpu', weights_only=True)
-        data = policy._prepare_model_input(
-            text=prompt, images=author_images, states=state.tolist(), robot_type='DOS W1')
-        prepared = policy.input_transform(data)
-        prepared = {key: value.detach().cpu() for key, value in prepared.items() if isinstance(value, torch.Tensor)}
-        if set(prepared) != set(saved_prepared) or any(
-                prepared[key].dtype != saved_prepared[key].dtype
-                or not torch.equal(prepared[key], saved_prepared[key]) for key in prepared):
-            raise AuthorReferenceError('Legacy DM author prepared tensors do not match this exact workload/checkpoint')
-        saved_actions = np.load(directory / 'actions.npy', allow_pickle=False)
-        samples = np.load(directory / 'samples_ms.npy', allow_pickle=False)
-        count = raw['samples_per_case']
-        if (saved_actions.shape != (count, 50, 14) or saved_actions.dtype != np.float32
-                or samples.shape != (count,) or not np.isfinite(saved_actions).all()
-                or not np.isfinite(samples).all() or np.any(samples <= 0)):
-            raise AuthorReferenceError('Legacy DM saved output/sample coverage is incomplete or nonfinite')
-        recorded = [sample['full_policy_ms'] for sample in raw['samples'] if sample['case'] == case['id']]
-        if recorded != samples.tolist():
-            raise AuthorReferenceError('Legacy DM JSON/NPY latency samples differ')
-        actions.extend(saved_actions)
-        ids.extend([case['id']] * count)
-        latency.extend(samples.tolist())
-    identity = {'model': 'dm05', 'workload': workload_identity(workload),
-                'checkpoint': content_identity(spec['checkpoint']), 'author_source': source,
-                'author_model': model_proof, 'author_model_proof_kind': 'original-producer-CPU-entrypoint',
-                'output_domain': output_domain('dm05')}
-    outputs = output / 'outputs.npz'
-    np.savez_compressed(outputs, actions=np.stack(actions), request_ids=np.asarray(ids),
-                        latency_ms=np.asarray(latency), output_domain=np.asarray(identity['output_domain']))
-    original_command = [sys.executable, '-B', str(_ENTRYPOINT.with_name('official_dm05_latency.py')),
-                        '--source', raw['source'], '--checkpoint', raw['checkpoint'],
-                        '--output', str(Path(saved_path).parent), '--warmup', str(raw['warmup_per_case']),
-                        '--repeats', str(raw['samples_per_case'])]
-    record = {
-        'kind': 'bound_saved_author_dm05', 'status': 'complete', 'origin': 'author', 'model': 'dm05',
-        'identity': identity, 'producer_spec': spec, 'producer_command': original_command,
-        'producer_command_provenance': 'Reconstructed runnable original producer command from its verified script SHA '
-                                       'and recorded arguments; the legacy interpreter path was not recorded.',
-        'binding_inputs': inputs, 'binding_command': list(getattr(sys, 'orig_argv', sys.argv)),
-        'implementation': raw['execution'], 'job_id': raw['job_id'],
-        'comparison_id': None, 'campaign_instance_id': None,
-        'gpu': {'name': raw['gpu'], 'uuid': ''}, 'precision': 'bf16', 'sampler': 'euler', 'nfe': 10,
-        'boundary': BOUNDARY, 'original_boundary': raw['boundary'],
-        'warmup': raw['warmup_per_case'], 'repeats': len(actions),
-        'latency_ms': latency, 'request_ids': ids,
-        'outputs_path': str(outputs), 'outputs_sha256': file_sha256(outputs),
-        'limitations': 'Saved author timing starts with PIL inputs and includes seeded RNG. '
-                       'Historical weights are identified by the author revision claim plus the independent base weight pin; '
-                       'the legacy producer did not hash its loaded weights. Prepared tensors and saved noise are verified exactly. '
-                       'No same-campaign latency ratio or new model measurement is claimed.',
-    }
-    _write_json(output / 'result.json', record)
-    return record
+            'source_url': _declared(spec)['identity']['source']['repository'], 'proof': proof, 'python_files': files}
 
 
 def prove_author_model(model, spec):
     """Check the imported model's actual file; project code cannot impersonate it."""
     import inspect
     path = Path(inspect.getfile(type(model))).resolve()
-    package = Path(spec['source']).resolve() / AUTHOR_SOURCES[spec['model']][1]
+    package = Path(spec['source']).resolve() / _declared(spec)['author']['source_package']
     if not path.is_relative_to(package):
         raise AuthorReferenceError(f'Imported author model is outside its declared author package: {path}')
     forbidden = ('flash_rt.models', 'flash_rt.frontends', 'flash_rt.flash_rt_kernels',
@@ -464,7 +320,7 @@ def prove_author_model(model, spec):
             'file': str(path), 'sha256': file_sha256(path)}
 
 
-def _read_author_result(path, *, outputs_path=None):
+def _read_author_result(path, *, outputs_path=None, planned=None):
     path = Path(path).resolve()
     record = json.loads(path.read_text())
     if not isinstance(record, dict) or record.get('origin') != 'author' or record.get('status') != 'complete':
@@ -478,20 +334,24 @@ def _read_author_result(path, *, outputs_path=None):
             or not identity.get('author_source', {}).get('revision')
             or not identity.get('author_model', {}).get('file')):
         raise AuthorReferenceError('Legacy author report lacks producer-time workload/checkpoint/source identity')
-    spec = _validate_spec(record.get('producer_spec'))
+    if planned is not None and planned['spec'] != record.get('producer_spec'):
+        raise AuthorReferenceError('Producer specification differs from the initialized campaign')
+    declaration = (planned or {}).get('declaration') or _declared(record['producer_spec'])
+    spec = _validate_spec(record.get('producer_spec'), declaration=declaration)
     model_file = Path(identity['author_model']['file'])
-    if not model_file.is_relative_to(Path(spec['source']) / AUTHOR_SOURCES[spec['model']][1]):
+    if not model_file.is_relative_to(Path(spec['source']) / declaration['author']['source_package']):
         raise AuthorReferenceError('Saved reference model file is not from the declared author package')
-    if identity.get('output_domain') != output_domain(spec['model']):
+    if identity.get('output_domain') != declaration['actions']['worker_domain']:
         raise AuthorReferenceError('Saved author output domain differs from the model contract')
     source = identity['author_source']
     relative_model = model_file.relative_to(Path(spec['source'])).as_posix()
     if (identity.get('model') != spec['model'] or record.get('model') != spec['model']
             or source.get('revision') != spec['source_revision']
-            or source.get('source_url') != AUTHOR_SOURCES[spec['model']][0]
+            or source.get('source_url') != declaration['identity']['source']['repository']
             or not isinstance(source.get('python_files'), dict)
             or source.get('python_files', {}).get(relative_model) != identity['author_model'].get('sha256')
-            or record.get('nfe') != spec['num_steps'] or record.get('sampler') != 'euler'):
+            or record.get('nfe') != spec['num_steps']
+            or record.get('sampler') != declaration['head']['defaults']['sampler']):
         raise AuthorReferenceError('Saved author source/model/sampling proof is inconsistent')
     command = record.get('producer_command')
     if not isinstance(command, list) or not command or not all(isinstance(item, str) for item in command):
@@ -557,7 +417,7 @@ def prepare_reference(plan, *, execute):
             if completed.returncode:
                 raise AuthorReferenceError(f'Author producer failed ({completed.returncode}); inspect {output / "author.log"}')
         result_path = planned['result_path']
-        result = _read_author_result(result_path)
+        result = _read_author_result(result_path, planned=planned)
         _check_expected(result, planned)
         digests = {'result_sha256': file_sha256(result_path),
                    'outputs_sha256': file_sha256(result['outputs_path'])}
@@ -592,27 +452,21 @@ def load_reference(descriptor, *, workload, backend):
             raise AuthorReferenceError('Author descriptor path/provenance differs from the plan')
         if descriptor.get('origin') != 'author' or file_sha256(path) != descriptor['result_sha256']:
             raise AuthorReferenceError('Author reference result is missing or changed')
-        result = _read_author_result(path)
+        result = _read_author_result(path, planned=planned)
         _check_expected(result, descriptor['planned'])
         identity = result['identity']
         if identity['workload'] != workload_identity(workload) or result['producer_spec']['model'] != backend.model:
             raise AuthorReferenceError('Author reference fixture/model identity differs from this worker')
-        if identity['output_domain'] != output_domain(backend.model):
+        if identity['output_domain'] != output_domain(backend.model, spec_dir=getattr(backend, 'spec_dir', None)):
             raise AuthorReferenceError('Author reference uses a different action domain')
         if identity['checkpoint']['sha256'] != content_identity(backend.checkpoint)['sha256']:
             raise AuthorReferenceError('Worker checkpoint content differs from the author checkpoint')
-        if backend.model == 'fastwam':
-            options = backend.options
-            expected_options = result['producer_spec']['options']
-            for key, default in (('sigma_shift', 5.0), ('action_horizon', 32)):
-                if options.get(key, default) != expected_options.get(key, default):
-                    raise AuthorReferenceError(f'Worker FastWAM {key} differs from the author model contract')
-            vae = Path(options['backbone_dir']) / 'Wan2.2_VAE.pth'
-            if content_identity(vae)['sha256'] != identity.get('auxiliary_assets', {}).get('vae', {}).get('sha256'):
-                raise AuthorReferenceError('Worker FastWAM VAE weights differ from the author checkpoint')
+        verify_auxiliary = getattr(_adapter(result['producer_spec']), 'verify_auxiliary', None)
+        if verify_auxiliary:
+            verify_auxiliary(backend, result)
         if file_sha256(result['outputs_path']) != descriptor['outputs_sha256']:
             raise AuthorReferenceError('Author outputs changed after reference preparation')
-        actions, ids = _reference_actions(result, result['outputs_path'])
+        actions, ids = _reference_actions(result, result['outputs_path'], planned)
         return {'descriptor': descriptor, 'record': result, 'actions': actions, 'request_ids': ids}
     except (OSError, ValueError, KeyError, TypeError) as error:
         if isinstance(error, AuthorReferenceError):
@@ -620,7 +474,7 @@ def load_reference(descriptor, *, workload, backend):
         raise AuthorReferenceError(f'Author reference is missing or mismatched: {error}') from error
 
 
-def _reference_actions(result, path):
+def _reference_actions(result, path, planned=None):
     """Read portable payloads without changing the archived cluster provenance."""
     identity = result['identity']
     with np.load(path, allow_pickle=False) as archive:
@@ -638,8 +492,9 @@ def _reference_actions(result, path):
     if any(action.dtype != np.float32 or not action.size or not np.isfinite(action).all() for action in actions):
         raise AuthorReferenceError('Author reference actions must be nonempty finite FP32 CPU arrays')
     expected_shape = result.get('metadata', {}).get('expected_shape')
-    if expected_shape is None and result['model'] == 'dm05':
-        expected_shape = [50, 14]
+    if expected_shape is None and result.get('binding_inputs'):
+        actions_spec = ((planned or {}).get('declaration') or _declared(result['producer_spec']))['actions']
+        expected_shape = [actions_spec['horizon'], actions_spec['effective_dim']]
     if expected_shape is None or any(list(action.shape) != expected_shape for action in actions):
         raise AuthorReferenceError('Author reference action shape differs from its declared model output')
     return actions, ids
@@ -687,7 +542,7 @@ def export_portable_reference(plan, descriptor_path, *, batch_job_id=None):
     descriptor = json.loads(descriptor_path.read_text())
     if descriptor['planned'] != plan['author_baseline']:
         raise AuthorReferenceError('Cannot export an author descriptor for a different plan')
-    record = _read_author_result(descriptor['result_path'])
+    record = _read_author_result(descriptor['result_path'], planned=plan['author_baseline'])
     _check_expected(record, plan['author_baseline'])
     if (file_sha256(descriptor['result_path']) != descriptor['result_sha256']
             or record['outputs_sha256'] != descriptor['outputs_sha256']):
@@ -833,13 +688,14 @@ def load_portable_reference(plan, results_dir):
                 key: descriptor[key] for key in ('result_sha256', 'outputs_sha256')}:
             raise AuthorReferenceError('Fetched saved author reference differs from its initialized digests')
         payload = _checked_file(root, files['author_outputs'])
-        record = _read_author_result(_checked_file(root, files['author_result']), outputs_path=payload)
+        record = _read_author_result(_checked_file(root, files['author_result']), outputs_path=payload,
+                                     planned=plan['author_baseline'])
         _check_expected(record, plan['author_baseline'])
         if descriptor['producer_command'] != record['producer_command']:
             raise AuthorReferenceError('Fetched producer argv differs from the bound author result')
         if expected == 'same_campaign' and record.get('job_id') != manifest['job_id']:
             raise AuthorReferenceError('Fetched author reference belongs to another batch job')
-        actions, ids = _reference_actions(record, payload)
+        actions, ids = _reference_actions(record, payload, plan['author_baseline'])
         return {'descriptor': descriptor, 'record': record, 'actions': actions, 'request_ids': ids,
                 'portable': {'manifest': manifest, 'root': str(root)}}
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -867,7 +723,7 @@ def _worker_payload(record, root, binding):
 
 
 def _check_recomputed_quality(claimed, observed):
-    for key in ('status', 'scope', 'action_dim', 'gate'):
+    for key in ('status', 'scope', 'action_dim', 'action_channels', 'gate'):
         if claimed.get(key) != observed.get(key):
             raise AuthorReferenceError('Fetched actions do not reproduce the worker quality contract/verdict')
     for key, value in observed['metrics'].items():
@@ -941,7 +797,7 @@ def reference_evidence(reference):
         'reference_kind': result.get('kind'),
         'producer_command_provenance': result.get('producer_command_provenance', 'captured_actual_argv'),
         'limitations': result.get('limitations'),
-        'sampler': 'euler', 'nfe': result['producer_spec']['num_steps'],
+        'sampler': result['sampler'], 'nfe': result['nfe'],
     }
 
 
@@ -990,7 +846,7 @@ def latency_comparison(record, reference):
     if record.get('output_domain') != author['identity']['output_domain']:
         reasons.append('output domain differs')
     sampler = measurement['sampler_metadata']
-    if any(item.get('sampler') != 'euler' or item.get('nfe') != author['nfe'] for item in sampler):
+    if any(item.get('sampler') != author['sampler'] or item.get('nfe') != author['nfe'] for item in sampler):
         reasons.append('sampler/NFE differs')
     if record['backend_metadata'].get('precision') != author.get('precision'):
         reasons.append('precision differs')

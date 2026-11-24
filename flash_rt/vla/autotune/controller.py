@@ -105,11 +105,13 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
     if quality_gate is not None:
         if not isinstance(quality_gate, dict) or not isinstance(quality_gate.get('scope'), str) or not quality_gate['scope'].strip():
             raise ValueError('quality_gate requires a nonempty scope')
-        unknown = set(quality_gate) - {'scope', 'action_dim', 'max_relative_l2', 'max_abs', 'min_cosine'}
+        unknown = set(quality_gate) - {'scope', 'action_dim', 'action_channels', 'max_relative_l2', 'max_abs', 'min_cosine'}
         if unknown:
             raise ValueError(f'Unknown quality gate fields: {sorted(unknown)}')
         if 'action_dim' in quality_gate and (type(quality_gate['action_dim']) is not int or quality_gate['action_dim'] < 1):
             raise ValueError('quality action_dim must be a positive integer')
+        from .quality import quality_contract
+        quality_contract(quality_gate)
         for key in ('max_relative_l2', 'max_abs', 'min_cosine'):
             if key not in quality_gate:
                 continue

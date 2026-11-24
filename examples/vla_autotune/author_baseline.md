@@ -111,11 +111,11 @@ directly inside an allocated GPU step. `options` is model specific:
 
 | Model | Actual author API / reused loader | Options and output domain |
 |---|---|---|
-| π0 | OpenPI `Pi0Config.load` / original JAX `Policy.infer(noise=...)`, same loading contract as `official_native_latency.py` | Optional `action_horizon` (50), `max_token_len`; normalized padded raw actions, normally `[50,32]` |
+| π0 | OpenPI `Pi0Config.load` / original JAX `Policy.infer(noise=...)` | Optional `action_horizon` (50), `max_token_len`; normalized padded raw actions, normally `[50,32]` |
 | π0.5 | OpenPI `PI0Pytorch` / original PyTorch `Policy.infer(noise=...)`, strict shared-weight safetensors loading | Same options; normalized padded raw actions, normally `[50,32]` |
-| Hy | `official_hyvla_latency.author_request`, `admit_author`, original `HyVLA` and safetensors loader | `{}`; normalized padded `[40,32]`; original Torch 2.7.1 environment and author export marker required |
+| Hy | `author_adapters.hyvla.author_request`, `admit_author`, original `HyVLA` and safetensors loader | `{}`; normalized padded `[40,32]`; original Torch 2.7.1 environment and author export marker required |
 | FastWAM | `validate_fastwam.resolved_model_config` / `load_upstream_reference`, original `FastWAM.infer_action` | Required `backbone_dir`, `noise_seeds`; optional resolved `model_config` JSON, `action_horizon` (32), `sigma_shift` (5), `compile_action_infer` (true); normalized batched `[1,32,7]` |
-| DM | Original `DM05Exp` default backend `_prepare_model_input` → `_predict`, same API as `official_dm05_latency.py` | Required `noise_seeds`; absolute reconstructed DOS W1 CPU `[50,14]` |
+| DM | Original `DM05Exp` default backend `_prepare_model_input` → `_predict` | Required `noise_seeds`; absolute reconstructed DOS W1 CPU `[50,14]` |
 
 Author source revisions for the existing Hy, FastWAM and DM profiles are pinned
 to `af57e7507ec5964b52fdf6296741e553cbcd3288`,
@@ -204,3 +204,5 @@ prefix lengths, graph addresses, capture/compile data and request counters are
 retained per request, while only a stable execution whitelist is compared as
 backend identity. Older DM internal NPZ references without an explicit output
 domain must be regenerated.
+
+The timing entry is shared across declarations. `author.adapter` points to a CPU-importable module whose `load(spec, torch)` returns the original model, `infer(request)`, and metadata including `implementation`, `precision` and `expected_shape`. Historical producer scripts remain in Git at `1993762`.

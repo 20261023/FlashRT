@@ -16,11 +16,13 @@ class Request:
 
 
 class NPZWorkload:
-    def __init__(self, manifest, base_dir):
+    def __init__(self, manifest, base_dir, *, spec_dir=None):
         if manifest.get('schema_version') != 1:
             raise ValueError('workload schema_version must be 1')
         self.workload_id = manifest['workload_id']
-        self.model = manifest['model']
+        from flash_rt.vla.model_spec import get_spec
+        declaration = get_spec(manifest['model'], spec_dir=spec_dir or manifest.get('spec_dir'))
+        self.model = declaration['model']
         self.specs = manifest['requests']
         if not self.workload_id or not self.specs:
             raise ValueError('workload requires an ID and at least one request')
@@ -41,9 +43,9 @@ class NPZWorkload:
                 raise ValueError('explicit initial noise is required')
 
     @classmethod
-    def from_file(cls, path):
+    def from_file(cls, path, *, spec_dir=None):
         path = Path(path)
-        return cls(json.loads(path.read_text()), path.parent)
+        return cls(json.loads(path.read_text()), path.parent, spec_dir=spec_dir)
 
     def __len__(self):
         return len(self.specs)

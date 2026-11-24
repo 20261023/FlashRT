@@ -5,24 +5,24 @@ import math
 import numpy as np
 
 
-OUTPUT_DOMAINS = {
-    'pi0': 'normalized-padded-model-actions',
-    'pi05': 'normalized-padded-model-actions',
-    'hyvla': 'normalized-padded-model-actions',
-    'fastwam': 'normalized-model-actions-batched',
-    'dm05': 'denormalized-absolute-dos-w1-14d',
-}
-
-
-def output_domain(model):
-    """Domain of the arrays retained by the experiment worker, before slicing."""
-    return OUTPUT_DOMAINS[model]
+def output_domain(model, *, spec_dir=None):
+    """Numerical output domain before public channel selection."""
+    from flash_rt.vla.model_spec import get_spec
+    return get_spec(model, spec_dir=spec_dir)['actions']['worker_domain']
 
 
 def quality_contract(gate):
     gate = gate or {}
+    channels = gate.get('action_channels')
+    if channels is not None and (
+            not isinstance(channels, list) or not channels
+            or any(type(i) is not int or i < 0 for i in channels)
+            or len(set(channels)) != len(channels)
+            or gate.get('action_dim') != len(channels)):
+        raise ValueError('action_channels must identify action_dim distinct public channels')
     return {'scope': gate.get('scope', 'numerical_replay'),
             'action_dim': gate.get('action_dim'),
+            **({'action_channels': list(channels)} if channels is not None else {}),
             'gate': {key: gate[key] for key in ('max_relative_l2', 'max_abs', 'min_cosine') if key in gate}}
 
 
@@ -60,7 +60,8 @@ def compare_outputs(actions, request_ids, references, reference_ids, gate, *,
     if set(request_ids) != set(by_request):
         raise ValueError('Reference outputs do not cover the same request IDs')
     errors, absolutes, cosines, occurrences = [], [], [], {}
-    action_dim = (gate or {}).get('action_dim')
+    contract = quality_contract(gate)
+    action_dim, channels = contract['action_dim'], contract.get('action_channels')
     for actual, request_id in zip(actions, request_ids):
         index = occurrences.get(request_id, 0)
         expected = by_request[request_id][index % len(by_request[request_id])]
@@ -71,7 +72,10 @@ def compare_outputs(actions, request_ids, references, reference_ids, gate, *,
         if action_dim is not None:
             if type(action_dim) is not int or not 1 <= action_dim <= actual.shape[-1]:
                 raise ValueError('quality action_dim must select valid trained/public channels')
-            actual, expected = actual[..., :action_dim], expected[..., :action_dim]
+            if channels is not None and max(channels) >= actual.shape[-1]:
+                raise ValueError('action_channels includes a channel outside the saved actions')
+            indices = channels if channels is not None else slice(action_dim)
+            actual, expected = actual[..., indices], expected[..., indices]
         expected = expected.astype(np.float64).ravel()
         observed = actual.astype(np.float64).ravel()
         delta = observed - expected
@@ -83,7 +87,6 @@ def compare_outputs(actions, request_ids, references, reference_ids, gate, *,
                   else float(np.array_equal(expected, observed)))
         cosines.append(max(-1.0, min(1.0, cosine)))
     metrics = {'max_relative_l2': max(errors), 'max_abs': max(absolutes), 'min_cosine': min(cosines)}
-    contract = quality_contract(gate)
     passed = all(metrics[key] >= value if key == 'min_cosine' else metrics[key] <= value
                  for key, value in contract['gate'].items())
     return {'status': ('passed' if passed else 'failed') if contract['gate'] else 'unknown',

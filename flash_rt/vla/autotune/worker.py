@@ -17,28 +17,17 @@ from uuid import uuid4
 import numpy as np
 
 from .workloads import NPZWorkload
-from .quality import compare_outputs, output_domain, quality_contract
+from .quality import compare_outputs, quality_contract
 
 
-# DM's coverage also contains graph addresses, prompt-dependent prefix lengths,
-# cumulative enqueues and compile/capture telemetry. Only these fields identify
-# the implementation. Full per-request evidence is retained separately.
-_DM_EXECUTION_IDENTITY = (
-    'engine', 'coverage', 'native_operators', 'torch_regions',
-    'native_gemm_per_request', 'native_fa2_per_request', 'native_gelu_per_request',
-    'setup_time_modulation_gemm', 'vision_patch_tokens_per_image', 'pooled_image_tokens',
-    'use_cuda_graph', 'graph_scope', 'checkpoint', 'cpu_source',
-    'reference_math', 'noise_contract', 'project_optimization',
-)
-
-
-def _backend_identity(metadata, model):
+def _backend_identity(metadata, stable_fields=()):
     current = deepcopy(metadata)
     coverage = current.get('execution_coverage')
     if isinstance(coverage, dict):
-        if model == 'dm05':
+        if stable_fields:
             current['execution_coverage'] = {
-                key: coverage[key] for key in _DM_EXECUTION_IDENTITY if key in coverage}
+                key: coverage[key] for key in stable_fields
+                if key in coverage}
         else:
             for key in ('native_linear_calls', 'native_plan_stats', 'velocity_graph',
                         'text_crossattn_kv_cache_request'):
@@ -78,8 +67,8 @@ def _quality(actions, request_ids, reference, gate, *, baseline_reference=False,
         if 'output_domain' in data:
             if domain is not None and str(data['output_domain'].item()) != domain:
                 raise ValueError('Internal reference output domain differs')
-        elif domain == output_domain('dm05'):
-            raise ValueError('DM05 reference has no explicit absolute-action output domain; regenerate it')
+        elif domain and domain.startswith('denormalized-'):
+            raise ValueError('Absolute action reference has no explicit output domain; regenerate it')
         if workload_identity is not None and 'workload_digest' in data:
             if str(data['workload_digest'].item()) != workload_identity['sha256']:
                 raise ValueError('Internal reference fixture content differs')
@@ -157,7 +146,12 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
             raise ValueError('Total repeat budget must cover every workload request for fixed-noise quality')
         from .author import workload_identity as identify_workload
         fixture_identity = identify_workload(workload)
-        domain = output_domain(candidate.backend.model)
+        from flash_rt.vla.model_spec import get_spec
+        spec_dir = getattr(candidate.backend, 'spec_dir', None)
+        declaration = get_spec(candidate.backend.model, spec_dir=spec_dir)
+        action_spec = declaration['actions']
+        domain = action_spec['worker_domain']
+        output_field = action_spec.get('worker_field', 'raw_actions_if_available')
         author = None
         if author_reference is not None:
             from .author import load_reference
@@ -205,8 +199,8 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
                 raise RuntimeError('Invalid wall-clock measurement')
             # DM's raw_actions are normalized 14-D latents. Its public gate and
             # the author _predict API both use reconstructed absolute actions.
-            value = (result['actions'] if candidate.backend.model == 'dm05'
-                     else result.get('raw_actions', result['actions']))
+            value = (result.get('raw_actions', result['actions'])
+                     if output_field == 'raw_actions_if_available' else result[output_field])
             action = np.asarray(value, dtype=np.float32)
             if action.size == 0 or not np.isfinite(action).all():
                 raise ValueError('Backend returned empty/nonfinite actions')
@@ -222,7 +216,7 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
             cpu_actions = [
                 {'field': key,
                  'domain': (full_backend.get('action_domain') if key == 'actions'
-                            else 'normalized-model-actions' if candidate.backend.model == 'dm05' else domain),
+                            else action_spec.get('raw_domain', domain)),
                  'shape': list(np.asarray(result[key]).shape),
                  'dtype': np.asarray(result[key]).dtype.str}
                 for key in ('actions', 'raw_actions') if key in result]
@@ -231,7 +225,7 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
                 timing_contract = current_contract
             elif timing_contract != current_contract:
                 raise ValueError('CPU action return contract changed during one candidate measurement')
-            current_backend = _backend_identity(full_backend, candidate.backend.model)
+            current_backend = _backend_identity(full_backend, declaration['capabilities'].get('stable_execution_fields', ()))
             execution_metadata.append(deepcopy(result.get(
                 'execution_metadata', full_backend.get('execution_coverage', {}))))
             if backend_metadata is None:
@@ -256,7 +250,7 @@ def run_experiment(candidate, workload, output, *, attempt_id, comparison_id,
                        execution_metadata=execution_metadata,
                        request_backend_metadata=request_backend_metadata,
                        output_domain=domain,
-                       output_field='actions' if candidate.backend.model == 'dm05' else 'raw_actions_if_available',
+                       output_field=output_field,
                        workload_identity=fixture_identity,
                       outputs_path=str(outputs_path),
                       workload_request_ids=sorted(required_ids),
@@ -323,7 +317,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     from .schema import Candidate
     candidate = Candidate.from_dict(json.loads(Path(args.candidate).read_text()))
-    record = run_experiment(candidate, NPZWorkload.from_file(args.workload), args.output,
+    record = run_experiment(candidate, NPZWorkload.from_file(args.workload, spec_dir=getattr(candidate.backend, 'spec_dir', None)), args.output,
                             attempt_id=args.attempt_id, comparison_id=args.comparison_id,
                             campaign_instance_id=args.campaign_instance_id,
                             warmup=args.warmup, repeats=args.repeats, reference=args.reference,

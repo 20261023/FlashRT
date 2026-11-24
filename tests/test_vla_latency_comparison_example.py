@@ -87,9 +87,8 @@ def test_failed_timer_preserves_partial_and_never_completes(comparison,bad):
 
 @pytest.fixture
 def official():
-    path=ROOT/'examples/vla_autotune/official_hyvla_latency.py'
-    if not path.exists():pytest.fail('Official Hy latency wrapper not implemented')
-    s=importlib.util.spec_from_file_location('official_Hy_latency_test',path);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);return m
+    from flash_rt.vla.author_adapters import hyvla
+    return hyvla
 
 
 def test_original_author_prepare_and_sampler_receive_host_converted_inputs_and_fixed_noise(official):
@@ -147,12 +146,11 @@ def test_official_source_and_complete_load_contract_do_not_admit_project_replace
 
 
 def test_official_CLI_requires_real_allocation_before_loading_source_or_weights(tmp_path):
-    script=ROOT/'examples/vla_autotune/official_hyvla_latency.py';env={k:v for k,v in os.environ.items() if not k.startswith('SLURM_')}
-    r=subprocess.run([sys.executable,str(script),'--help'],env=env,text=True,capture_output=True)
-    assert r.returncode==0 and '--official-source' in r.stdout
-    r=subprocess.run([sys.executable,str(script),'--checkpoint','/missing','--fixtures','/missing','--official-source','/missing',
-        '--source-revision','a'*40,'--output',str(tmp_path/'unused')],env=env,text=True,capture_output=True)
-    assert r.returncode!=0 and 'allocated GPU srun' in r.stderr and not (tmp_path/'unused').exists()
+    from examples.vla_autotune.author_baseline import _require_step
+    env = {k: v for k, v in os.environ.items() if not k.startswith('SLURM_')}
+    from unittest.mock import patch
+    with patch.dict(os.environ, env, clear=True), pytest.raises(RuntimeError, match='allocated'):
+        _require_step()
 
 
 @pytest.mark.parametrize('bad',['none','samples','NFE','cleanup','coverage','source','profile','graph','framework','checkpoint','observed-profile'])
@@ -196,9 +194,11 @@ def test_fast_selected_graph_requires_observed_execution_coverage(comparison):
     with pytest.raises(ValueError,match='selected.*graph'):comparison.selected_measurement(record,{'requests':[{'request_id':'a'}]},selection)
 
 
-def test_official_output_arrays_are_saved_before_completed_JSON(official,tmp_path,monkeypatch):
-    samples={'complete':True,'latency_ms':[1.,2.],'request_indices':[0,0],'actions':[np.zeros((40,32),dtype=np.float32)]*2}
+def test_official_output_arrays_are_saved_before_completed_JSON(tmp_path,monkeypatch):
+    from flash_rt.vla.autotune.author import publish_outputs
+    samples={'latency_ms':[1.,2.],'request_ids':['a','a'],'actions':[np.zeros((40,32),dtype=np.float32)]*2}
     def broken(*a,**kw):raise OSError('Native raw output failed')
     monkeypatch.setattr(np,'savez_compressed',broken)
-    with pytest.raises(OSError,match='raw output'):official.save_complete(tmp_path,{'status':'complete'},samples,control_actions=np.zeros((40,32),dtype=np.float32))
+    with pytest.raises(OSError,match='raw output'):
+        publish_outputs(tmp_path,{'status':'complete','identity':{'output_domain':'normalized'}},**samples)
     assert not (tmp_path/'result.json').exists()
