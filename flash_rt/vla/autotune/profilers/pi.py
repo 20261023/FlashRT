@@ -8,8 +8,7 @@ def _split_euler(session, pipe):
         session.notes.append('Diagnostic graph split requires supplied noise; retaining unsplit evidence')
         return False
     methods = ('vision_encoder', 'transformer_encoder', 'transformer_decoder', 'run_pipeline', 'forward')
-    if (getattr(session.backend.config, 'framework', 'torch') != 'torch'
-            or not all(callable(getattr(pipe, name, None)) for name in methods)
+    if (not all(callable(getattr(pipe, name, None)) for name in methods)
             or '_step_indices' not in inspect.signature(pipe.transformer_decoder).parameters):
         session.notes.append('Euler split hook unavailable for the active program; retaining whole-graph evidence')
         return False

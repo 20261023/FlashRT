@@ -366,6 +366,27 @@ def test_patch_creating_a_symlink_or_gitlink_is_refused(repo, store, tmp_path, m
     assert not os.path.lexists(store / 'snapshots' / identifier)
 
 
+@pytest.mark.parametrize('target,valid', [
+    ('../../.agents/skills/demo', True),
+    ('../../.agents/skills/elsewhere', False),
+])
+def test_snapshot_only_allows_exact_tracked_local_skill_alias(repo, store, target, valid):
+    directory = repo / '.agents/skills/demo'
+    directory.mkdir(parents=True)
+    (directory / 'SKILL.md').write_text('# Fixture skill\n')
+    link = repo / '.claude/skills/demo'
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+    git(repo, 'add', '.agents', '.claude')
+    git(repo, 'commit', '-qm', 'install skill alias')
+    if valid:
+        manifest = snap.materialize(repo, store, head(repo))
+        assert Path(manifest['source_dir'], '.claude/skills/demo/SKILL.md').is_file()
+    else:
+        with pytest.raises(snap.SnapshotError, match='symlinks or gitlinks'):
+            snap.materialize(repo, store, head(repo))
+
+
 def test_base_tracking_a_symlink_cannot_be_materialized(repo, store, tmp_path):
     (tmp_path / 'outside.py').write_text('X = 1\n')
     (repo / 'flash_rt' / 'linked.py').symlink_to(tmp_path / 'outside.py')

@@ -478,6 +478,19 @@ def _tracked_special_entries(root, *, error) -> list[str]:
         if not separator or not path:
             raise error(f'Unparseable git ls-tree entry: {token!r}')
         mode = meta.split(' ', 1)[0]
+        # The repository ships Claude skill aliases pointing to the real,
+        # tracked .agents/skills/<name>/SKILL.md in this very same tree.
+        # This exemption is restricted to those exact documentation aliases;
+        # product patches still cannot introduce links (_patched_special_paths).
+        match = re.fullmatch(r'\.claude/skills/([A-Za-z0-9_-]+)', path)
+        if mode == '120000' and match:
+            target = f'.agents/skills/{match[1]}'
+            link = Path(root) / path
+            if (link.is_symlink() and os.readlink(link) == f'../../{target}'
+                    and (Path(root) / target).resolve() == Path(root).resolve() / target
+                    and _git_text(root, 'ls-tree', 'HEAD', '--', f'{target}/SKILL.md',
+                                  error=error).startswith('100644 blob ')):
+                continue
         if mode in _SPECIAL_MODES:
             special.append(f'{path} ({_SPECIAL_MODES[mode]})')
     return special
