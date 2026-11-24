@@ -19,6 +19,41 @@ through the symlinks in `.claude/skills/`.
 - Patches must never modify `flash_rt/vla/autotune/`. The measurement harness is pinned
   and `snapshots` rejects such patches.
 
+### Mandatory source-candidate checklist
+
+Complete this checklist before initializing or measuring any candidate:
+
+- [ ] Read `tools show <tool>` and use its registered lane. A non-config or unknown
+  `Candidate.tool`, any `source_ref` differing from the baseline, or any non-null
+  `patch_ref` (including the baseline) **requires `--snapshot-store` and plan schema 3**.
+  An implicit `source_ref: null` does not inherit a concrete ref from another point.
+- [ ] Implement each source hypothesis in its own worktree. Pin 40-hex base commits
+  and content-addressed `sha256:` patches; materialize the baseline and every candidate.
+- [ ] Make every snapshot ready with `adopt-native` or `record-built`, verify native
+  identity, and require one harness tree across reference/candidates/bookend.
+- [ ] Check that plan v3 binds every attempt to `snapshot_id`, that the ledger records
+  those manifests, and that batch/worker source verification succeeds before ranking.
+- [ ] Run the relevant CPU controller/snapshot tests; a rejected proposal must leave
+  no plan or partial candidate/attempt/snapshot registrations. Record the evidence and
+  real actor in the decision log.
+
+Plan v2 remains for unpatched, same-source registered config tools and legacy config
+records without `tool`. `analysis.lever_pricing` is registered as analysis: even when it
+only changes existing config knobs, its candidates require snapshots under the
+non-config rule. Existing ready config knobs need no implementation worktree.
+Explicit infrastructure maintenance may edit the harness in the main checkout;
+that authorization never makes harness edits part of an optimization patch.
+
+Forbidden patterns:
+
+- Editing the live checkout between candidates and reporting it as a source comparison.
+- Dropping/rewriting `tool`, `source_ref` or `patch_ref` to obtain plan v2; treating unknown
+  `config.*` names or all analysis tools as config; treating missing refs as inheritance.
+- Reusing a mutable source directory for different variants, copying changed `.py`/`.so`
+  files into a verified snapshot, or omitting the baseline's ready snapshot.
+- Downgrading plan/result schemas, fabricating `source_identity`, bypassing import checks
+  with `PYTHONPATH`, or changing timing/quality harness code inside a candidate patch.
+
 ## Where things go
 
 - Edit skills in `.agents/skills/<name>/`, never through the `.claude/skills/<name>` symlinks.

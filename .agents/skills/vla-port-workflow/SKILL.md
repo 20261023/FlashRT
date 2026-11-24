@@ -7,7 +7,7 @@ metadata:
   upstream-path: "skills/model-port-workflow"
   upstream-commit: "b05b40990387e8c48e7d6267a790664981a665e4"
 ---
-<!-- Adapted by FlashRT (2026-11-15) from ApxInf skills/model-port-workflow/SKILL.md @ b05b40990387e8c48e7d6267a790664981a665e4 (Apache-2.0). Modifications: renamed; scope narrowed from whole-model ports into ApxInf crates to the FlashRT autotune port lane (one method/backend per model, stage and GPU); ApxInf docs, Rust module ownership, MLX/CPU and LLM-serving specifics replaced by FlashRT's repo contract, registry, frontends, pipelines, csrc bindings, CMake gates and snapshots; added registry tool ids, the operator gate and the hand-off into vla-patch-candidate; ledger and capture-acceptance checklists moved to references/. See NOTICE. -->
+<!-- Adapted by FlashRT (2026-11-15) from ApxInf skills/model-port-workflow/SKILL.md @ b05b40990387e8c48e7d6267a790664981a665e4 (Apache-2.0). Modifications: renamed; scope narrowed from whole-model ports into ApxInf crates to the FlashRT autotune port lane (one method/backend per model, stage and GPU); ApxInf docs, Rust module ownership, MLX/CPU and LLM-serving specifics replaced by FlashRT's repo contract, registry, frontends, pipelines, csrc bindings, CMake gates and snapshots; added registry tool ids, the operator gate, mandatory snapshot checklist and the hand-off into vla-patch-candidate; ledger and capture-acceptance checklists moved to references/. See NOTICE. -->
 
 # VLA port workflow
 
@@ -22,6 +22,32 @@ A port usually needs a few limited source variants, a build change and new
 acceptance evidence. It ends exactly like a patch: as a **snapshot candidate**
 measured by the existing controller against a bookended reference. This skill
 supplies the evidence that has to exist before that campaign makes sense.
+
+## Mandatory snapshot checklist (B)
+
+- [ ] Resolve the registered tool lane and compare every point's source/patch refs
+  with the baseline. Non-config or unknown `Candidate.tool`, differing `source_ref`,
+  or any non-null `patch_ref` (baseline included) requires `--snapshot-store`.
+  Null source refs describe an implicit checkout; they do not inherit a pinned ref.
+- [ ] Implement each source variant in a separate worktree, pin the 40-hex base
+  commit, and store the real source diff as a content-addressed patch.
+- [ ] Materialize and ready the baseline and every candidate, record native identity,
+  and ensure the reference/candidates/bookend share one harness tree.
+- [ ] Inspect plan schema 3, per-attempt `snapshot_id` and ledger manifests; require
+  batch/worker import and source verification as part of campaign acceptance.
+- [ ] Retain operator-gate, capture-acceptance and CPU controller/snapshot evidence.
+  Rejected initialization must leave no plan or partial ledger records; log the actor.
+
+Same-source unpatched registered config tools and pre-tool legacy config records
+retain plan v2. `analysis.lever_pricing` is analysis, so its same-source config levers
+still use plan v3 under the non-config rule.
+
+Forbidden patterns: implementing a port in the live checkout; toggling source edits
+in place between candidates; sharing a mutable variant directory; copying `.py`/`.so`
+into verified snapshots; deleting `tool`/`source_ref`/`patch_ref` or assigning unknown
+`config.*` names to obtain plan v2; missing baseline snapshots; schema downgrades,
+fabricated `source_identity` or `PYTHONPATH` import bypasses. Harness edits belong
+only to separately authorized infrastructure maintenance, never a port patch.
 
 ## Required reading
 

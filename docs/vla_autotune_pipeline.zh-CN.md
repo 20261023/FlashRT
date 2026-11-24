@@ -102,7 +102,7 @@ python -m flash_rt.vla.autotune.tools list --all --markdown
 
 ## 五、worktree 对比怎么实现
 
-以前候选里的 `source_ref` / `patch_ref` 只是标签，所有候选其实都跑同一份代码。现在有了快照模式：
+以前候选里的 `source_ref` / `patch_ref` 只是标签，所有候选其实都跑同一份代码。现在 controller 初始化会强制源码候选使用快照模式，遗漏 `--snapshot-store` 会在写 ledger 之前被拒绝：
 
 1. **patch**：在独立的 git worktree 里改代码，`proposal_from_worktree` 把改动存成 `sha256:` patch。
 2. **materialize**：`snapshots materialize` 在快照库里建一个 detached worktree，打上 patch，生成确定性的 commit，最后写 manifest。
@@ -117,7 +117,26 @@ python -m flash_rt.vla.autotune.tools list --all --markdown
 
 要注意的是，候选在 `flash_rt/` 下的代码和 harness 跑在同一个进程里，而且会在源码校验之前被 import，所以这条规则防的是无意改动，不是故意篡改。
 
-config 候选不开 worktree，仍走原来的 plan schema 2，行为和以前完全一样。
+只有同源、无 patch 的注册 config 工具，以及没有 `tool` 字段的旧版纯配置提案，保留 plan schema 2。它们使用作业 checkout，不另开实现 worktree；plan v2 的源码标签不构成经过验证的源码身份。
+
+### B：测量前强制验收清单
+
+- [ ] 从 `tools show <tool>` 读取注册 lane，核对 baseline 和每个 candidate 的 `tool`、`source_ref`、`patch_ref`。**非 config 或未知工具、相对 baseline 不同的 source_ref、任一点非 null patch_ref，任一成立就必须提供 `--snapshot-store`。** baseline-only campaign 也检查。
+- [ ] 区分显式源码和隐式 checkout：`source_ref: null` 不继承其他点的 commit。`null` 与具体 commit 不相等；config 工具名、相同 patch 标签或缺失 tool 字段都不能取消源码/patch 条件。
+- [ ] 每个源码实现假设使用独立 worktree，固定完整 40 位 base commit 与 `sha256:` patch。baseline 和所有 candidate 均 materialize，并用 `adopt-native` 或 `record-built` 就绪；纯配置组合可以共用同一个不可变快照。
+- [ ] 检查 reference、candidate、bookend 的 harness tree 一致，plan 为 schema 3，每个 attempt 的 `snapshot_id` 对应 ledger 中的 manifest；batch 和 worker 对实际 import 的源码、原生扩展复核成功。
+- [ ] 跑相关 CPU controller/snapshot 回归。拒绝初始化时没有 plan，也没有部分 candidate/attempt/snapshot 注册；记录实际 actor、命令和测试结果。完整 CPU 验收命令见仓库 `AGENTS.md`。
+
+`analysis.lever_pricing`（`tools levers`）虽然只改现成配置，注册 lane 仍是 analysis，因此遵守字面的“非 config”条件，必须走快照 plan v3。controller 不对 analysis lane 整体豁免，也不把未知 `config.*` 名字当成注册 config 工具。未知/旧版自定义 tool provenance 可以在经过验证的 v3 快照中保留。独立作者基线用 `--author-baseline` 绑定；这里的 tool 检查针对 campaign 的 `Candidate.tool`。
+
+### 禁止模式
+
+- 在 live checkout 中轮流修改/还原源码后声称做了不同源码的公平比较，或给多个源码变体复用同一可变目录。
+- 为了省掉快照删除/重写 `tool`、`source_ref`、`patch_ref`，把新提案伪装成 legacy 配置，或把缺失 source_ref 当成继承。
+- 手工拷贝改变过的 `.py`/`.so` 到已验证快照，漏掉 baseline 的 ready 快照，或只给候选写 hash 标签却仍在作业 checkout 运行。
+- 降级 plan/result schema、伪造 `source_identity`、通过 `PYTHONPATH` 绕过 import 核对，或在优化候选 patch 内改变计时/质量 harness。
+
+明确授权的 controller 等基础设施维护在主树单独进行；它不能与某个优化 patch 混在一起，也不能替代该候选的快照验收。
 
 ## 六、skill
 

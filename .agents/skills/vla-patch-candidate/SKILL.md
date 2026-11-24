@@ -35,6 +35,33 @@ STORE=/abs/shared/autotune-store           # snapshot store on a filesystem the 
 - KEEP vs best and first-valid vs fastest: a patch that runs is not a winner; only the
   campaign decides speed, and the reference can win.
 
+## Mandatory snapshot checklist (B)
+
+- [ ] Inspect the registered `Candidate.tool` lane, source refs and patch refs for
+  the baseline and every candidate. Non-config/unknown tools, a source ref differing
+  from the baseline, or any non-null patch ref **require `--snapshot-store`**.
+  `source_ref: null` is an implicit checkout, never inheritance of another point's ref.
+- [ ] Use one implementation worktree per source hypothesis. Store the actual diff
+  as a `sha256:` patch against the baseline's full 40-hex commit.
+- [ ] Materialize the baseline and all candidates; make native extensions ready with
+  `adopt-native` or `record-built`. Require one harness tree across all snapshots.
+- [ ] Inspect plan schema 3, each attempt's `snapshot_id` and ledger manifest, then
+  require batch/worker source verification before treating the result as measured.
+- [ ] Run relevant CPU controller/snapshot tests and confirm rejected initialization
+  leaves no plan or partial ledger registration; log the actor and evidence.
+
+Plan v2 is reserved for unpatched same-source registered config tools and legacy
+config records without a tool. `analysis.lever_pricing` remains non-config despite
+generating config-only levers, so those points also need verified snapshots.
+
+Forbidden patterns: editing the live checkout between candidates; substituting a
+mutable directory or copied `.py`/`.so` for a snapshot; deleting or rewriting
+`tool`/`source_ref`/`patch_ref` to get plan v2; trusting unknown `config.*` names;
+omitting the baseline snapshot; downgrading schemas, fabricating `source_identity`,
+or using `PYTHONPATH` to defeat import checks. A legacy compatibility path is never
+permission to disguise a new source candidate. Harness maintenance is a separate,
+explicit infrastructure change, never part of the optimization patch.
+
 ## Step 1. Pin the base commit
 
 ```bash
@@ -158,7 +185,8 @@ py -m flash_rt.vla.autotune.controller init \
   --snapshot-store $STORE --python /abs/venv/bin/python
 ```
 
-- Requires absolute workload/output paths and ready snapshots sharing one harness tree.
+- Requires `--snapshot-store`, absolute workload/output paths and ready snapshots
+  sharing one harness tree; omitting the store is rejected before ledger writes.
 - Render/submit/wait/ingest exactly as in `vla-config-sweep` Step 4. `batch` preflights
   every snapshot (re-verifies the source) before launching anything, runs each attempt
   with cwd = its snapshot and only that FlashRT on `PYTHONPATH`, and passes
@@ -222,8 +250,10 @@ Merging into the main branch remains the separate human step 3 above.
 
 ## Sources of patches
 
-- Registry tools with lane `patch`/`port` (`tools list --all --lane patch`), e.g.
-  `cache.fastwam_text_crossattn_kv`, `fusion.hy_rope_qknorm_kvwrite`, `quant.int8_pi05`.
+- Registry tools with lane `patch`/`port` (`tools list --all --lane patch`).
+  Check their current status with `tools show`; an existing config knob such as
+  `cache.fastwam_text_crossattn_kv`, `fusion.hy_rope_qknorm_kvwrite` or
+  `quant.int8_pi05` needs no source patch merely to enable it.
 - Kernels from `vla-kernel-candidate` (wired behind a new backend option).
 - `compile.aitune`: a frontend option that wraps Torch submodules and loads a pinned
   `.ait` artifact; record its path and sha256 in `provenance`. See

@@ -1,5 +1,6 @@
 """Snapshot-mode campaigns (plan schema 3): init, batch isolation, worker identity, ingest."""
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -129,9 +130,11 @@ def test_snapshot_init_writes_plan_v3_and_registers_snapshots_with_attempts(worl
         assert len(ledger.attempts()) == 3
 
 
-def test_init_without_snapshot_store_is_unchanged_schema_2(world):
+def test_init_without_snapshot_store_keeps_same_source_config_schema_2(world):
+    configured = replace(world['baseline'], candidate_id='configured', tool='sampler.euler_steps',
+                         backend=replace(world['baseline'].backend, num_steps=3))
     plan = initialize_campaign(world['tmp'] / 'v2', comparison_id='r1', baseline=world['baseline'],
-                               candidates=[world['patched']], workload_path='relative/workload.json',
+                               candidates=[configured], workload_path='relative/workload.json',
                                output_root='relative/results', warmup=0, repeats=2)
     assert set(plan) == {'schema_version', 'comparison_id', 'campaign_instance_id', 'workload_path',
                          'output_root', 'warmup', 'repeats', 'quality_gate', 'entries'}
@@ -140,6 +143,42 @@ def test_init_without_snapshot_store_is_unchanged_schema_2(world):
     with pytest.raises(ValueError, match='snapshot_store'):
         initialize_campaign(world['tmp'] / 'v2b', comparison_id='r1', baseline=world['baseline'],
                             candidates=[], workload_path='w', output_root='o', python='/usr/bin/python3')
+
+
+@pytest.mark.parametrize('tool', ['kernel.forgekernel', 'analysis.lever_pricing', 'kernel.test'])
+def test_same_source_non_config_and_custom_tools_can_use_verified_snapshots(world, tool):
+    if tool == 'analysis.lever_pricing':
+        from flash_rt.vla.autotune.tools.levers import price_levers
+        point, = price_levers(world['baseline'], {'steps': {'num_steps': 3}})
+    else:
+        point = replace(world['baseline'], candidate_id='configured', tool=tool,
+                        backend=replace(world['baseline'].backend, num_steps=3))
+    plan = init(world, candidates=[point])
+    assert plan['schema_version'] == 3
+    assert len(plan['snapshots']) == 1
+    assert {entry['snapshot_id'] for entry in plan['entries']} == {world['baseline_manifest']['snapshot_id']}
+    assert plan['entries'][1]['candidate']['tool'] == tool
+
+
+def test_different_source_without_patch_runs_the_selected_snapshot(world):
+    from test_vla_campaign_snapshot import git
+    repo = world['repo']
+    (repo / 'flash_rt' / 'model.py').write_text('STEPS = 7\n')
+    git(repo, 'commit', '-qam', 'product-only source variant')
+    other = ready_snapshot(repo, world['store'])
+    point = replace(world['baseline'], candidate_id='other-source', source_ref=other['base_commit'],
+                    tool='sampler.euler_steps')
+    plan = init(world, candidates=[point])
+    assert plan['schema_version'] == 3
+    assert [entry['snapshot_id'] for entry in plan['entries']] == [
+        world['baseline_manifest']['snapshot_id'], other['snapshot_id'], world['baseline_manifest']['snapshot_id']]
+
+
+def test_patched_baseline_only_campaign_also_runs_from_its_snapshot(world):
+    plan = init(world, baseline=world['patched'], candidates=[])
+    assert plan['schema_version'] == 3
+    assert [entry['role'] for entry in plan['entries']] == ['reference', 'bookend']
+    assert {entry['snapshot_id'] for entry in plan['entries']} == {world['patched_manifest']['snapshot_id']}
 
 
 def _assert_nothing_written(world, name='control'):
@@ -226,11 +265,15 @@ def test_ledger_snapshot_registration_is_immutable(world):
 def test_interrupted_snapshot_init_cannot_be_retried_as_schema_2(world):
     init(world)
     (world['tmp'] / 'control' / 'plan.json').unlink()  # Crash between the ledger commit and the plan write.
-    with pytest.raises(ValueError, match='snapshot set must match'):
+    with CampaignLedger(world['tmp'] / 'control' / 'ledger.sqlite') as ledger:
+        before = ledger.attempts(), ledger.snapshots(), ledger.instance_id
+    with pytest.raises(ValueError, match='snapshot_store'):
         initialize_campaign(world['tmp'] / 'control', comparison_id='r1', baseline=world['baseline'],
-                            candidates=[world['patched']], workload_path=world['workload'],
-                            output_root=world['tmp'] / 'results', warmup=0, repeats=2, quality_gate=GATE)
+                             candidates=[world['patched']], workload_path=world['workload'],
+                             output_root=world['tmp'] / 'results', warmup=0, repeats=2, quality_gate=GATE)
     assert not (world['tmp'] / 'control' / 'plan.json').exists()
+    with CampaignLedger(world['tmp'] / 'control' / 'ledger.sqlite') as ledger:
+        assert (ledger.attempts(), ledger.snapshots(), ledger.instance_id) == before
     assert init(world)['schema_version'] == 3  # The faithful retry still publishes the plan.
 
 
@@ -458,24 +501,25 @@ def test_worker_without_expected_source_keeps_schema_2(world):
     assert record['schema_version'] == 2 and 'source_identity' not in record and record['state'] == 'measured'
 
 
-def test_dataflow_error_no_longer_fails_a_good_measurement(tmp_path):
-    class Pipeline:  # Lacks encoder_seq_len: describe_dataflow raises AttributeError.
-        chunk_size = 2
+def test_dataflow_error_no_longer_fails_a_good_measurement(tmp_path, monkeypatch):
+    from flash_rt.vla.autotune import dataflow
 
-    class Pi05Backend(Backend):
-        def __init__(self, config):
-            super().__init__(config)
-            self.config = config
-            self.frontend = type('Frontend', (), {'pipeline': Pipeline()})()
+    def failed_diagnostic(backend):
+        raise AttributeError('diagnostic fixture failure')
+
     np.savez(tmp_path / 'inputs.npz', noise=np.ones((2, 3), np.float32), state=np.zeros(3))
     (tmp_path / 'workload.json').write_text(json.dumps({
         'schema_version': 1, 'workload_id': 'frames', 'model': 'pi05',
         'requests': [{'request_id': 'frame0', 'npz_path': 'inputs.npz', 'fields': {'state': 'state'},
                       'noise_key': 'noise'}]}))
     candidate = Candidate('base', BackendConfig(model='pi05', checkpoint='/weights', num_steps=2), 'frames')
-    record = run_experiment(candidate, NPZWorkload.from_file(tmp_path / 'workload.json'), tmp_path / 'out',
-                            attempt_id='a1', comparison_id='c1', campaign_instance_id='i1', repeats=2,
-                            backend_factory=Pi05Backend, device_info={'job_id': '123'}, profile=False)
+    # Exercise worker fault tolerance independently of any model's declared
+    # diagnostic hook or private pipeline attributes.
+    with monkeypatch.context() as patched:
+        patched.setattr(dataflow, 'describe_dataflow', failed_diagnostic)
+        record = run_experiment(candidate, NPZWorkload.from_file(tmp_path / 'workload.json'), tmp_path / 'out',
+                                attempt_id='a1', comparison_id='c1', campaign_instance_id='i1', repeats=2,
+                                backend_factory=Backend, device_info={'job_id': '123'}, profile=False)
     assert record['state'] == 'measured' and record['dataflow'] is None
     assert record['dataflow_failure'].startswith('AttributeError')
     validate_result(record)
@@ -522,7 +566,7 @@ def test_snapshot_ledger_rejects_schema_2_results_and_v2_ledgers_reject_v3(world
         with pytest.raises(ValueError, match='schema_version 3'):
             ledger.validate_execution_identity(downgraded)
     v2 = initialize_campaign(world['tmp'] / 'v2', comparison_id='r1', baseline=world['baseline'],
-                             candidates=[world['patched']], workload_path=world['workload'],
+                             candidates=[], workload_path=world['workload'],
                              output_root=world['tmp'] / 'v2-results', warmup=0, repeats=2)
     queued(world, 'v2')
     with CampaignLedger(world['tmp'] / 'v2' / 'ledger.sqlite') as ledger:

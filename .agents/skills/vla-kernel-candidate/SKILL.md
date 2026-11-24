@@ -33,6 +33,34 @@ WORK=/abs/shared/kernel-work/<slug>        # visible from GPU nodes; one directo
 - Generated code is untrusted: review it before it enters a worktree; never run it on
   the login node.
 
+## Mandatory snapshot checklist (B)
+
+- [ ] Check the actual registered `Candidate.tool` lane. Kernel tools are non-config;
+  non-config/unknown tools, a source ref differing from the baseline, or any non-null
+  patch ref require `--snapshot-store`, even when the options look config-only.
+- [ ] Gate the generated artifact, then wire each source hypothesis in its own
+  worktree against a full 40-hex base commit. Store the actual diff and kernel hash.
+- [ ] Materialize the baseline and every wired candidate, adopt/build native
+  extensions and verify readiness plus one shared harness tree. A null source ref
+  is an implicit checkout, never inheritance of another point's pinned ref.
+- [ ] Confirm plan schema 3, every attempt's `snapshot_id` and ledger manifest.
+  Batch/worker source and import checks must succeed before model results count.
+- [ ] Run operator/capture gates and relevant CPU controller/snapshot tests. A
+  rejected initialization must leave no plan or partial ledger registrations; log
+  the real actor and the artifact, gate and campaign evidence.
+
+Only same-source unpatched registered config tools and legacy config records
+without tool provenance retain plan v2. `analysis.lever_pricing` remains analysis
+and also needs snapshots; no general analysis-lane exception exists.
+
+Forbidden patterns: swapping kernel sources in the live checkout between candidates;
+reusing a mutable source directory; copying changed `.py`/`.so` into a verified
+snapshot; deleting or falsifying `tool`/`source_ref`/`patch_ref` to obtain plan v2;
+trusting an unknown `config.*` tool; omitting the baseline snapshot; downgrading
+schemas, fabricating `source_identity` or bypassing import checks with `PYTHONPATH`.
+Harness changes require separate infrastructure authorization and never enter a
+kernel optimization patch.
+
 ## Step 1. Choose the operator and log it
 
 ```bash

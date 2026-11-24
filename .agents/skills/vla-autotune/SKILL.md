@@ -118,8 +118,8 @@ python -m flash_rt.vla.autotune.tools show cache.fastwam_text_crossattn_kv
 
 - **优先复用现成工具**。`status=ready` 的 config 工具直接用；`needs_setup` 是现成项目但要先装环境（ForgeKernel、KernelAgent、ApxInf、AITune）；`needs_implementation` 说明这一游还没有现成方法，要写 patch 或 port。
 - **按 lane 分流**：
-  - config 候选永远不开 worktree；
-  - patch 和 port 才用源码快照；
+  - 同源、无 patch 的现成 config 旋钮不另开实现 worktree；
+  - 非 config 或未知工具、不同源码、任一点带 patch，campaign 必须用源码快照；
   - kernel 先过算子级门槛，再进入模型级 campaign。
 - 选择前回答 4 个问题：
   1. 它减少关键路径上的哪一段？
@@ -141,23 +141,34 @@ python -m flash_rt.vla.autotune.decisions add --log $AT/decisions.jsonl --kind d
 
 | lane | 怎么做 | 产物 |
 |---|---|---|
-| config | `vla-config-sweep`：`tools propose` / `tools levers` | `proposals.json`（同一份代码） |
+| config | `vla-config-sweep`：`tools propose` | `proposals.json`（同一份代码） |
+| analysis 组合旋钮 | `tools levers` / `analysis.lever_pricing`，保留 analysis provenance，按非 config 规则用快照测量 | 同源配置提案 + ready baseline 快照 |
 | patch | `vla-patch-candidate`：worktree 里改代码、commit，再 `tools.patches.proposal_from_worktree` | `sha256:` patch，加上 40 位 `source_ref` |
 | port | `vla-port-workflow`，最后交给 patch lane | 同上，另附执行 ledger 和 capture 验收 |
 | kernel | `vla-kernel-candidate`：capture 调用点，交给 ForgeKernel / KernelAgent，过 `vla-operator-gate`，再把 kernel 接进 patch | `KernelArtifact`，再变成 patch 候选 |
-| compiler | `aitune-*`（工具 `compile.aitune`） | 外部包装；按 `tools show compile.aitune` 的说明接入 |
+| compiler | `aitune-*`（工具 `compile.aitune`，注册 lane 为 patch） | 外部包装并接入 patch 快照；按 `tools show compile.aitune` 操作 |
 
 一个 campaign 最多 8 个候选；同时在测的源码变体（patch/port）最多 2 个。
 
 ### 6. 测量
 
-- **config 候选**：普通 campaign（plan v2），`controller init --proposals proposals.json`。
-- **patch/port 候选**：
+- **同源、无 patch、注册 lane 为 config 的候选**：普通 campaign（plan v2），`controller init --proposals proposals.json`。旧版没有 `tool` 的纯配置提案保留此兼容路径。
+- **源码候选与其他非 config 候选**：
   1. 对 baseline（不带 patch 的 `$BASE`）和每个 patch 都执行 `snapshots materialize`。reference 和复测也要从快照运行，所以 baseline 快照不能漏。
   2. 每个快照都要就绪：纯 Python 改动用 `adopt-native`；改了 `csrc` 就编译，再执行 `record-built`。
   3. `controller init --snapshot-store $AT/snapshots`（plan v3）。batch 和 worker 会在加载模型前核对每个候选实际运行的源码。
 - 同一块 GPU 一次只跑一个 campaign。
 - 接受新的步数或近似方法之前，先扩大输入集（换噪声、换图像、换 state），确认结论在更多输入上仍然成立。
+
+### 测量前强制清单（B）
+
+- [ ] 用注册表核对每个 `Candidate.tool`。非 config 或未知工具、相对 baseline 不同的 `source_ref`、任一点非 null `patch_ref`，任一成立就必须传 `--snapshot-store`；baseline 只有 reference/bookend 时也检查。
+- [ ] `source_ref: null` 表示隐式 checkout，不继承另一点的 commit。不同源码的实现各用独立 worktree；基线和所有候选固定完整 commit / patch hash。
+- [ ] baseline、candidate、bookend 的快照全部 ready，原生扩展有身份记录，harness tree 相同；同源候选可共用同一个不可变快照。
+- [ ] 确认 plan schema 3、每个 attempt 的 `snapshot_id` 和 ledger manifest 对应；batch/worker 复核实际 import 的源码后才认测量结果。
+- [ ] 跑相关 CPU controller/snapshot 回归；拒绝初始化不能留下 plan 或部分 ledger 注册。决策日志写 actor 和证据。
+
+`analysis.lever_pricing` 虽只生成配置组合，但注册 lane 为 analysis，仍满足字面的“非 config”条件，必须走 plan v3；不能删 `tool` 把新提案伪装成旧版配置。
 
 ### 7. 决策
 
@@ -210,6 +221,9 @@ python -m flash_rt.vla.autotune.decisions summary --log $AT/decisions.jsonl --ma
 - 不改质量门槛去迁就结果，也不放宽门槛来掩盖输入或执行上的错误。
 - 不跨硬件、跨计时边界比较毫秒数。ApxInf 的 graph 包含 CUDA 预处理，比较前要先对齐边界。
 - patch 不能修改 `flash_rt/vla/autotune/`。测量 harness 是固定的，`snapshots` 会拒绝这样的 patch。
+- 禁止在 live checkout 轮流改源码、复用可变目录或临时拷贝 `.py`/`.so` 来代替独立源码快照。
+- 禁止清除/伪造 `tool`、`source_ref`、`patch_ref`，按 `config.*` 前缀信任未知工具，或把 analysis lane 整体豁免；legacy 兼容不是新源码候选的入口。
+- 禁止漏掉 baseline 快照、降级 plan/result schema、伪造 `source_identity` 或用 `PYTHONPATH` 绕过 worker 的 import 身份检查。
 - 不在 skill 里记录 winner、最佳 ε 或 kernel 配置。这些数字进决策日志和实验记录（`docs/vla_autotune_experiments.md`）；skill 只写流程。
 - 不擅自启动 ForgeKernel 或 KernelAgent。ForgeKernel 会在它自己的沙箱里用 `claude -p --dangerously-skip-permissions` 运行 agent，必须先经过 H3。
 - 不 push、不改默认配置，除非人明确要求。

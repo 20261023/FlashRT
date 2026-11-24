@@ -58,16 +58,45 @@ def _load_snapshots(store, points):
     return manifests, point_ids, harness.pop(), paths
 
 
+def _validate_checkout_candidate(candidate, baseline):
+    """Schema 2 may only compare unpatched configurations of one source."""
+    reasons = []
+    if candidate.patch_ref is not None:
+        reasons.append(f'non-null patch_ref {candidate.patch_ref!r}')
+    # None means implicit checkout, not "inherit the other point's source".
+    if candidate.source_ref != baseline.source_ref:
+        reasons.append(f'source_ref {candidate.source_ref!r} differs from baseline {baseline.source_ref!r}')
+    if candidate.tool is not None:
+        from .tools import get_tool
+        try:
+            tool = get_tool(candidate.tool)
+        except ValueError:
+            # Legacy/custom provenance is still usable with verified snapshots;
+            # its name alone cannot establish that it is a config-only tool.
+            reasons.append(f'unknown tool {candidate.tool!r} has no verified config lane')
+        else:
+            if tool.lane != 'config':
+                reasons.append(f'tool {candidate.tool!r} has non-config lane {tool.lane!r}')
+    # Pre-tool legacy config records remain valid when both source fields match
+    # and neither reference nor candidate carries a patch. Check the baseline too.
+    if reasons:
+        raise ValueError(f'Candidate {candidate.candidate_id!r} requires snapshot_store (--snapshot-store): '
+                         + '; '.join(reasons)
+                         + '. Materialize ready snapshots for the reference, candidates and bookend.')
+
+
 def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_path,
                          output_root, warmup=3, repeats=10, quality_gate=None,
                          snapshot_store=None, python=None, extra_pythonpath=None,
                          author_baseline=None):
     """Write the ledger attempt group, then plan.json.
 
-    Without ``snapshot_store`` the plan is schema 2 and every attempt runs the
-    allocation's own checkout. With it (snapshot mode, schema 3) every point
-    must carry a 40-hex source_ref and null/sha256 patch_ref whose snapshot
-    manifest is ready; attempts then run from those snapshots.
+    Without ``snapshot_store`` the plan is schema 2: unpatched same-source
+    config tools (or legacy records without a tool) run the allocation's own
+    checkout. Non-config/unknown tools, differing source refs or any patch
+    require snapshot mode (schema 3). Every point must then carry a 40-hex
+    source_ref and null/sha256 patch_ref whose snapshot manifest is ready;
+    attempts run from those snapshots.
     """
     if snapshot_store is None and (python is not None or extra_pythonpath):
         raise ValueError('python/extra_pythonpath are only meaningful with snapshot_store')
@@ -93,7 +122,6 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
             key in (quality_gate or {}) for key in ('max_relative_l2', 'max_abs', 'min_cosine')):
         raise ValueError('An opt-in author baseline requires an explicit numerical quality budget')
     root = Path(root)
-    root.mkdir(parents=True, exist_ok=True)
     _identifier(comparison_id)
     plan_path = root / 'plan.json'
     if plan_path.exists():
@@ -121,6 +149,8 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
     for index, (role, candidate) in enumerate(points):
         if not isinstance(candidate, Candidate):
             raise TypeError('Expected Candidate records')
+        if not snapshot_mode:
+            _validate_checkout_candidate(candidate, baseline)
         if candidate.workload_id != baseline.workload_id or candidate.backend.model != baseline.backend.model:
             raise ValueError('One campaign must compare the same model and workload')
         candidate_record = candidate.to_dict()
@@ -134,6 +164,7 @@ def initialize_campaign(root, *, comparison_id, baseline, candidates, workload_p
                             'candidate': candidate_record})
         else:
             entries.append({'role': role, 'attempt_id': attempt_id, 'candidate': candidate_record})
+    root.mkdir(parents=True, exist_ok=True)
     with CampaignLedger(root / 'ledger.sqlite') as ledger:
         author_plan = None
         if author_baseline is not None:
@@ -385,7 +416,8 @@ def main(argv=None):
     create.add_argument('--proposals', help='Optional JSON list of human/agent Candidate records')
     create.add_argument('--enumerate', action='store_true')
     create.add_argument('--snapshot-store', help='Snapshot mode (plan schema 3): run each point from its '
-                        'ready source snapshot in this store')
+                        'ready source snapshot in this store; required for non-config/unknown tools, '
+                        'differing source refs or any patch')
     create.add_argument('--python', help='Snapshot mode: absolute worker interpreter path')
     create.add_argument('--extra-pythonpath', action='append', default=None,
                         help='Snapshot mode: absolute extra PYTHONPATH entry (repeatable)')

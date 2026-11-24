@@ -70,3 +70,7 @@ Changes made by FlashRT (2026-11-15)
         their verified blockers.
   - Moved the preflight, ledger and capture-acceptance checklists to
     references/port-checklists.md. Added agents/openai.yaml.
+
+Additional FlashRT changes
+  - Added the mandatory controller snapshot checklist and forbidden provenance,
+    live-checkout, schema-downgrade and import-bypass patterns for source candidates.

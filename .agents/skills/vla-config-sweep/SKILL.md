@@ -20,7 +20,9 @@ LOG=<campaign root>/decisions.jsonl
 
 ## Rules carried from the design
 
-- Same code tree: config candidates never get a worktree or a snapshot. Plan schema 2.
+- Same code tree: existing config knobs need no implementation worktree. Plan schema 2
+  is for unpatched same-source registered config tools and pre-tool legacy config records.
+  The B snapshot rule in `AGENTS.md` also applies to config sweeps.
 - Deterministic code expands parameters; the agent only chooses the tool, the stage and
   the bounds, and explains the outcome.
 - KEEP vs best: the fastest passed point is not automatically adopted. If the reference
@@ -91,11 +93,17 @@ py -m flash_rt.vla.autotune.tools levers --baseline baseline.json --stage host.l
 Lever fields: `num_steps`, `sampler`, `probeflow`, `backend`, `options`. Two levers that
 set the same field differently are an error, never a precedence rule.
 
+Lever candidates carry `tool=analysis.lever_pricing`, whose registered lane is analysis.
+The non-config rule therefore requires plan v3 even though the source is unchanged.
+Pin `baseline.source_ref` to a full commit before generating levers, materialize and
+ready that shared snapshot (`vla-patch-candidate` Steps 4-5), and preserve the tool
+provenance. No source patch or separate implementation worktree is needed.
+
 Merge several proposal files into one JSON list if you run them in one campaign. Keep
 each campaign small enough for one allocation (reference, candidates, bookend run
 serially in one job).
 
-## Step 3. Initialize the campaign (plan v2)
+## Step 3. Initialize the campaign (plan v2 or required v3)
 
 Human checkpoint: the quality gate (scope name, `action_dim` trained channels,
 `max_relative_l2`, `min_cosine`) and the run budget are the human's choice. Freeze them
@@ -109,7 +117,12 @@ py -m flash_rt.vla.autotune.controller init \
   --quality-gate '{"scope":"<scope>","action_dim":<n>,"max_relative_l2":0.05,"min_cosine":0.999}'
 ```
 
-- Do not pass `--snapshot-store`: that is the patch lane (plan v3).
+- The command above is for same-source unpatched config tools. If any point has a
+  non-config/unknown tool, a source ref differing from the baseline, or a non-null
+  patch ref (baseline included), add `--snapshot-store /abs/shared/store` and follow
+  the snapshot readiness and plan v3 checks in `vla-patch-candidate` Steps 4-6.
+  Null source refs do not inherit another point's commit. Never drop provenance
+  to avoid this requirement.
 - `--enumerate` adds the controller's own Euler/ProbeFlow grid (no tool provenance);
   prefer tool proposals so every candidate carries `tool` and `stage`.
 - `repeats` is the total measured request count and must cover every workload request.
