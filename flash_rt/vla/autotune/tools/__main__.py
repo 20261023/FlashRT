@@ -70,16 +70,24 @@ def _write_candidates(path, candidates):
             'candidate_ids': [candidate.candidate_id for candidate in candidates]}
 
 
-def markdown_table(tools, model=None, *, spec_dir=None) -> str:
-    lines = ['| id | lane | stages | models | exactness | status | reason |',
-             '|---|---|---|---|---|---|---|']
+def markdown_table(tools, model=None, *, spec_dir=None, stage=None, hardware=None) -> str:
+    lines = ['| id | lane | stages | models | exactness | status | reason | eligible sites |',
+             '|---|---|---|---|---|---|---|---|']
     for tool in tools:
         reason = tool.reason_for(model, spec_dir=spec_dir).replace('|', '/').replace('\n', ' ')
         models = tool.matching_models(spec_dir=spec_dir)
         stages = tool.stages_for(model, spec_dir=spec_dir)
+        eligible = []
+        if tool.attention_requirements:
+            eligible = tool.to_dict(model=model, spec_dir=spec_dir, stage=stage,
+                                    hardware=hardware)['eligible_sites']
+        sites = '; '.join(f'{site["model"]}/{site["id"]} ({site["stage"]}, '
+                          f'{site["mask_kind"]}, HD{site["head_dim"]}, '
+                          f'Q{site["query_heads"]}/KV{site["kv_heads"]}, GQA={site["gqa"]})'
+                          for site in eligible)
         lines.append(f'| {tool.tool_id} | {tool.lane} | {", ".join(stages)} | '
                      f'{", ".join(models)} | {tool.exactness} | '
-                     f'{tool.status_for(model, spec_dir=spec_dir)} | {reason} |')
+                     f'{tool.status_for(model, spec_dir=spec_dir)} | {reason} | {sites or "—"} |')
     return '\n'.join(lines)
 
 
@@ -90,11 +98,13 @@ def coverage_table(rows) -> str:
         ready, unavailable = [], []
         for entry in row['tools']:
             text = f'{entry["tool_id"]} ({entry["lane"]})'
+            sites = entry.get('eligible_sites', [])
+            details = ' [' + ', '.join(site['id'] for site in sites) + ']' if sites else ''
             if entry['status'] == 'ready':
-                ready.append(text)
+                ready.append(text + details)
             else:
                 reason = entry['reason'].replace('|', '/').replace('\n', ' ')
-                unavailable.append(f'{text}: {entry["status"]}: {reason}')
+                unavailable.append(f'{text}: {entry["status"]}: {reason}{details}')
         if row['note']:
             unavailable.insert(0, row['note'])
         lines.append(f'| {row["stage"]} | {"; ".join(ready) or "—"} | '
@@ -102,9 +112,16 @@ def coverage_table(rows) -> str:
     return '\n'.join(lines)
 
 
-def _show(tool_id, model=None, *, spec_dir=None):
+def _show(tool_id, model=None, *, spec_dir=None, stage=None, hardware=None):
     tool = get_tool(tool_id)
-    record = tool.to_dict(model=model, spec_dir=spec_dir)
+    if stage is not None:
+        from ..stages import STAGE_IDS
+        if stage not in STAGE_IDS:
+            raise ValueError(f'Unknown stage {stage!r}')
+    if hardware is not None:
+        from . import hardware_capability
+        hardware_capability(hardware)
+    record = tool.to_dict(model=model, spec_dir=spec_dir, stage=stage, hardware=hardware)
     if tool_id != tool.tool_id:
         record['requested_alias'] = tool_id
     if tool.tool_id in ADAPTERS:
@@ -119,6 +136,8 @@ def _show(tool_id, model=None, *, spec_dir=None):
             record['selected_model']['recipe'] = spec.get('tools', {}).get('inductor')
         if tool.tool_id.startswith('attention.'):
             record['selected_model']['attention'] = spec['attention']
+            if tool.attention_requirements and not record['eligible_sites']:
+                record['selected_model'].update(matches=False, unavailable_reason=record['reason'])
         if tool.tool_id == 'baseline.official_impl':
             record['selected_model']['author'] = spec['author']
     return record
@@ -140,6 +159,8 @@ def main(argv=None):
     show.add_argument('tool_id')
     show.add_argument('--model')
     show.add_argument('--spec-dir')
+    show.add_argument('--stage', help='Limit attention-site evidence to this stage')
+    show.add_argument('--hardware', help='Filter attention sites for the selected CUDA target')
     coverage = commands.add_parser('coverage', help='One stage table including unavailable reasons')
     coverage.add_argument('--model', required=True)
     coverage.add_argument('--hardware', default='auto')
@@ -161,11 +182,14 @@ def main(argv=None):
             tools = list_tools(model=args.model, hardware=args.hardware, stage=args.stage,
                                lane=args.lane, include_unavailable=args.all, spec_dir=args.spec_dir)
             if args.markdown:
-                print(markdown_table(tools, args.model, spec_dir=args.spec_dir))
+                print(markdown_table(tools, args.model, spec_dir=args.spec_dir,
+                                     stage=args.stage, hardware=args.hardware))
                 return 0
-            output = [tool.to_dict(model=args.model, spec_dir=args.spec_dir) for tool in tools]
+            output = [tool.to_dict(model=args.model, spec_dir=args.spec_dir,
+                                   stage=args.stage, hardware=args.hardware) for tool in tools]
         elif args.command == 'show':
-            output = _show(args.tool_id, args.model, spec_dir=args.spec_dir)
+            output = _show(args.tool_id, args.model, spec_dir=args.spec_dir,
+                           stage=args.stage, hardware=args.hardware)
         elif args.command == 'coverage':
             output = stage_coverage(args.model, args.hardware, spec_dir=args.spec_dir)
             if args.markdown:

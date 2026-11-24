@@ -31,7 +31,7 @@ analysis/baseline 走声明的诊断或作者生产器；它们不一定有 `pro
 | `host.launch` | eager/graph 对照、kernel 间隙、重编译 | `launch.cuda_graph` 需要 `use_cuda_graph`；`compile.inductor` 需要已实现配方；固定 prompt 和 cached linear 需要对应选项 | 不为原生 buffer/fvk 路径臆造 torch.compile 能力；记录冷编译成本与 break-even 调用次数，遵守配方的 framework、sampler、hardware 约束 |
 | `host.output` | D2H、同步、动作解码和端到端延迟 | `profile.stage_intervals`；作者生产器的同域输出 | GPU-only 区间不能代替完整请求，未覆盖的 host 时间应明确标出 |
 | `kernel.gemm` | 少数热点的形状、dtype、ncu 指标 | `kernel.forgekernel`、`kernel.kernelagent`；已实现 linear selector；`compile.inductor`/`compile.aitune` 的可编译区域 | 外部工具为 `needs_setup`，局部 kernel 通过后仍需算子 gate 与源码快照 campaign；first-valid 不等于最快 |
-| `kernel.attention` | 每个 attention site 的 mask、head_dim、Q/KV heads、GQA、dtype、实际 backend | `attention.sdpa_backend`、`attention.flash_attention` 明确为 port；也可对真实 capture 使用 kernel 工具 | 两个 attention port 都是 `needs_implementation`。已有 FA2 调用或 PyTorch 支持某 API，不能证明当前产品已有可选择、已验收的替换路径；未知 mask/head 事实不可视为兼容 |
+| `kernel.attention` | 每个调用点的 mask、head_dim、Q/KV heads、GQA、dtype 和实际 backend | `attention.sdpa_backend`、`attention.flash_attention`、`attention.flex_attention`、`attention.sageattention`、`attention.turboattention` | 查具体调用点的适用性。五项均需完成产品接入和实测验收 |
 | `kernel.norm_elementwise` | norm/RoPE/QK-norm/KV-write 的 launch 与舍入 | 声明了 `fused_rope_qknorm_kvwrite` 的 config selector；kernel 工具 | 对应扩展未构建为 `needs_setup`；新增融合必须先过独立 oracle、同 dtype baseline 与 capture/replay gate |
 | `kernel.conv` | VAE/patch embedding 热点、布局与 kernel 计数 | ncu、kernel 工具；可包装 Torch module 区域可考虑 AITune | 原生 kernel 不自动成为 AITune 可包装 module；没有调用 capture 或产品接线时保持不可用 |
 | `precision.weights` | 权重字节、设备能力、精度余量 | `quant.int8_pi05` 按 `int8_mode` 能力、Torch/Euler/SM80 筛选；numerical profile 按选项筛选 | FP8 需要 SM≥89，NVFP4 需要 SM120 路径，且统一 backend 的量化禁用约束仍有效；SM80 不显示为可用。数值对齐 profile 不代表提速 |
@@ -41,6 +41,20 @@ analysis/baseline 走声明的诊断或作者生产器；它们不一定有 `pro
 元数据；缺失和显式 unknown 都不能满足正向能力要求。
 `tools.unsupported` 优先拒绝路由。选项存在只表示产品暴露该选项，具体值、
 互斥关系和模型质量仍由配置验证和 campaign gate 检查。
+
+```bash
+python -m flash_rt.vla.autotune.tools show attention.sageattention \
+  --model dm05 --stage vision.encode --hardware cuda_sm80
+```
+
+`eligible_sites` 和 `ineligible_sites` 给出具体调用点、适配成本和拒绝原因。
+mask、形状、布局、dtype 和 GQA 必须在同一个调用点同时满足要求。
+
+| 方法 | 路由条件和下一项实测 |
+|---|---|
+| FlexAttention | 支持任意 mask 与逻辑 GQA。检查换输入后的 BlockMask、固定形状重复调用、编译开销和 CUDA Graph 回放 |
+| SageAttention | A800 的固定 INT8-QK／FP16-PV 接口只接无 mask 或因果 mask。当前配方允许 HD64、128，以及保持原始 scale 的 HD72→128。实测包含 padding、裁剪和 dtype 转换 |
+| TurboAttention | 当前原型只覆盖 BF16、无 mask、Q/KV 头数相等的空间 attention。计入 FlashQ 和 SAS 全部成本。算子端到端收益不足 10% 时结束该方向 |
 
 `compile.inductor` 统一应用模型声明的 `tools.inductor`：目标 backend、
 options、remove_options、明确的 stages 和 framework/sampler/hardware 约束。

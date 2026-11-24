@@ -55,4 +55,4 @@ python examples/vla_autotune/next_round.py \
 - **exact 和 approximate 分开**：近似方法除了要过门槛，还要扩大输入集确认。
 - **局部和端到端分开**：kernel 局部变快、跳过了几次 expert、剪掉了多少 token，都只是机制上的指标。只有模型级 campaign 的结果算数。
 - **失败也是结果**：OOM、编译失败、不支持、质量不过，都要记成 reject 或 note，写清原因和适用范围，避免下次重复尝试同一组已知不兼容的组合。
-- **实时记录 token**。每个会话在开始前开启一个工作段，切换模型、阶段、游或方法前先结束。用 `token_usage segment start/end` 写模型、游、工具和项目项号。阶段仅用 `onboarding`、`migration`、`optimization`、`debugging`、`measurement`、`framework`；共有框架记 `shared`。保留未归属和缺失 usage，并按决策日志统计实际 actor。
+- **实时记录 token**。每个会话在开始前开启一个工作段，切换模型、阶段、游或方法前先结束。分别运行 `python -m flash_rt.vla.autotune.token_usage start` 和 `end`。开启时写模型、游、工具和项目项号。阶段仅用 `onboarding`、`migration`、`optimization`、`debugging`、`measurement`、`framework`，共有框架记 `shared`。保留未归属和缺失 usage，并按决策日志统计实际 actor。

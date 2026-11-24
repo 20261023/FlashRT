@@ -146,11 +146,19 @@ def stage_coverage(model, hardware='auto', *, spec_dir=None) -> list:
                 continue
             matches, reason = tool.match_model(model, spec_dir=spec_dir)
             status = tool.status_for(model, spec_dir=spec_dir)
+            sites = tool.attention_sites(model, spec_dir=spec_dir, stage=stage_id, hardware=hardware)
             if not matches:
                 status = 'blocked'
             elif stage_id not in tool.stages_for(model, spec_dir=spec_dir):
-                status, reason = ('blocked', 'ModelSpec recipe does not target this stage; stages: '
-                                  + ', '.join(tool.stages_for(model, spec_dir=spec_dir)))
+                status = 'blocked'
+                if tool.attention_requirements:
+                    reason = 'No eligible attention site at this stage'
+                    if sites['ineligible_sites']:
+                        reason += ': ' + '; '.join(f'{site["id"]}: {", ".join(site["reasons"])}'
+                                                  for site in sites['ineligible_sites'])
+                else:
+                    reason = ('ModelSpec recipe does not target this stage; stages: '
+                              + ', '.join(tool.stages_for(model, spec_dir=spec_dir)))
             elif hardware != 'auto' and hardware not in spec['capabilities']['hardware']:
                 status, reason = 'blocked', f'ModelSpec has no {hardware} product path'
             elif not tool.available_on(hardware, model, spec_dir=spec_dir):
@@ -160,7 +168,8 @@ def stage_coverage(model, hardware='auto', *, spec_dir=None) -> list:
             entries.append({'tool_id': tool.tool_id, 'lane': tool.lane, 'status': status,
                             'reason': reason, 'matches_model': matches,
                             'proposes_candidates': tool.propose is not None,
-                            'frameworks': list(tool.frameworks), 'samplers': list(tool.samplers)})
+                            'frameworks': list(tool.frameworks), 'samplers': list(tool.samplers),
+                            **(sites if tool.attention_requirements else {})})
         rows.append({'stage': stage_id, 'title': info.title, 'declared': stage_id in declared,
                      'tools': entries,
                      'note': '' if stage_id in declared else

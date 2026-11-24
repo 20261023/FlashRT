@@ -33,7 +33,7 @@ SPEC_KEYS = frozenset({
 })
 SPEC_OPTIONAL_KEYS = frozenset({
     'model_predicate', 'status_rules', 'frameworks', 'samplers', 'min_capability',
-    'hardware_only', 'aliases', 'requirements_path',
+    'hardware_only', 'aliases', 'requirements_path', 'attention_requirements', 'implementation',
 })
 UPSTREAM_KEYS = frozenset({'repo', 'commit', 'license', 'notice'})
 FLOAT_DTYPES = ('bfloat16', 'float16', 'float32')

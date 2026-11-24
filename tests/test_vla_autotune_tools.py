@@ -450,6 +450,26 @@ def test_int8_selector_refuses_incompatible_sampler_and_framework():
         tools.propose('quant.int8_pi05', jax)
 
 
+def test_attention_routes_are_checked_per_call_site_on_a800():
+    def sites(tool, model, **kwargs):
+        spec = tools.get_tool(tool)
+        assert spec.lane == 'port' and spec.status == 'needs_implementation'
+        assert spec.propose is None
+        return spec.attention_sites(model, hardware='cuda_sm80', **kwargs)
+
+    sage = sites('attention.sage', 'dm05')
+    vision, = sage['eligible_sites']
+    assert vision['id'] == 'vision'
+    assert any(row['kind'] == 'head_dim_padding' and row['from'] == 72 and row['to'] == 128
+               for row in vision['adaptations'])
+    assert {row['id'] for row in sage['ineligible_sites']} == {'prefix', 'action'}
+    assert not sites('attention.sage', 'dm05', stage='prefix.prefill')['eligible_sites']
+    prefix, = sites('attention.flex', 'dm05', stage='prefix.prefill')['eligible_sites']
+    assert prefix['id'] == 'prefix' and prefix['gqa'] and prefix['mask_kind'] == 'arbitrary'
+    spatial, = sites('attention.turbo', 'hyvla')['eligible_sites']
+    assert spatial['id'] == 'vision_spatial'
+
+
 def test_attention_ports_remain_unimplemented_and_coverage_explains_hardware():
     for tool_id in ('attention.sdpa_backend', 'attention.flash_attention'):
         tool = tools.get_tool(tool_id)

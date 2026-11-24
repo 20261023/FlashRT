@@ -19,7 +19,8 @@ from flash_rt.vla.registry import validate_config
 from ..schema import Candidate, decode_backend, encode_backend
 from ..search import enumerate_candidates
 from ..stages import STAGE_IDS
-from .spec import ToolSpec
+from .attention import FLEX_SOURCE, SAGE_COMMIT, SAGE_SOURCE, TURBO_SOURCE
+from .spec import ToolSpec, Upstream
 
 
 BUILTIN = 'flash_rt.vla.autotune.tools.builtin'
@@ -401,6 +402,14 @@ _ATTENTION = {'all': [{'path': 'attention', 'exists': True},
                       {'not': {'path': 'attention', 'equals': []}}]}
 
 
+def _attention_requirements(mask_kinds, head_dims, source, *, gqa=True, **extra):
+    return {'mask_kinds': list(mask_kinds), 'head_dims': list(head_dims),
+            'precisions': ['fp16', 'bf16'], 'gqa': gqa, 'sources': [source], **extra}
+
+
+_ATTENTION_STAGES = ('kernel.attention', 'vision.encode', 'prefix.prefill', 'denoise.velocity')
+
+
 def builtin_tools() -> tuple:
     """Fresh ToolSpec objects for every in-repo tool, in registry order."""
     config_skills = (SKILLS['config'],)
@@ -506,22 +515,102 @@ def builtin_tools() -> tuple:
                       '(pi05_rtx.py:2413,2663) are unreachable from the single-observation '
                       'VLABackend.infer (backend.py:141) and the worker API measures one request.'),
         _tool(tool_id='attention.sdpa_backend', title='Explicit SDPA backend selection',
-              lane='port', stages=('kernel.attention', 'vision.encode', 'prefix.prefill', 'denoise.velocity'),
+              lane='port', stages=_ATTENTION_STAGES,
               model_predicate={'all': [_ATTENTION, {'any': [_feature('functional_torch'),
-                                                           _feature('torch_modules')]}]},
+                                                            _feature('torch_modules')]}]},
               frameworks=('torch',), exactness='approximate', status='needs_implementation',
+              attention_requirements=_attention_requirements(
+                  ('none', 'causal', 'arbitrary'), (64, 72, 128, 256),
+                  'https://docs.pytorch.org/docs/2.11/generated/torch.nn.functional.scaled_dot_product_attention.html'),
               skills=(SKILLS['map'], SKILLS['port'], SKILLS['gate']),
               reason='No validated BackendConfig selector exists. First identify the active attention '
                      'entry, mask, dtype, head_dim and GQA contract; implement selection in the product '
                      'path and validate eager, capture/replay and changed-input behavior before a campaign.'),
         _tool(tool_id='attention.flash_attention', title='FlashAttention operator integration',
-              lane='port', stages=('kernel.attention', 'vision.encode', 'prefix.prefill', 'denoise.velocity'),
+              lane='port', stages=_ATTENTION_STAGES,
               model_predicate=_ATTENTION, min_capability=(8, 0), frameworks=('torch',),
               exactness='approximate', status='needs_implementation',
+              attention_requirements=_attention_requirements(
+                  ('none', 'causal'), (64, 72, 96, 128, 256),
+                  'flash_rt/hardware/rtx/attn_backend.py:RtxFlashAttnBackend'),
               skills=(SKILLS['map'], SKILLS['port'], SKILLS['gate']),
               reason='Existing FA2 calls do not establish a selectable replacement for every attention '
                      'entry. Check device, BF16/FP16, head_dim, Q/KV head divisibility, mask and layout '
                      'against the exact call site. No unverified attention port is ready.'),
+        _tool(tool_id='attention.flex_attention', aliases=('attention.flex',),
+              title='FlexAttention with exact arbitrary masks and logical GQA',
+              lane='port', stages=_ATTENTION_STAGES, model_predicate=_ATTENTION,
+              frameworks=('torch',), min_capability=(8, 0), exactness='approximate',
+              status='needs_implementation',
+              attention_requirements=_attention_requirements(
+                  ('none', 'causal', 'arbitrary'), (64, 72, 128, 256), FLEX_SOURCE),
+              implementation={'kind': 'pytorch_prototype_api', 'torch_version': '2.11.0',
+                              'entrypoint': 'torch.nn.attention.flex_attention:flex_attention',
+                              'mask_api': 'create_block_mask', 'gqa_argument': 'enable_gqa',
+                              'runtime_verified': False, 'sources': [FLEX_SOURCE]},
+              skills=(SKILLS['map'], SKILLS['port'], SKILLS['gate']),
+              reason='PyTorch 2.11 FlexAttention can express arbitrary mask predicates and GQA, but '
+                     'there is no accepted product selector. Preserve exact segment/padding rules, '
+                     'fully masked rows and mask refresh for changed inputs; price BlockMask setup, '
+                     'cold compilation and layout adapters. No model port is ready. New source '
+                     'campaigns require plan v3 and ready baseline/candidate/bookend snapshots.'),
+        _tool(tool_id='attention.sageattention', aliases=('attention.sage',),
+              title='Pinned SageAttention SM80 INT8-QK / FP16-PV port',
+              lane='port', stages=_ATTENTION_STAGES, model_predicate=_ATTENTION,
+              frameworks=('torch',), hardware_only=('cuda_sm80',), exactness='approximate',
+              status='needs_implementation',
+              upstream=Upstream('https://github.com/thu-ml/SageAttention', SAGE_COMMIT, 'Apache-2.0'),
+              attention_requirements=_attention_requirements(
+                  ('none', 'causal'), (64, 128), f'{SAGE_SOURCE}/sageattention/core.py',
+                  causal_equal_lengths=True,
+                  padding={'72': {
+                      'to': 128, 'scale': 'original_head_dim**-0.5 (72**-0.5), never 128**-0.5',
+                      'cost': 'Pad all Q/K/V by 56 lanes (128/72=1.7778 width); account for padding, '
+                              'K mean, INT8 quantization, V FP16 cast and cropped contiguous output.',
+                      'sources': [f'{SAGE_SOURCE}/sageattention/core.py#L559-L576',
+                                  f'{SAGE_SOURCE}/csrc/qattn/qk_int_sv_f16_cuda_sm80.cu'],
+                  }}),
+              implementation={
+                  'kind': 'pinned_external_api', 'package': 'sageattention', 'version': '2.2.0',
+                  'commit': SAGE_COMMIT, 'entrypoint': 'sageattention:sageattn_qk_int8_pv_fp16_cuda',
+                  'parameters': {'tensor_layout': 'HND', 'qk_quant_gran': 'per_thread',
+                                 'pv_accum_dtype': 'fp32', 'smooth_k': True, 'smooth_v': False},
+                  'installed_pin_verified': False, 'runtime_verified': False,
+                  'expected_file_sha256': {
+                      'sageattention/core.py': 'eb5ca9e8047583cc3a139f788f4bf48857aa1134d47a36ad5021b153690beaf4',
+                      'sageattention/sm80_compile.py': 'b307d836a8580f3731cfd8a7774f70faec984c869e5cac1af9086d43fcdff29b'},
+                  'installation_verification': 'Verify the selected environment version, source pin, '
+                                               'package Python hashes and SM80 extension build receipt; '
+                                               'a source checkout or import alone does not verify its binary.',
+                  'sources': [f'{SAGE_SOURCE}/sageattention/core.py',
+                              f'{SAGE_SOURCE}/csrc/qattn/qk_int_sv_f16_cuda_sm80.cu']},
+              skills=(SKILLS['map'], SKILLS['port'], SKILLS['gate']),
+              reason='Selected pinned SM80 CUDA API accepts no arbitrary mask; a **kwargs mask would '
+                     'be ignored. Only none/causal sites with HD64/128 or explicit HD72→128 padding '
+                     'are eligible. Installed pin and binary/capture compatibility remain unverified; '
+                     'the source uses default-stream launches, so test actual side-stream graph capture '
+                     'and replay. Product integration and plan-v3 source campaign remain required.'),
+        _tool(tool_id='attention.turboattention', aliases=('attention.turbo',),
+              title='TurboAttention appendix-derived unmasked spatial prototype',
+              lane='port', stages=_ATTENTION_STAGES, model_predicate=_ATTENTION,
+              frameworks=('torch',), min_capability=(8, 0), exactness='approximate',
+              status='needs_implementation',
+              attention_requirements=_attention_requirements(
+                  ('none',), (72, 128), TURBO_SOURCE, gqa=False,
+                  precisions=['bf16'], site_kinds=['spatial'], phases=['prefill', 'decode']),
+              implementation={'kind': 'independent_appendix_prototype', 'paper': TURBO_SOURCE,
+                              'prototype_phases': ['prefill'], 'unimplemented_phases': ['decode'],
+                              'scope': 'Unmasked equal-head BF16 spatial attention, HD72/128. '
+                                       'INT8 FlashQ and SAS ablations; no progressive low-bit KV cache '
+                                       'or author implementation equivalence.',
+                              'author_code_available': False, 'runtime_verified': False,
+                              'sources': [TURBO_SOURCE]},
+              skills=(SKILLS['map'], SKILLS['port'], SKILLS['gate']),
+              reason='An independent Appendix A/B prefill prototype exists in an isolated experiment, '
+                     'not an accepted backend. Only unmasked spatial equal-head BF16 HD72/128 sites '
+                     'are in scope; decode requires additional implementation. Causal temporal, '
+                     'arbitrary-mask prefix, GQA and denoising sites are excluded. No ready claim; '
+                     'operator gates and a new plan-v3 source campaign are required.'),
         _tool(tool_id='profile.stage_intervals', title='Stage interval profiling + attribution',
               lane='analysis', stages=('host.input', 'vision.encode', 'vision.project', 'prefix.prefill',
                                        'denoise.velocity', 'denoise.routing', 'host.output'),

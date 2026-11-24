@@ -226,6 +226,8 @@ class ToolSpec:
     status_rules: tuple = ()
     aliases: tuple = ()
     requirements_path: str | None = None
+    attention_requirements: Mapping[str, Any] = field(default_factory=dict)
+    implementation: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if not isinstance(self.tool_id, str) or not _ID.fullmatch(self.tool_id):
@@ -245,6 +247,14 @@ class ToolSpec:
         validate_predicate(self.model_predicate)
         object.__setattr__(self, 'model_predicate',
                            MappingProxyType(_json_data(self.model_predicate, 'model_predicate')))
+        from .attention import validate_requirements
+        validate_requirements(self.attention_requirements)
+        object.__setattr__(self, 'attention_requirements',
+                           MappingProxyType(_json_data(self.attention_requirements, 'attention_requirements')))
+        if not isinstance(self.implementation, Mapping):
+            raise ValueError(f'{self.tool_id}: implementation must be a mapping')
+        object.__setattr__(self, 'implementation',
+                           MappingProxyType(_json_data(self.implementation, 'implementation')))
         for name in ('frameworks', 'samplers'):
             values = tuple(getattr(self, name))
             if len(set(values)) != len(values) or any(not isinstance(value, str) or not value for value in values):
@@ -318,16 +328,42 @@ class ToolSpec:
         return self.stages[0]
 
     def stages_for(self, model=None, *, spec_dir=None) -> tuple:
+        if self.attention_requirements and model is not None:
+            sites = self.attention_sites(model, spec_dir=spec_dir)['eligible_sites']
+            covered = {site['stage'] for site in sites}
+            if sites:
+                covered.add('kernel.attention')
+            return tuple(stage for stage in self.stages if stage in covered)
         stages = tuple(self._requirements(model, spec_dir=spec_dir).get('stages', self.stages))
         if not stages or len(set(stages)) != len(stages) or not set(stages) <= set(self.stages):
             raise ValueError(f'{self.tool_id}: ModelSpec recipe stages must be distinct supported stage ids')
         return stages
 
     def primary_stage_for(self, model=None, *, spec_dir=None) -> str:
-        return self.stages_for(model, spec_dir=spec_dir)[0]
+        stages = self.stages_for(model, spec_dir=spec_dir)
+        if not stages:
+            raise ValueError(f'{self.tool_id}: no eligible stage for model {model!r}')
+        return stages[0]
 
-    def match_model(self, model, *, spec_dir=None) -> tuple:
+    def attention_sites(self, model, *, spec_dir=None, stage=None, hardware=None) -> dict:
+        """Per-site facts and rejection reasons; discovery never imports an attention backend."""
+        if not self.attention_requirements:
+            return {'eligible_sites': [], 'ineligible_sites': []}
         spec = get_spec(model, spec_dir=spec_dir)
+        _, reason = self._match_declared_model(spec)
+        if not reason and hardware is not None:
+            if hardware != 'auto' and hardware not in spec['capabilities']['hardware']:
+                reason = f'ModelSpec has no {hardware} product path'
+            else:
+                reason = self.hardware_reason(hardware, model, spec_dir=spec_dir)
+        return self._attention_sites(spec, stage=stage, blocked_reason=reason)
+
+    def _attention_sites(self, spec, *, stage=None, blocked_reason=''):
+        from .attention import match_sites
+        return match_sites(spec, self.attention_requirements, stages=self.stages,
+                           stage=stage, blocked_reason=blocked_reason)
+
+    def _match_declared_model(self, spec) -> tuple:
         unsupported = set(spec.get('tools', {}).get('unsupported', []))
         if {self.tool_id, *self.aliases} & unsupported:
             return False, 'explicitly unsupported by ModelSpec tools.unsupported'
@@ -338,6 +374,19 @@ class ToolSpec:
         if self.samplers and not set(self.samplers) & set(spec['capabilities']['samplers']):
             return False, f'requires samplers in {list(self.samplers)}'
         return match_predicate(self.model_predicate, spec)
+
+    def match_model(self, model, *, spec_dir=None) -> tuple:
+        spec = get_spec(model, spec_dir=spec_dir)
+        matches, reason = self._match_declared_model(spec)
+        if not matches:
+            return matches, reason
+        if self.attention_requirements:
+            sites = self._attention_sites(spec)
+            if not sites['eligible_sites']:
+                failures = '; '.join(f'{site.get("id")}: {", ".join(site["reasons"])}'
+                                     for site in sites['ineligible_sites'])
+                return False, 'No eligible attention site' + (f': {failures}' if failures else '')
+        return True, ''
 
     def applies_to(self, model, *, spec_dir=None) -> bool:
         return self.match_model(model, spec_dir=spec_dir)[0]
@@ -400,8 +449,8 @@ class ToolSpec:
             return f'requires CUDA capability >= {self.min_capability}; got {hardware}'
         return ''
 
-    def to_dict(self, *, model=None, spec_dir=None) -> dict:
-        return {
+    def to_dict(self, *, model=None, spec_dir=None, stage=None, hardware=None) -> dict:
+        record = {
             'tool_id': self.tool_id, 'title': self.title, 'lane': self.lane,
             'stages': list(self.stages_for(model, spec_dir=spec_dir)),
             'models': list(self.models), 'exactness': self.exactness,
@@ -419,8 +468,24 @@ class ToolSpec:
             'status_rules': _json_data(self.status_rules, 'status_rules'),
             'aliases': list(self.aliases),
             'requirements_path': self.requirements_path,
+            'attention_requirements': _json_data(self.attention_requirements, 'attention_requirements'),
+            'implementation': _json_data(self.implementation, 'implementation'),
             **({'hardware_only': list(self.hardware_only)} if self.hardware_only else {}),
         }
+        if self.attention_requirements:
+            eligible, ineligible = [], []
+            for selected in (list_models(spec_dir=spec_dir) if model is None else (model,)):
+                sites = self.attention_sites(selected, spec_dir=spec_dir, stage=stage, hardware=hardware)
+                eligible.extend(sites['eligible_sites'])
+                ineligible.extend(sites['ineligible_sites'])
+            if model is not None and not eligible and record['status'] != 'blocked':
+                reasons = '; '.join(f'{site["id"]}: {", ".join(site["reasons"])}' for site in ineligible)
+                record.update(status='blocked', reason='No eligible attention site for this selection'
+                              + (f': {reasons}' if reasons else ''))
+            record.update(eligible_sites=eligible, ineligible_sites=ineligible,
+                          source_campaign={'plan_schema_version': 3, 'snapshot_store_required': True,
+                                           'operator_gate_required': True, 'runtime_verified': False})
+        return record
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), sort_keys=True, allow_nan=False)
@@ -445,4 +510,6 @@ def spec_from_external(spec, adapter) -> ToolSpec:
         min_capability=spec.get('min_capability'),
         hardware_only=tuple(spec.get('hardware_only', ())),
         aliases=tuple(spec.get('aliases', ())),
-        requirements_path=spec.get('requirements_path'))
+        requirements_path=spec.get('requirements_path'),
+        attention_requirements=spec.get('attention_requirements', {}),
+        implementation=spec.get('implementation', {}))
