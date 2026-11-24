@@ -221,6 +221,6 @@ python -m flash_rt.vla.autotune.decisions summary --log $AT/decisions.jsonl --ma
 - 禁止在 live checkout 轮流改源码、复用可变目录或临时拷贝 `.py`/`.so` 来代替独立源码快照。
 - 禁止清除/伪造 `tool`、`source_ref`、`patch_ref`，按 `config.*` 前缀信任未知工具，或把 analysis lane 整体豁免；legacy 兼容不是新源码候选的入口。
 - 禁止漏掉 baseline 快照、降级 plan/result schema、伪造 `source_identity` 或用 `PYTHONPATH` 绕过 worker 的 import 身份检查。
-- 不在 skill 里记录 winner、最佳 ε 或 kernel 配置。这些数字进决策日志和实验记录（`docs/vla_autotune_experiments.md`）；skill 只写流程。
+- winner、最佳 ε 和 kernel 配置写进决策账本和 [VLA 实验报告](../../../docs/reports/2026-11-24-vla-autotune-final.zh-CN.md)。
 - 不擅自启动 ForgeKernel 或 KernelAgent。ForgeKernel 会在它自己的沙箱里用 `claude -p --dangerously-skip-permissions` 运行 agent，必须先经过 H3。
 - 不 push、不改默认配置，除非人明确要求。

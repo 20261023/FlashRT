@@ -94,6 +94,7 @@ Git 水位。`validate_hyvla.py`、作者计时脚本、tradeoff 契约与
 | `tests/test_fastwam_graph_driver_example.py` | 删除 | 只测旧 driver 的 refresh pairs；库内 validator 的刷新验证及测试保留。 |
 | `examples/vla_autotune/fast_profile/profile_fastwam.py` | 保留 | A=C=`73b381bc`；`vla-stage-profile` 仍明确引用，提供独立 CPU/CUDA trace、Linear ledger 和 kernel busy union。通用 stage intervals 不能替代其 host/launch 诊断。 |
 | `tests/test_fastwam_profile_example.py` | 保留 | 仍验证上述诊断入口、缺失 CUDA 事件及结果标记。 |
+| Hy `official_local_fp32`、`precision.hy_numerical_profile` | 保留已有路径 | 选项仍在 ModelSpec、SM80/Thor frontend、作者差异验证 CLI 和数值门槛指引中使用。默认性能对照使用 `semantic_bf16`。该能力仍可显式调用，因此保留现行配置和回归测试。 |
 | `flash_rt/vla/autotune/{profiling,stages,dataflow}.py` | 保留，交 F 维护 | worker、stage 归因和 `profile.*` 注册项仍使用；A 未改这些 harness 文件。 |
 | `flash_rt/vla/autotune/tools/**` | 保留，交工具负责人维护 | builtin 配置、外部适配器、capture、patch/artifact 身份均在注册链上；`needs_setup`/`blocked` 表示能力边界，不能据此判为无用。 |
 | `examples/vla_autotune/fastwam-source/**` | 保留 | pin=`7faa71108368fbb3b6885649f112af607427a2d4`，是现行加载/作者基线契约；sidecar 明说无独立内容 hash，未把它升级成完整内容证明。 |
@@ -122,7 +123,7 @@ NOTICE 和 VENDOR 表一致性检查，新增水位均为 `3e1c77aa`。
 | 资源 | 处理与边界 |
 |---|---|
 | `docs/reports/**` | A 检查点全部保留；J 后仅撤下下表八份重复 Markdown。11-14 延迟 JSON/CSV、全部旧 token JSON/CSV、专门架构与移植来源说明继续保留。 |
-| `docs/vla_autotune_experiments.md` | J 将完整历史正文迁入整合报告附录；原路径保留短重定向，不再维护第二份正文。 |
+| `docs/vla_autotune_experiments.md` | J 将完整历史正文迁入整合报告附录。迁移最后一处主 skill 引用后删除重定向，原文可由指定基线提交取回。 |
 | `docs/vla_autotune_token_segments.jsonl` | 只追加本阶段 start/end，不重写其他会话段；计数由 J/H 汇总。 |
 | `docs/vla_autotune_decisions.jsonl` | 通过 `decisions add --actor agent` 追加 Codex 决策，不改已有记录。 |
 | `flash_rt/vla/autotune/snapshots.py` 及 campaign snapshot 测试 | 保留；是 plan v3、native identity、harness pin 的现行实现，A 未编辑。 |
@@ -207,7 +208,7 @@ G／SmolVLA 的 GPU 作者／项目双门槛、重复计时和优化结果尚不
 | `reports/2026-11-23-hy-config-loop.zh-CN.md` | 删除重复 Markdown | 八个配置、280 次正式请求、七输入双侧质量及 drift 并入 §5.4；不追认为本轮 schema 3。 |
 | `reports/2026-11-23-hy-sm80-fusion.zh-CN.md` | 删除重复 Markdown | 三点延迟、全部诊断值、项目／作者误差及 4.43% drift 并入 §5.4；源码身份限制另列。 |
 | `reports/2026-11-23-pi05-sm80-int8.zh-CN.md` | 删除重复 Markdown | 两轮共八点的延迟、P95、质量、最坏输入、86／176 GEMM 覆盖和未定位首层的限制并入 §5.2，两个失败版本都保留。 |
-| `vla_autotune_experiments.md` | 保留兼容重定向 | 原完整 1524 行实验记录除相对链接适配和标题外迁入整合报告可展开附录；不再同时维护两个版本。 |
+| `vla_autotune_experiments.md` | 撤下入口 | 原完整 1524 行实验记录迁入整合报告附录，调整了相对链接和标题。 |
 
 被删除 Markdown 的完整原文均可从公开固定提交
 [`199376281801427abccbb307056b27e74eab1429`](https://github.com/20261023/FlashRT/tree/199376281801427abccbb307056b27e74eab1429/docs/reports)

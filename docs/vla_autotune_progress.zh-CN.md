@@ -10,11 +10,11 @@
 | B | CPU 已验，GPU 实验排队 | `4ec71d02` 强制快照；`c8d868cd` 修复仓库合法内部 skill 链接导致快照拒绝的问题；历史对照见下表 |
 | C | 接口已提交，GPU 回归中 | 五份模型声明、特征工具、原作者适配器和 profile 已接通；五模型仍需各自实测并复算 |
 | D | CLI 和两类头的 CPU 验收已通过 | `9888bf51` 包含两类主要头、三种骨架、校验和指南；生产接入证据跟踪 G |
-| E | 环境和算子实验进行中 | ForgeKernel 五处 SM80 补丁和 KernelAgent venv 已落地；注意力实验待实测 |
+| E | 工具路由和离线环境已验，等待算子实测 | ForgeKernel 五处 SM80 补丁和 KernelAgent venv 已落地。`dd6cad89` 按调用点路由三种 attention。AITune 的 CUDA 12.8 环境通过 `pip check` 和 CPU 导入 |
 | F | 实验进行中 | 七输入 π0 作者／项目双门槛、FastWAM 空缓存、π0.5 中间量采集已提交 |
-| G | 首次 GPU campaign 已提交 | SmolVLA 通过 `onboard check`；真实 LIBERO 图像/state/task，固定作者提交、权重和噪声。验收和后续调优未完成 |
-| H | 进行中 | 六阶段账本、真实 usage、四张表、历史增量和低于 5% 的未归属占比 |
-| I | 待验收 | 流程写回 skill，校验许可和 vendor 副本 |
+| G | 首次 GPU campaign 已提交 | 真实 LIBERO 图像、state、任务和固定噪声。首轮配置预检曾失败，`aad3312a` 已修复作者和项目前端的配置加载，真实配置 CPU 测试均通过 |
+| H | 本轮已更新，结项待刷新 | 05:17 UTC 截点的已知用量未归属占 1.50%。历史窗口和旧累计基线归入数据包，保存原始摘要 |
+| I | 流程代码与 CPU 验证已提交 | `4224f1c6` 固化按游选优、快照、预算和停止规则；新工具适用条件已写进路由文档 |
 | J | 待验收 | 模型结果、全过程成本、决策归属、干预次数与新模型验收报告 |
 | K | 待验收 | 每个提交的 CPU 检查、收集问题清单、最终复核与 H4 交接 |
 
@@ -34,6 +34,8 @@
 | 359953、359958 | FastWAM 空编译缓存与 π0.5 首个偏离层 | 诊断作业，等待结果 |
 | 359987、359991 | π0 同卡原作者 E10／项目 E10/E2，SmolVLA 新接入验收 | 已提交，待 ingest 和动作复算 |
 | 360006、360007、360012 | DM0.5、Hy、π0.5 当前配置回归 | 三份控制器提交回执均为 `acknowledged`，调度器在 04:37 UTC 显示三项均为 `PENDING (Priority)` |
+| 360054 | FastWAM 八输入 E20 → E16 → E18 → E20，加原作者 E20 | 控制器已提交，`sacct` 回读 `PENDING`。该作业使用稳态缓存；空缓存成本由 359953 测量 |
+| SmolVLA 第二轮 | 使用 `aad3312a` 的 ready snapshot `f98c0ba181a2a96063ff`，schema 3，参考 → CUDA Graph → 复测 | 已通过来源与计划预检。首轮 359991 自然结束后提交，届时取得新作业号 |
 
 **BLOCKED 项：**当前 Git 身份没有 `origin`（上游仓库）写权限：需要仓库维护者授予 `autotune/complete` 写入权限。KernelAgent／ForgeKernel 缺可用于生成的已授权 LLM 凭据；需要提供工具运行环境可使用的 provider。其他本地开发和 GPU 实验继续。A800 上 FP8/NVFP4 不可用；`dev/vla-autotune-flashrt` 的 H4 合入与默认配置变更由人决定。
 
@@ -45,7 +47,19 @@
 | 2026-11-24 03:57 UTC 成本截点 | A 清理、B 准入、C 模型声明、D 接口及 E/G 准备 | 分段 CLI 和证据测试通过，未归属占已知处理量 0.74%；23 条 usage 缺失单列 | 本轮累计总处理 190,213,718；历史冻结总处理 1,741,698,368；中间空档按任务估算归属 154,124,813。不是三份可以重复累计的快照 |
 | 2026-11-24 冻结轮 | 独立暂存树逐提交运行 CPU 套件；优先切出可实测的模型接入与双门槛版本 | `17d6bf6d` 647 passed；`4ec71d02` 670 passed；`9888bf51` 786 passed；`03d24c2d` 800 passed、6 skipped；外部安装资产 `d16ff819` 752 passed、6 skipped。vendor 核实 91 文件／5 上游 | 本轮增量待下次原生 usage 截点结账 |
 | 2026-11-24 04:37 UTC 恢复核查 | 已将阶段代码推送至 `20261023/FlashRT` 的 `autotune/complete` 分支，`git ls-remote` 回读为 `d16ff819df200b3220cd68c883478a7eff10e39d` | 12 个关联作业均待分配，其中 359829 等待前置构建。历史整合逐项复查通过，29 个历史延迟点含 28 个实测和 1 个 NR | 延用 03:57 UTC 已结账数字，本段计入 K |
+| 2026-11-24 05:17 UTC 进度与用量 | SmolVLA 配置分派修正，补齐 FastWAM 提交，历史归档，阶段选择器和 attention 路由 | `aad3312a` 802 passed、8 skipped，另有 2 条真实配置 CPU 测试通过。`1b1395ef` 752 passed，`4224f1c6` 785 passed，`dd6cad89` 889 passed。13 项关联 Slurm 作业等待，12 项优先级、1 项依赖 | 本轮 380,783,504 总处理，22,672,528 非缓存。未归属 5,710,916（1.50%），57 条缺失。另计旧累计 1,741,698,368 和估算归属空档 154,124,813 |
 
-**K 当前采集检查：**在只有 NumPy、pytest 的 CPU 环境执行全仓 `pytest --collect-only -q tests` 得到 3,361 个已收集测试、10 个收集错误。π0.5 图模式和 ProbeFlow frontend 缺 `ml_dtypes`；π0.5 FP4 decoder/fusion 缺 `flash_rt.flash_rt_fp4`；π0 ProbeFlow 缺 `libcudart.so`。其他目录还缺 Pillow、pandas 或原生 CUDA 扩展。最终收口将重新执行。
+调度器在本轮预计 11 月 25 日 15:43 开始分配 A800，按调度器所在时区记录。收到自然终态后取回每项原始动作和诊断输出，逐一复算并更新 [整合报告](reports/2026-11-24-vla-autotune-final.zh-CN.md)。
+
+**K 全仓收集检查**在同一 CPU 环境（PyTorch `2.11.0+cpu`、NumPy `2.5.4`、pytest `9.2.0`）分别对精确提交执行 `python -m pytest --collect-only -q tests --tb=short`。指定起点 `1993762` 收集 3,995 项，`00685ce6` 收集 3,362 项。两次报告相同的 10 组文件与异常。阶段 CPU 套件的通过数另见轮次表。
+
+| 涉及的测试文件（`tests/` 下） | 当前环境缺少 |
+|---|---|
+| `test_pi05_cuda_graph_modes.py`、`test_pi05_probeflow_frontend.py` | `ml_dtypes` |
+| `test_pi05_decoder_fp4_kernels.py`、`test_pi05_fp4_fusion_kernels.py`、共享算子 `test_fp4_integration_meta.py` | 编译扩展 `flash_rt.flash_rt_fp4` |
+| `test_pi0_probeflow.py` | CUDA 运行库 `libcudart.so` |
+| `test_recap_async_camera_map.py`（π0.5 trainer 的相机映射） | `pandas` |
+| `test_chameleon_contracts.py`、`test_chameleon_thor_vqgan_backend.py` | Pillow |
+| `test_chameleon_thor_fused_kernels.py` | 编译扩展 `flash_rt.flash_rt_kernels` |
 
 工作段以用户任务消息的原生 UTC 时间 `2026-11-24T02:21:18.867Z` 为起点。历史 token 窗口保留其原有来源和计数口径。
