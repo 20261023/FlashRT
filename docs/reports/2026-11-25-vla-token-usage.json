@@ -2,20 +2,20 @@
   "schema": "flash_rt.autotune.token_usage.v1",
   "window": {
     "run_start_utc": "2026-11-24T02:21:18.867000+00:00",
-    "cutoff_utc": "2026-11-25T11:03:00.000000+00:00",
+    "cutoff_utc": "2026-11-25T16:27:52.000000+00:00",
     "creation_time_rule": "start <= message.created < end"
   },
   "current_run": {
     "total": {
-      "input": 26849343,
-      "output": 971095,
-      "reasoning": 436996,
-      "cache_read": 489343104,
+      "input": 26998053,
+      "output": 996841,
+      "reasoning": 442705,
+      "cache_read": 523656320,
       "cache_write": 0,
-      "uncached_work_tokens": 28257434,
-      "all_processed_tokens": 517600538
+      "uncached_work_tokens": 28437599,
+      "all_processed_tokens": 552093919
     },
-    "records": 2355,
+    "records": 2760,
     "missing_usage_records": 76,
     "missing_counters": {
       "input": 76,
@@ -27,26 +27,26 @@
     "source": "账本",
     "source_totals": {
       "账本": {
-        "input": 26849343,
-        "output": 971095,
-        "reasoning": 436996,
-        "cache_read": 489343104,
+        "input": 26998053,
+        "output": 996841,
+        "reasoning": 442705,
+        "cache_read": 523656320,
         "cache_write": 0,
-        "uncached_work_tokens": 28257434,
-        "all_processed_tokens": 517600538
+        "uncached_work_tokens": 28437599,
+        "all_processed_tokens": 552093919
       }
     },
     "unattributed": {
       "total": {
-        "input": 1697206,
-        "output": 31997,
-        "reasoning": 22581,
-        "cache_read": 22227968,
+        "input": 1781766,
+        "output": 41606,
+        "reasoning": 22709,
+        "cache_read": 36491008,
         "cache_write": 0,
-        "uncached_work_tokens": 1751784,
-        "all_processed_tokens": 23979752
+        "uncached_work_tokens": 1846081,
+        "all_processed_tokens": 38337089
       },
-      "records": 137,
+      "records": 438,
       "missing_usage_records": 2,
       "missing_counters": {
         "input": 2,
@@ -58,18 +58,18 @@
       "source": "账本",
       "source_totals": {
         "账本": {
-          "input": 1697206,
-          "output": 31997,
-          "reasoning": 22581,
-          "cache_read": 22227968,
+          "input": 1781766,
+          "output": 41606,
+          "reasoning": 22709,
+          "cache_read": 36491008,
           "cache_write": 0,
-          "uncached_work_tokens": 1751784,
-          "all_processed_tokens": 23979752
+          "uncached_work_tokens": 1846081,
+          "all_processed_tokens": 38337089
         }
       }
     },
-    "unattributed_fraction": 0.04632868445743385,
-    "passes_unattributed_gate": true,
+    "unattributed_fraction": 0.0694394335468129,
+    "passes_unattributed_gate": false,
     "gate_uses_known_recorded_counters": true
   },
   "gap": {
@@ -585,13 +585,13 @@
   ],
   "historical_attribution_is_estimated": true,
   "grand_total": {
-    "input": 81049624,
-    "output": 3521855,
-    "reasoning": 3410576,
-    "cache_read": 2325441664,
+    "input": 81198334,
+    "output": 3547601,
+    "reasoning": 3416285,
+    "cache_read": 2359754880,
     "cache_write": 0,
-    "uncached_work_tokens": 87982055,
-    "all_processed_tokens": 2413423719
+    "uncached_work_tokens": 88162220,
+    "all_processed_tokens": 2447917100
   },
   "model_lifecycle": [
     {
@@ -811,15 +811,15 @@
     {
       "model": "fastwam",
       "total": {
-        "input": 3869379,
-        "output": 373764,
-        "reasoning": 336770,
-        "cache_read": 193223808,
+        "input": 3888813,
+        "output": 374736,
+        "reasoning": 337335,
+        "cache_read": 196071808,
         "cache_write": 0,
-        "uncached_work_tokens": 4579913,
-        "all_processed_tokens": 197803721
+        "uncached_work_tokens": 4600884,
+        "all_processed_tokens": 200672692
       },
-      "records": 768,
+      "records": 787,
       "missing_usage_records": 3,
       "missing_counters": {
         "input": 3,
@@ -840,13 +840,13 @@
           "all_processed_tokens": 16101334
         },
         "账本": {
-          "input": 3479178,
-          "output": 348701,
-          "reasoning": 310988,
-          "cache_read": 177563520,
+          "input": 3498612,
+          "output": 349673,
+          "reasoning": 311553,
+          "cache_read": 180411520,
           "cache_write": 0,
-          "uncached_work_tokens": 4138867,
-          "all_processed_tokens": 181702387
+          "uncached_work_tokens": 4159838,
+          "all_processed_tokens": 184571358
         }
       },
       "phases": {
@@ -878,13 +878,13 @@
           "all_processed_tokens": 86028825
         },
         "debugging": {
-          "input": 550597,
-          "output": 26699,
-          "reasoning": 11183,
-          "cache_read": 13290368,
+          "input": 570031,
+          "output": 27671,
+          "reasoning": 11748,
+          "cache_read": 16138368,
           "cache_write": 0,
-          "uncached_work_tokens": 588479,
-          "all_processed_tokens": 13878847
+          "uncached_work_tokens": 609450,
+          "all_processed_tokens": 16747818
         },
         "measurement": {
           "input": 701383,
@@ -1025,15 +1025,15 @@
     {
       "model": "dm05",
       "total": {
-        "input": 4993763,
-        "output": 247783,
-        "reasoning": 227894,
-        "cache_read": 146076928,
+        "input": 5022328,
+        "output": 255322,
+        "reasoning": 229713,
+        "cache_read": 152758656,
         "cache_write": 0,
-        "uncached_work_tokens": 5469440,
-        "all_processed_tokens": 151546368
+        "uncached_work_tokens": 5507363,
+        "all_processed_tokens": 158266019
       },
-      "records": 559,
+      "records": 599,
       "missing_usage_records": 2,
       "missing_counters": {
         "input": 2,
@@ -1054,13 +1054,13 @@
           "all_processed_tokens": 18797741
         },
         "账本": {
-          "input": 4659936,
-          "output": 228830,
-          "reasoning": 216085,
-          "cache_read": 127643776,
+          "input": 4688501,
+          "output": 236369,
+          "reasoning": 217904,
+          "cache_read": 134325504,
           "cache_write": 0,
-          "uncached_work_tokens": 5104851,
-          "all_processed_tokens": 132748627
+          "uncached_work_tokens": 5142774,
+          "all_processed_tokens": 139468278
         }
       },
       "phases": {
@@ -1074,13 +1074,13 @@
           "all_processed_tokens": 0
         },
         "migration": {
-          "input": 230407,
-          "output": 27881,
-          "reasoning": 13481,
-          "cache_read": 13281920,
+          "input": 258972,
+          "output": 35420,
+          "reasoning": 15300,
+          "cache_read": 19963648,
           "cache_write": 0,
-          "uncached_work_tokens": 271769,
-          "all_processed_tokens": 13553689
+          "uncached_work_tokens": 309692,
+          "all_processed_tokens": 20273340
         },
         "optimization": {
           "input": 173316,
@@ -1239,15 +1239,15 @@
     {
       "model": "smolvla",
       "total": {
-        "input": 4303105,
-        "output": 95096,
-        "reasoning": 44630,
-        "cache_read": 80296064,
+        "input": 4319256,
+        "output": 102722,
+        "reasoning": 47827,
+        "cache_read": 90816512,
         "cache_write": 0,
-        "uncached_work_tokens": 4442831,
-        "all_processed_tokens": 84738895
+        "uncached_work_tokens": 4469805,
+        "all_processed_tokens": 95286317
       },
-      "records": 315,
+      "records": 360,
       "missing_usage_records": 12,
       "missing_counters": {
         "input": 12,
@@ -1259,24 +1259,24 @@
       "source": "账本",
       "source_totals": {
         "账本": {
-          "input": 4303105,
-          "output": 95096,
-          "reasoning": 44630,
-          "cache_read": 80296064,
+          "input": 4319256,
+          "output": 102722,
+          "reasoning": 47827,
+          "cache_read": 90816512,
           "cache_write": 0,
-          "uncached_work_tokens": 4442831,
-          "all_processed_tokens": 84738895
+          "uncached_work_tokens": 4469805,
+          "all_processed_tokens": 95286317
         }
       },
       "phases": {
         "onboarding": {
-          "input": 3672864,
-          "output": 85175,
-          "reasoning": 38463,
-          "cache_read": 66361728,
+          "input": 3689015,
+          "output": 92801,
+          "reasoning": 41660,
+          "cache_read": 76882176,
           "cache_write": 0,
-          "uncached_work_tokens": 3796502,
-          "all_processed_tokens": 70158230
+          "uncached_work_tokens": 3823476,
+          "all_processed_tokens": 80705652
         },
         "migration": {
           "input": 0,
@@ -1337,15 +1337,15 @@
     {
       "model": "unattributed",
       "total": {
-        "input": 1697206,
-        "output": 31997,
-        "reasoning": 22581,
-        "cache_read": 22227968,
+        "input": 1781766,
+        "output": 41606,
+        "reasoning": 22709,
+        "cache_read": 36491008,
         "cache_write": 0,
-        "uncached_work_tokens": 1751784,
-        "all_processed_tokens": 23979752
+        "uncached_work_tokens": 1846081,
+        "all_processed_tokens": 38337089
       },
-      "records": 137,
+      "records": 438,
       "missing_usage_records": 2,
       "missing_counters": {
         "input": 2,
@@ -1357,13 +1357,13 @@
       "source": "账本",
       "source_totals": {
         "账本": {
-          "input": 1697206,
-          "output": 31997,
-          "reasoning": 22581,
-          "cache_read": 22227968,
+          "input": 1781766,
+          "output": 41606,
+          "reasoning": 22709,
+          "cache_read": 36491008,
           "cache_write": 0,
-          "uncached_work_tokens": 1751784,
-          "all_processed_tokens": 23979752
+          "uncached_work_tokens": 1846081,
+          "all_processed_tokens": 38337089
         }
       },
       "phases": {
@@ -1422,13 +1422,13 @@
           "all_processed_tokens": 0
         },
         "unknown": {
-          "input": 1697206,
-          "output": 31997,
-          "reasoning": 22581,
-          "cache_read": 22227968,
+          "input": 1781766,
+          "output": 41606,
+          "reasoning": 22709,
+          "cache_read": 36491008,
           "cache_write": 0,
-          "uncached_work_tokens": 1751784,
-          "all_processed_tokens": 23979752
+          "uncached_work_tokens": 1846081,
+          "all_processed_tokens": 38337089
         }
       }
     }
@@ -1439,15 +1439,15 @@
       "stage": "prefix.prefill",
       "tool": "compile.aitune",
       "total": {
-        "input": 16088,
-        "output": 2506,
-        "reasoning": 2051,
-        "cache_read": 2019840,
+        "input": 24263,
+        "output": 9139,
+        "reasoning": 3247,
+        "cache_read": 4880768,
         "cache_write": 0,
-        "uncached_work_tokens": 20645,
-        "all_processed_tokens": 2040485
+        "uncached_work_tokens": 36649,
+        "all_processed_tokens": 4917417
       },
-      "records": 10,
+      "records": 23,
       "missing_usage_records": 0,
       "missing_counters": {
         "input": 0,
@@ -1459,13 +1459,13 @@
       "source": "账本",
       "source_totals": {
         "账本": {
-          "input": 16088,
-          "output": 2506,
-          "reasoning": 2051,
-          "cache_read": 2019840,
+          "input": 24263,
+          "output": 9139,
+          "reasoning": 3247,
+          "cache_read": 4880768,
           "cache_write": 0,
-          "uncached_work_tokens": 20645,
-          "all_processed_tokens": 2040485
+          "uncached_work_tokens": 36649,
+          "all_processed_tokens": 4917417
         }
       },
       "before_ms": null,
@@ -1517,15 +1517,15 @@
       "stage": "vision.encode",
       "tool": "attention.sage",
       "total": {
-        "input": 27636,
-        "output": 5824,
-        "reasoning": 1210,
-        "cache_read": 5078912,
+        "input": 48026,
+        "output": 6730,
+        "reasoning": 1833,
+        "cache_read": 8899712,
         "cache_write": 0,
-        "uncached_work_tokens": 34670,
-        "all_processed_tokens": 5113582
+        "uncached_work_tokens": 56589,
+        "all_processed_tokens": 8956301
       },
-      "records": 43,
+      "records": 70,
       "missing_usage_records": 0,
       "missing_counters": {
         "input": 0,
@@ -1537,13 +1537,13 @@
       "source": "账本",
       "source_totals": {
         "账本": {
-          "input": 27636,
-          "output": 5824,
-          "reasoning": 1210,
-          "cache_read": 5078912,
+          "input": 48026,
+          "output": 6730,
+          "reasoning": 1833,
+          "cache_read": 8899712,
           "cache_write": 0,
-          "uncached_work_tokens": 34670,
-          "all_processed_tokens": 5113582
+          "uncached_work_tokens": 56589,
+          "all_processed_tokens": 8956301
         }
       },
       "before_ms": null,
@@ -1909,15 +1909,15 @@
       "model": "dm05",
       "stage": "vision.encode",
       "total": {
-        "input": 27636,
-        "output": 5824,
-        "reasoning": 1210,
-        "cache_read": 5078912,
+        "input": 48026,
+        "output": 6730,
+        "reasoning": 1833,
+        "cache_read": 8899712,
         "cache_write": 0,
-        "uncached_work_tokens": 34670,
-        "all_processed_tokens": 5113582
+        "uncached_work_tokens": 56589,
+        "all_processed_tokens": 8956301
       },
-      "records": 43,
+      "records": 70,
       "missing_usage_records": 0,
       "missing_counters": {
         "input": 0,
@@ -1929,13 +1929,13 @@
       "source": "账本",
       "source_totals": {
         "账本": {
-          "input": 27636,
-          "output": 5824,
-          "reasoning": 1210,
-          "cache_read": 5078912,
+          "input": 48026,
+          "output": 6730,
+          "reasoning": 1833,
+          "cache_read": 8899712,
           "cache_write": 0,
-          "uncached_work_tokens": 34670,
-          "all_processed_tokens": 5113582
+          "uncached_work_tokens": 56589,
+          "all_processed_tokens": 8956301
         }
       }
     },
@@ -1944,15 +1944,15 @@
       "model": "dm05",
       "stage": "prefix.prefill",
       "total": {
-        "input": 16088,
-        "output": 2506,
-        "reasoning": 2051,
-        "cache_read": 2019840,
+        "input": 24263,
+        "output": 9139,
+        "reasoning": 3247,
+        "cache_read": 4880768,
         "cache_write": 0,
-        "uncached_work_tokens": 20645,
-        "all_processed_tokens": 2040485
+        "uncached_work_tokens": 36649,
+        "all_processed_tokens": 4917417
       },
-      "records": 10,
+      "records": 23,
       "missing_usage_records": 0,
       "missing_counters": {
         "input": 0,
@@ -1964,13 +1964,13 @@
       "source": "账本",
       "source_totals": {
         "账本": {
-          "input": 16088,
-          "output": 2506,
-          "reasoning": 2051,
-          "cache_read": 2019840,
+          "input": 24263,
+          "output": 9139,
+          "reasoning": 3247,
+          "cache_read": 4880768,
           "cache_write": 0,
-          "uncached_work_tokens": 20645,
-          "all_processed_tokens": 2040485
+          "uncached_work_tokens": 36649,
+          "all_processed_tokens": 4917417
         }
       }
     },
@@ -2240,7 +2240,7 @@
     },
     {
       "model": "smolvla",
-      "onboarding_tokens": 70158230,
+      "onboarding_tokens": 80705652,
       "historical_onboarding_tokens": null,
       "historical_total_tokens": null,
       "historical_completion_is_proxy": false,
@@ -2301,9 +2301,9 @@
     {
       "source": "codex",
       "start_utc": "2026-11-25T10:37:42.000000+00:00",
-      "cutoff_utc": "2026-11-25T11:03:00.000000+00:00",
-      "records": 309,
-      "records_sha256": "c556b3edda996f8b479dcbac45ecda74d68cdd167f8124b8bf1304bbc94329a7",
+      "cutoff_utc": "2026-11-25T16:27:52.000000+00:00",
+      "records": 714,
+      "records_sha256": "d2327b75d11e5a2ae33350e313e7b2b8be57069a7171500c20a11f6f452ae6e5",
       "missing_usage_records": 0
     }
   ]

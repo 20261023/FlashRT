@@ -1,6 +1,6 @@
 tool,model,stage,source,input,output,reasoning,cache_read,cache_write,uncached_work_tokens,all_processed_tokens,missing_usage_records
-attention.sage,dm05,vision.encode,账本,27636,5824,1210,5078912,0,34670,5113582,0
-compile.aitune,dm05,prefix.prefill,账本,16088,2506,2051,2019840,0,20645,2040485,0
+attention.sage,dm05,vision.encode,账本,48026,6730,1833,8899712,0,56589,8956301,0
+compile.aitune,dm05,prefix.prefill,账本,24263,9139,3247,4880768,0,36649,4917417,0
 unknown,dm05,vision.encode,账本,186683,19551,10220,6183168,0,216454,6399622,0
 unknown,hyvla,kernel.attention,账本,1654886,34984,22821,22153728,0,1712691,23866419,4
 unknown,hyvla,prefix.prefill,账本,247471,13438,4250,6356480,0,265159,6621639,0
