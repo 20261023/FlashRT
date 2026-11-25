@@ -1048,6 +1048,8 @@ def main(argv=None):
     sub.add_argument('--gap-assignments', help='Private JSON list: session_id/model/phase/start/end')
     sub.add_argument('--model', action='append', default=[])
     sub.add_argument('--output', required=True, help='Public output prefix')
+    sub.add_argument('--sequential-collections', action='store_true',
+                     help='Join native ledgers spanning consecutive non-overlapping time windows')
     sub.add_argument('--require-attribution', action='store_true',
                      help='Return 2 unless current known unattributed fraction is below 5%%')
     args = parser.parse_args(argv)
@@ -1113,6 +1115,17 @@ def main(argv=None):
                         raise ValueError('usage ledger digest differs from its collection manifest')
                     manifests.append(manifest)
             collected_cutoff = min((utc_ms(m['cutoff_utc']) for m in manifests), default=None)
+            if args.sequential_collections:
+                if not manifests or len(manifests) != len(args.records):
+                    raise ValueError('Every sequential ledger requires a collection manifest')
+                previous_end = None
+                for manifest in manifests:
+                    start = utc_ms(manifest['start_utc'])
+                    end = utc_ms(manifest['cutoff_utc'])
+                    if end <= start or (previous_end is not None and start != previous_end):
+                        raise ValueError('Sequential collection windows must be contiguous and ordered')
+                    previous_end = end
+                collected_cutoff = previous_end
             if args.cutoff is not None and collected_cutoff is not None:
                 if utc_ms(args.cutoff) > collected_cutoff:
                     raise ValueError('report cutoff exceeds the native collection cutoff')
@@ -1125,7 +1138,7 @@ def main(argv=None):
                 models=args.model)
             report['collections'] = [
                 {key: manifest[key] for key in (
-                    'start_utc', 'cutoff_utc', 'records', 'records_sha256', 'missing_usage_records')
+                    'source', 'start_utc', 'cutoff_utc', 'records', 'records_sha256', 'missing_usage_records')
                  if key in manifest}
                 for manifest in manifests]
             write_report(report, args.output)
