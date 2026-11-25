@@ -23,7 +23,7 @@ import tempfile
 
 import numpy as np
 
-from .model_spec import get_spec, validate_spec
+from .model_spec import archived_spec_scope, get_spec, validate_spec
 
 
 HEAD_TYPES = ('flow_matching', 'autoregressive_tokens', 'other')
@@ -767,7 +767,7 @@ def _verify_evidence(root, *, campaign, results, graph_result, eager_result,
             self._db.row_factory = sqlite3.Row
             self._db.execute('BEGIN')  # One consistent authoritative read snapshot.
 
-    with ReadOnlyLedger(campaign / 'ledger.sqlite') as ledger:
+    with archived_spec_scope(plan['author_baseline']), ReadOnlyLedger(campaign / 'ledger.sqlite') as ledger:
         if plan.get('campaign_instance_id') != ledger.instance_id:
             raise ValueError('Campaign instance differs from the authoritative ledger')
         attempts = {attempt['attempt_id']: attempt for attempt in ledger.attempts()}
