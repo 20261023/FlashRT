@@ -485,7 +485,7 @@ def collect_codex(paths):
     """Difference cumulative counters and skip unchanged rate-limit snapshots."""
     rows = []
     for path in paths:
-        sid, previous = None, None
+        sid, previous, native = None, None, None
         with _codex_stream(path) as stream:
             for line_number, line in enumerate(stream, 1):
                 if not line.strip():
@@ -496,7 +496,13 @@ def collect_codex(paths):
                     raise ValueError(f'Codex log has invalid JSON at line {line_number}') from None
                 payload = event.get('payload') or {}
                 if event.get('type') == 'session_meta':
-                    sid = payload.get('id', payload.get('session_id'))
+                    # Forked rollouts begin with their own header followed by
+                    # the copied parent header. Only the first owns this log.
+                    if sid is None:
+                        sid = payload.get('id', payload.get('session_id'))
+                    continue
+                if event.get('type') == 'token_usage_record':
+                    native = payload
                     continue
                 if event.get('type') != 'event_msg' or payload.get('type') != 'token_count':
                     continue
@@ -505,6 +511,12 @@ def collect_codex(paths):
                 info = payload.get('info') or {}
                 cumulative = info.get('total_token_usage')
                 last = info.get('last_token_usage')
+                response_id = payload.get('response_id')
+                if (native and cumulative is not None and last is not None
+                        and native.get('thread_token_usage') == cumulative and native.get('usage') == last):
+                    if native.get('thread_id') != sid:
+                        continue  # A copied parent request is already counted in its own rollout.
+                    response_id = native.get('response_id') or response_id
                 includes = info.get('last_usage_includes_reasoning', True)
                 if not isinstance(includes, bool):
                     raise ValueError('Codex last_usage_includes_reasoning must be boolean')
@@ -554,7 +566,7 @@ def collect_codex(paths):
                                  message_id=_fingerprint(identity), timestamp=timestamp,
                                  kind='assistant' if timestamp is not None else 'cumulative_carry_in',
                                  counters=counts,
-                                 request_fingerprint=_fingerprint(payload.get('response_id'))))
+                                 request_fingerprint=_fingerprint(response_id)))
     return deduplicate(rows)
 
 
