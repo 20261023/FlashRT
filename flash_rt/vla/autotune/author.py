@@ -227,6 +227,8 @@ def prepare_plan(config, *, baseline, workload_path, output_root, warmup, repeat
         _absolute(extra, 'extra_pythonpath')
         if os.pathsep in extra or (Path(extra) / 'flash_rt').exists():
             raise ValueError('Author dependency entries must be single paths without another FlashRT checkout')
+    if mode == 'produce' and not _ENTRYPOINT.is_file():
+        raise ValueError(f'Author producer missing from controller deployment: {_ENTRYPOINT}')
     target = str(Path(output_root) / 'author')
     command = producer_command(spec, workload_path=workload_path, output=target, warmup=warmup,
                                repeats=repeats, comparison_id=comparison_id,
