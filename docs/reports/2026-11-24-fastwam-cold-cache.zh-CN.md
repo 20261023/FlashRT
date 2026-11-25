@@ -90,3 +90,9 @@ checkpoint、图像/文本形状和精度、mask/state 输入分布、编译线�
 参考：[CPython #116008](https://github.com/python/cpython/issues/116008)、
 [#140815](https://github.com/python/cpython/issues/140815)；两者支持观察器
 竞态机制，不代替本次数据。
+
+## 2026-11-25 终态回收与冷启动重做
+
+`359953` 在 18 秒后以 `FAILED (1:0)` 结束。两个 worker 的异常链均定位到上游 `fastwam.utils.video_io` 导入 `imageio`。两次都从计划指定的 FastWAM checkout 导入了上游源码；失败发生在构建模型前。该计划记录的 worker 解释器是基础 Python，其绝对路径与稳态作业虚拟环境解释器的符号链接目标一致。以虚拟环境自身的解释器路径解析模块，可以找到 `imageio`。两项旧冷缓存作业的性能与动作门槛均保留 NR。
+
+`364133` 已取得提交回执，使用与稳态回归 `360054` 相同的源码归档 `03d24c2d`、上游修订 `7faa7110`、虚拟环境、八输入和两个质量门槛。计划实例 `e91b0192-095e-4cd9-83ce-6cb33634733b` 只切换既有的请求内文本 KV 配置。一个 A800 分配依次运行作者、项目 compiled + KV E20、项目 compiled E20（关闭 KV）和首个配置复测。作者和三个 worker 分别从六个新建空目录启动，记录每次编译后的文件数和进程总耗时。提交时已核实虚拟环境解释器与固定作者入口。11 月 25 日 10:44 UTC 调度器状态为 `PENDING (Priority)`。

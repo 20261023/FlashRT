@@ -1,0 +1,7 @@
+tool,model,stage,source,input,output,reasoning,cache_read,cache_write,uncached_work_tokens,all_processed_tokens,missing_usage_records
+unknown,dm05,vision.encode,账本,186683,19551,10220,6183168,0,216454,6399622,0
+unknown,hyvla,kernel.attention,账本,1654886,34984,22821,22153728,0,1712691,23866419,4
+unknown,hyvla,prefix.prefill,账本,247471,13438,4250,6356480,0,265159,6621639,0
+unknown,hyvla,unknown,估算,16902,530,103,357120,0,17535,374655,0
+unknown,pi05,unknown,估算,955,222,0,36608,0,1177,37785,0
+unknown,shared,unknown,估算,164822,176,0,0,0,164998,164998,0
