@@ -14,12 +14,42 @@ def _split_euler(session, pipe):
         return False
     session.take_reference()
     scope = 'diagnostic_same_program_recapture'
-    for name, key, stages, boundary in (
-            ('vision_encoder', 'vision', ('vision.encode',), 'Pi vision encoder only'),
-            ('transformer_encoder', 'prefix_only', ('vision.project', 'prefix.prefill'),
-             'Pi multimodal projector and prefix transformer; excludes vision encoder')):
-        pair = session.pair(key, stages, boundary, external=True, scope=scope)
-        session.gpu_method(pipe, name, key, stages, boundary, pair=pair, scope=scope)
+    vision = session.pair('vision', ('vision.encode',), 'Pi vision encoder only',
+                          external=True, scope=scope)
+    session.gpu_method(pipe, 'vision_encoder', 'vision', ('vision.encode',),
+                       'Pi vision encoder only', pair=vision, scope=scope)
+    encoder = pipe.transformer_encoder
+    layer = getattr(pipe, '_encoder_layer', None)
+    if callable(layer):
+        projection = session.pair('projector', ('vision.project',),
+                                  'Final vision norm, multimodal projection and bias',
+                                  external=True, scope=scope)
+        prefill = session.pair('language_prefill', ('prefix.prefill',),
+                               'All language encoder layers after the projector',
+                               external=True, scope=scope)
+
+        def observe_encoder(*args, **kwargs):
+            projection[0].record()
+            result = encoder(*args, **kwargs)
+            prefill[1].record()
+            return result
+
+        def observe_layer(i, *args, **kwargs):
+            if i == 0:
+                projection[1].record()
+                prefill[0].record()
+            return layer(i, *args, **kwargs)
+
+        session.replace(pipe, 'transformer_encoder', observe_encoder)
+        session.replace(pipe, '_encoder_layer', observe_layer)
+        encoder_keys = ['projector', 'language_prefill']
+    else:
+        boundary = 'Pi multimodal projector and prefix transformer; excludes vision encoder'
+        stages = ('vision.project', 'prefix.prefill')
+        pair = session.pair('prefix_only', stages, boundary, external=True, scope=scope)
+        session.gpu_method(pipe, 'transformer_encoder', 'prefix_only', stages, boundary,
+                           pair=pair, scope=scope)
+        encoder_keys = ['prefix_only']
     decoder = pipe.transformer_decoder
     velocity_pairs = [
         session.pair('velocity', ('denoise.velocity',),
@@ -52,7 +82,7 @@ def _split_euler(session, pipe):
         return pipe.input_noise_buf.ptr.value
 
     session.replace(pipe, 'forward', forward)
-    session.expected = ['vision', 'prefix_only', 'velocity']
+    session.expected = ['vision', *encoder_keys, 'velocity']
     session.notes.append(
         'Euler split uses a private diagnostic graph and the original single-step API; '
         'velocity includes the production fused integration; public output parity is required')
