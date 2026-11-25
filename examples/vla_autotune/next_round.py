@@ -27,9 +27,11 @@ if __package__ in (None, ''):
 
 from flash_rt.vla.autotune import decisions, stages
 from flash_rt.vla.autotune.controller import _validate_checkout_candidate
+from flash_rt.vla.autotune.ledger import CampaignLedger
 from flash_rt.vla.autotune.schema import Candidate, validate_result
+from flash_rt.vla.autotune.snapshots import is_ready, snapshot_id, validate_manifest
 from flash_rt.vla.autotune.tools import all_tools, get_tool
-from flash_rt.vla.model_spec import get_spec
+from flash_rt.vla.model_spec import archived_spec_scope, get_spec
 
 
 TERMINAL = {'COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'OUT_OF_MEMORY',
@@ -105,11 +107,34 @@ def _qualified(attempt, scope, has_author):
         and (not has_author or result.get('author_quality', {}).get('status') == 'passed'))
 
 
+def _snapshot_manifests(plan):
+    if plan['schema_version'] == 2:
+        return {}
+    harness = plan['harness']['autotune_tree']
+    manifests = {}
+    for identifier, item in plan['snapshots'].items():
+        manifest = validate_manifest(
+            {key: value for key, value in item.items() if key != 'manifest_path'},
+            error=ValueError)
+        if (manifest['snapshot_id'] != identifier or manifest['harness_tree'] != harness
+                or not is_ready(manifest)):
+            raise ValueError('Plan snapshot identity, harness or native readiness differs')
+        manifests[identifier] = manifest
+    if not manifests:
+        raise ValueError('Plan v3 requires ready source snapshots')
+    return manifests
+
+
 def _read_round(path):
     summary = _load(path)
     # Controller's plan supplies roles and immutable constructor identity. The
     # summary alone has no role field; guessing by list order is unnecessary.
     plan = _load(path.with_name('plan.json'))
+    with archived_spec_scope(plan.get('author_baseline')):
+        return _analyze_round(path, summary, plan)
+
+
+def _analyze_round(path, summary, plan):
     if plan.get('schema_version') not in (2, 3):
         raise ValueError(f'{path}: use an identity-bound plan v2/v3, not legacy latency notes')
     if summary.get('comparison_id') != plan.get('comparison_id'):
@@ -119,22 +144,30 @@ def _read_round(path):
     if not isinstance(attempts, list) or not isinstance(entries, list) or len(entries) < 2:
         raise ValueError(f'{path}: controller attempts and reference/bookend plan required')
     by_id = {item['attempt_id']: item for item in attempts}
-    if len(by_id) != len(attempts) or set(by_id) != {item['attempt_id'] for item in entries}:
+    if len(entries) != len(attempts) or len(by_id) != len(attempts) or set(by_id) != {item['attempt_id'] for item in entries}:
         raise ValueError(f'{path}: duplicate or unbound attempts')
     controls, candidates = {}, []
     scope = summary.get('quality_scope')
+    snapshots = _snapshot_manifests(plan)
     for entry in entries:
         attempt = by_id[entry['attempt_id']]
+        if snapshots:
+            candidate = Candidate.from_dict(entry['candidate'])
+            identifier = snapshot_id(candidate.source_ref, candidate.patch_ref)
+            if entry.get('snapshot_id') != identifier or identifier not in snapshots:
+                raise ValueError(f'{path}: plan attempt does not name its registered snapshot')
         result = attempt.get('result')
         if result is not None:
             validate_result(result)
-            if (result.get('schema_version') not in (2, 3)
+            if (result.get('schema_version') != plan['schema_version']
                     or result['candidate'] != entry['candidate']
                     or result['campaign_instance_id'] != plan['campaign_instance_id']
                     or result['comparison_id'] != plan['comparison_id']
                     or result['attempt_id'] != entry['attempt_id']
                     or result['job_id'] != attempt['job_id']):
                 raise ValueError(f'{path}: result execution identity mismatch')
+            if snapshots:
+                CampaignLedger._check_source_identity(result, candidate, snapshots)
         if entry['role'] in ('reference', 'bookend'):
             if entry['role'] in controls:
                 raise ValueError(f'{path}: duplicate reference/bookend')
@@ -520,6 +553,12 @@ def recommend(summary_path, history_path, *, profile_path=None, operator_profile
         raise ValueError('method budget cannot exceed 6 GPUh')
     summary_path, history_path = Path(summary_path).resolve(), Path(history_path).resolve()
     current = _read_round(summary_path)
+    with archived_spec_scope(current['plan'].get('author_baseline')):
+        return _recommend(current, history_path, profile_path, operator_profile_path, budget, spec_dir)
+
+
+def _recommend(current, history_path, profile_path, operator_profile_path, budget, spec_dir):
+    summary_path = current['path']
     rounds, hours, exhausted, unknown_cost, pending, actors = _history(history_path, current)
     baseline = current['baseline']['backend']
     spec_dir = spec_dir or baseline.get('spec_dir')
