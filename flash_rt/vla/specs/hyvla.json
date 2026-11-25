@@ -28,8 +28,8 @@
   },
   "stages": [
     {"stage_id": "host.input", "seams": ["flash_rt/frontends/torch/hyvla_thor.py:HyVLATorchFrontendThor._preprocess_images", "flash_rt/frontends/torch/hyvla_thor.py:HyVLATorchFrontendThor._tokenize", "flash_rt/frontends/torch/hyvla_thor.py:HyVLATorchFrontendThor._assemble_prefix", "flash_rt/frontends/torch/hyvla_thor.py:HyVLATorchFrontendThor.predict_actions"], "profiling_keys": ["host_input"], "notes": ["Resize/pad, tokenization, prefix assembly and masks run before prefix graph. Diagnostic host boundaries can time these; historical graph-only records leave them residual."]},
-    {"stage_id": "vision.encode", "seams": ["flash_rt/models/hyvla/pipeline_thor.py:HyVLAThorBF16Pipeline.vit_forward", "flash_rt/frontends/torch/hyvla_thor.py:HyVLATorchFrontendThor._vit_merge"], "profiling_keys": ["vision"], "notes": ["27-layer MEM ViT shares its graph interval with the merger."]},
-    {"stage_id": "vision.project", "seams": ["flash_rt/models/hyvla/pipeline_thor.py:HyVLAThorBF16Pipeline.merger_forward"], "profiling_keys": ["vision"], "notes": ["PROJ1/pool/PROJ2; not separately timed."]},
+    {"stage_id": "vision.encode", "seams": ["flash_rt/models/hyvla/pipeline_thor.py:HyVLAThorBF16Pipeline.vit_forward", "flash_rt/frontends/torch/hyvla_thor.py:HyVLATorchFrontendThor._vit_merge"], "profiling_keys": ["vision", "vit_encoder"], "notes": ["27-layer MEM ViT shares its graph interval with the merger."]},
+    {"stage_id": "vision.project", "seams": ["flash_rt/models/hyvla/pipeline_thor.py:HyVLAThorBF16Pipeline.merger_forward"], "profiling_keys": ["vision", "merger"], "notes": ["PROJ1/pool/PROJ2; not separately timed."]},
     {"stage_id": "prefix.prefill", "seams": ["flash_rt/models/hyvla/pipeline_thor.py:HyVLAThorBF16Pipeline.prefill", "flash_rt/frontends/torch/hyvla_probeflow.py:HyVLAFlowFrontend._prefix_body"], "profiling_keys": ["prefix"], "notes": ["32 VLM layers write prefix KV; state embedding is also captured."]},
     {"stage_id": "denoise.velocity", "seams": ["flash_rt/models/hyvla/pipeline_thor.py:HyVLAThorBF16Pipeline.evaluate_velocity", "flash_rt/frontends/torch/hyvla_probeflow.py:HyVLAFlowFrontend._velocity_body"], "profiling_keys": ["velocity"], "notes": ["32 expert layers over one state token and H action tokens."]},
     {"stage_id": "denoise.schedule", "seams": ["flash_rt/frontends/torch/hyvla_probeflow.py:HyVLAFlowFrontend._sample_latent"], "profiling_keys": [], "notes": ["Euler or adaptive ProbeFlow; NFE is recorded by the sampler."]},
@@ -41,7 +41,7 @@
     {"stage_id": "precision.weights", "seams": ["flash_rt/frontends/torch/hyvla_probeflow.py:HyVLAFlowFrontend._operation_dtypes", "flash_rt/frontends/torch/hyvla_probeflow.py:HyVLAFlowFrontend.__init__"], "profiling_keys": [], "notes": ["semantic_bf16 and official_local_fp32 describe operator numerical policies, not two measured speed guarantees."]}
   ],
   "profiling": {
-    "keys": {"vision": ["vision.encode", "vision.project"], "prefix": ["prefix.prefill"], "velocity": ["denoise.velocity"], "host_input": ["host.input"], "host_output": ["host.output"]},
+    "keys": {"vision": ["vision.encode", "vision.project"], "vit_encoder": ["vision.encode"], "merger": ["vision.project"], "prefix": ["prefix.prefill"], "velocity": ["denoise.velocity"], "host_input": ["host.input"], "host_output": ["host.output"]},
     "expected_keys": {"euler": ["vision", "prefix", "velocity"], "probeflow": ["vision", "prefix", "velocity"]},
     "strategy": {"kind": "graphs", "graphs": [{"path": "_vit_graph_cache.*.graph", "key": "vision"}, {"path": "_graph_cache.*.prefix_graph", "key": "prefix"}, {"path": "_graph_cache.*.velocity_graphs.*", "key": "velocity"}]}
   },

@@ -1,10 +1,41 @@
 """Hy diagnostics through temporary wrappers; production model code is untouched."""
 
 
+def _split_vision(session, entry):
+    """Recapture the plain ViT/merger body with its existing input/output buffers."""
+    frontend = session.frontend
+    pipe = getattr(frontend, 'pipe', None)
+    if (not {'graph', 'img', 'out'} <= entry.keys()
+            or not callable(getattr(pipe, 'vit_forward', None))
+            or not callable(getattr(pipe, 'merger_forward', None))
+            or not session.take_reference()):
+        return False
+    scope = 'diagnostic_same_program_recapture'
+    vit = session.pair('vit_encoder', ('vision.encode',), 'Hy ViT forward',
+                       external=True, scope=scope)
+    merger = session.pair('merger', ('vision.project',), 'Hy merger and static output copy',
+                          external=True, scope=scope)
+
+    def body():
+        vit[0].record()
+        features = pipe.vit_forward(entry['img'])
+        vit[1].record()
+        merger[0].record()
+        entry['out'].copy_(pipe.merger_forward(features))
+        merger[1].record()
+
+    session.replace_item(entry, 'graph', session.capture(body))
+    return True
+
+
 def install(session):
     frontend = session.frontend
-    for entry in getattr(frontend, '_vit_graph_cache', {}).values():
-        if entry.get('graph') is not None:
+    cache = getattr(frontend, '_vit_graph_cache', {})
+    vision_keys = ['vision']
+    for entry in cache.values():
+        if len(cache) == 1 and entry.get('graph') is not None and _split_vision(session, entry):
+            vision_keys = ['vit_encoder', 'merger']
+        elif entry.get('graph') is not None:
             session.replace_item(entry, 'graph', session.graph(
                 entry['graph'], 'vision', ('vision.encode', 'vision.project'),
                 '_vit_graph_cache graph replay: ViT and merger'))
@@ -30,7 +61,7 @@ def install(session):
         session.boundary(frontend, '_vit_merge', resume_input=True)
         session.boundary(frontend, '_graph_forward', output=True)
     session.start_host_input = complete_io
-    session.expected = ['vision', 'prefix', 'velocity']
+    session.expected = [*vision_keys, 'prefix', 'velocity']
     if session.start_host_input:
         session.expected += ['host_input', 'host_output']
     session.notes.append('Hy host regions exclude ViT/flow compute and explicit drain waits')
