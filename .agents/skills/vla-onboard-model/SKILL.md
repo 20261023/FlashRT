@@ -41,7 +41,7 @@ metadata:
    修复所有 issue，得到 `ready_for_measurement`。
 7. 在实际 Slurm GPU 作业中运行原作者参考、项目 reference、
    graph/eager 切换和 bookend。每个必要路径每个 case 至少两次样本。
-8. controller 完成 ingest；完整保存 ledger、plan、portable `control/`、
+8. 部署完整的固定 controller 源码，核对 plan 中作者入口和 venv 解释器的实际路径。controller 完成 ingest；完整保存 ledger、plan、portable `control/`、
    result.json 和 outputs.npz，再运行 `onboard verify`。
 
 ## 实测证据

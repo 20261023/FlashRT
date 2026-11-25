@@ -177,6 +177,10 @@ graph 和 eager 结果必须属于**同一个**已 ingest 的 campaign。每条�
 
 在 controller 中完成 ingest，再把完整 `control/`、各 attempt 的 JSON/NPZ 和原始 campaign ledger 保存到验收能读取的位置。`summary.json` 是便于阅读的派生报告，不能代替 ledger 或原始 bundle。
 
+部署 controller 时使用完整的固定源码导出。提交前核实 plan 的 `author_baseline.producer_command` 所指脚本确实位于该导出内，并核对解释器路径。虚拟环境的 `bin/python` 可能是符号链接；执行时保留原路径，以便解释器加载该环境的依赖。
+
+异机回收使用原始 plan、ledger 副本和完整结果目录。带作者对照的计划在 `author_baseline.declaration` 中保存外部 ModelSpec。导入时按原 `spec_dir` 与模型 ID 绑定该声明，保留 worker 的源码身份、命令和 candidate 原值。二次提交前对照 `submission.json`、ledger、队列及终态记录；修复部署时创建新实例，保存失败作业的证据。
+
 ## 6. Profile 覆盖与实测解释
 
 graph 路径的诊断 profile 必须提供同一请求的正 wall time、原始 interval 样本、样本和、ModelSpec 中的 stage 归属，以及 `interval_provenance.additive=True`。加总的非重叠区间覆盖 wall time 至少 90% 即通过覆盖要求。区间之和超过 wall time 会被拒绝，不能用嵌套计时重复加总来提高覆盖率。重新捕获的诊断 graph 还需保留 `capture_parity.status="bit_exact"`。
