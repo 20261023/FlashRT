@@ -285,6 +285,12 @@ def wait_campaign(root, client, *, interval=15, sleep=None):
 def ingest_campaign(root, results_dir, *, job_finished=False):
     root, results_dir = Path(root), Path(results_dir)
     plan = json.loads((root / 'plan.json').read_text())
+    from flash_rt.vla.model_spec import archived_spec_scope
+    with archived_spec_scope(plan.get('author_baseline')):
+        return _ingest_campaign(plan, root, results_dir, job_finished)
+
+
+def _ingest_campaign(plan, root, results_dir, job_finished):
     if plan.get('schema_version') not in (2, 3):
         raise ValueError('Legacy campaign/results lack bound execution identity; retain historical evidence, use new attempts to qualify')
     scope = (plan.get('quality_gate') or {}).get('scope', 'numerical_replay')

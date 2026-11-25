@@ -8,6 +8,8 @@ silently replacing builtins. Returned dictionaries are detached copies.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from functools import lru_cache
 import json
@@ -481,11 +483,37 @@ def _builtins():
     return _read_directory(BUILTIN_SPEC_DIR)
 
 
+_archived_declaration = ContextVar('archived_vla_declaration', default=None)
+
+
+@contextmanager
+def archived_spec_scope(author_plan):
+    """Resolve an external declaration from the plan while reading archived results."""
+    spec = (author_plan or {}).get('spec', {})
+    directory = spec.get('spec_dir')
+    declaration = (author_plan or {}).get('declaration')
+    if not directory or declaration is None:
+        yield
+        return
+    declaration = validate_spec(declaration, source='campaign declaration')
+    if spec['model'] != declaration['model']:
+        raise ValueError('Archived model differs from its author declaration')
+    token = _archived_declaration.set((directory, declaration))
+    try:
+        yield
+    finally:
+        _archived_declaration.reset(token)
+
+
 def discover_specs(*, spec_dir=None):
     """Return canonical id -> validated declaration, with optional local additions."""
     specs = list(_builtins())
     if spec_dir is not None and Path(spec_dir).resolve() != BUILTIN_SPEC_DIR.resolve():
-        specs.extend(_read_directory(spec_dir))
+        archived = _archived_declaration.get()
+        if archived is not None and str(spec_dir) == archived[0]:
+            specs.append(archived[1])
+        else:
+            specs.extend(_read_directory(spec_dir))
     result, aliases = {}, {}
     for spec in specs:
         model = spec['model']
