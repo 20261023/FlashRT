@@ -109,3 +109,10 @@ Slurm 已返回五模型回归。下表取自已回收的控制器 `summary.json
 | `test_chameleon_thor_fused_kernels.py` | 编译扩展 `flash_rt.flash_rt_kernels` |
 
 工作段以用户任务消息的原生 UTC 时间 `2026-11-24T02:21:18.867Z` 为起点。历史 token 窗口保留其原有来源和计数口径。
+
+### 2026-11-25 18:57 北京时间接入验收准备
+
+- [x] G 在私有目录保留原始接入 manifest、四个相对路径 fixture 和实现文件，再按本地副本位置执行静态 `onboard check`，回执为 `ready_for_measurement`。异机 verifier 读取 worker 记录时采用计划内声明，原始 candidate/ledger 标识保留。
+- [ ] 已准备 364125 专用回放核对，要求同一快照 graph/eager、每次 NFE 与实际专家回放均为 10、同一图按请求累加、输入改变时 public 动作随 eager 改变。实际运行和 `onboard verify` 等待原作业终态。
+- 人工账本共三条记录，含初始规则、fork 与测试流程更正、本次接手的排查顺序。其中最后一条直接涉及 SmolVLA。人工 H4 仍待决定。
+- 本轮无删除。H 最近一次跨来源截点为 10:43:36 UTC，SmolVLA onboarding 已归属 67,157,968 总处理 token，接入完成时间待实测回执。新增工作段在下一次截点重算。
